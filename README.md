@@ -18,7 +18,28 @@
 
 预构建镜像由 GitHub Actions 发布，支持 `linux/amd64` 和 `linux/arm64`。
 
-### 方式一：用预构建镜像
+### 方式一：Docker Compose（推荐）
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Anboyyt/LiMe/main/docker-compose.example.yml
+mv docker-compose.example.yml docker-compose.yml
+```
+
+打开 `docker-compose.yml`，改两个地方：
+
+```yaml
+LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
+volumes:
+  - /path/to/your/strm:/media:ro    # ← 你的 STRM 目录
+```
+
+然后启动：
+
+```bash
+docker compose up -d
+```
+
+### 方式二：docker run
 
 ```bash
 docker run -d --name lime \
@@ -32,11 +53,11 @@ docker run -d --name lime \
   lixxh/lime:latest
 ```
 
-或者在 `docker-compose.yml` 里把 `build: .` 换成 `image: lixxh/lime:latest`。
-
-### 方式二：从源码构建
+### 方式三：从源码构建
 
 ```bash
+git clone https://github.com/Anboyyt/LiMe.git
+cd LiMe
 docker compose up -d --build
 ```
 

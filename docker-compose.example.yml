@@ -1,0 +1,85 @@
+# LiMe 标准部署示例
+#
+# 用法：
+#   1. cp docker-compose.example.yml docker-compose.yml
+#   2. 把下面 volumes 里的 /path/to/your/strm 改成你的 STRM 目录
+#   3. docker compose up -d
+#
+# 可选配置写在同目录 .env 里（不要提交到仓库），参考 .env.example。
+
+services:
+  lime:
+    image: lixxh/lime:latest
+    container_name: lime
+    restart: unless-stopped
+    ports:
+      - "886:886"
+
+    environment:
+      TZ: Asia/Shanghai
+
+      # 客户端里显示的服务器名
+      LIME_SERVER_NAME: "LiMe"
+
+      # 数据目录（容器内），对应下面 volumes 的 ./data
+      LIME_DATA_DIR: "/data"
+
+      # 初始管理员，只在首次启动时创建；之后改密码不会被覆盖
+      LIME_ADMIN_USER: "admin"
+      LIME_ADMIN_PASSWORD: "change-me"
+
+      # 媒体库：名称|容器内路径|类型
+      # 类型：movies / tvshows / mixed
+      # 多个库用英文分号分隔
+      LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
+      # 运维面板里新建库时允许的根路径
+      LIME_LIBRARY_ROOTS: "/media"
+
+      # ---- 扫描 ----
+      # 启动时全量扫描。大库建议 false，启动后手动触发
+      LIME_SCAN_ON_START: "false"
+      # 定时全量扫描间隔，留空关闭，例如 "6h"
+      LIME_SCAN_INTERVAL: ""
+      # 每天固定时间增量扫描（HH:MM），留空关闭
+      LIME_SCAN_DAILY_AT: "03:30"
+      # 监听媒体目录，新 .strm 落盘后自动入库
+      LIME_REALTIME_MONITOR: "true"
+
+      # ---- STRM 302 地址改写 ----
+      # 外网访问时打开，否则客户端会连到不可达的内网 PanSave 地址
+      LIME_REWRITE_ENABLED: "false"
+      # 实际值建议放 .env：
+      #   LIME_REWRITE_FROM=192.168.1.100:16868
+      #   LIME_REWRITE_LOCAL=192.168.1.100:16868
+      #   LIME_REWRITE_PUBLIC=https://pansave.example.com
+      LIME_REWRITE_FROM: "${LIME_REWRITE_FROM:-}"
+      LIME_REWRITE_LOCAL: "${LIME_REWRITE_LOCAL:-}"
+      LIME_REWRITE_PUBLIC: "${LIME_REWRITE_PUBLIC:-}"
+
+      # 播放端点是否强制校验 token。暴露到公网时建议 true
+      LIME_STREAM_REQUIRE_AUTH: "false"
+
+      # ---- TMDB 刮削 ----
+      # Key 放 .env：LIME_TMDB_API_KEY=...
+      LIME_TMDB_API_KEY: "${LIME_TMDB_API_KEY:-}"
+      LIME_TMDB_LANGUAGE: "zh-CN"
+      # 国内访问 TMDB 需要代理；容器内不能用 127.0.0.1
+      LIME_TMDB_PROXY: "${LIME_TMDB_PROXY:-}"
+
+      # ---- 媒体信息探测（ffprobe 读远程元数据，结果缓存）----
+      LIME_PROBE_ENABLED: "true"
+      LIME_PROBE_WORKERS: "2"
+      LIME_PROBE_TIMEOUT: "30s"
+
+    volumes:
+      # SQLite 数据库、海报缓存、日志
+      - ./data:/data
+      # 改成你自己的 STRM 目录。只读即可
+      - /path/to/your/strm:/media:ro
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:886/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
