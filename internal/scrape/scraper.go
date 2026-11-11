@@ -88,6 +88,11 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger) *Scraper {
 
 const scrapeStatusKey = "scrape_status"
 
+// recheckInterval 是「补缺任务」的重试间隔。TMDB 本身没有评分/类型/
+// 时长/剧照的条目，每天重查没有意义；隔 30 天再试一次，也能覆盖
+// TMDB 后来补数据的情况。
+const recheckInterval = 30 * 24 * time.Hour
+
 // loadStatus 恢复上次运行的进度摘要；Running 在进程重启后一律视为 false。
 func (s *Scraper) loadStatus() {
 	raw, err := s.db.GetSetting(scrapeStatusKey)
@@ -398,6 +403,8 @@ func (s *Scraper) run() (int, error) {
 	s.startAt = time.Now()
 	s.mu.Unlock()
 
+	checkedBefore := time.Now().Add(-recheckInterval).Unix()
+
 	movies, err := s.db.ItemsForScrape(store.TypeMovie)
 	if err != nil {
 		return 0, err
@@ -412,31 +419,31 @@ func (s *Scraper) run() (int, error) {
 	}
 
 	// 已刮过但没时长的条目：老库升级后补一次。
-	missingMovies, err := s.db.ItemsMissingRuntime(store.TypeMovie)
+	missingMovies, err := s.db.ItemsMissingRuntime(store.TypeMovie, checkedBefore)
 	if err != nil {
 		return 0, err
 	}
-	missingSeasons, err := s.db.SeriesSeasonsMissingEpisodeRuntime()
+	missingSeasons, err := s.db.SeriesSeasonsMissingEpisodeRuntime(checkedBefore)
 	if err != nil {
 		return 0, err
 	}
-	missingGenresMovies, err := s.db.ItemsMissingGenres(store.TypeMovie)
+	missingGenresMovies, err := s.db.ItemsMissingGenres(store.TypeMovie, checkedBefore)
 	if err != nil {
 		return 0, err
 	}
-	missingGenresSeries, err := s.db.ItemsMissingGenres(store.TypeSeries)
+	missingGenresSeries, err := s.db.ItemsMissingGenres(store.TypeSeries, checkedBefore)
 	if err != nil {
 		return 0, err
 	}
-	missingStills, err := s.db.SeriesSeasonsMissingEpisodeStill()
+	missingStills, err := s.db.SeriesSeasonsMissingEpisodeStill(checkedBefore)
 	if err != nil {
 		return 0, err
 	}
-	missingRatingsMovies, err := s.db.ItemsMissingOfficialRating(store.TypeMovie)
+	missingRatingsMovies, err := s.db.ItemsMissingOfficialRating(store.TypeMovie, checkedBefore)
 	if err != nil {
 		return 0, err
 	}
-	missingRatingsSeries, err := s.db.ItemsMissingOfficialRating(store.TypeSeries)
+	missingRatingsSeries, err := s.db.ItemsMissingOfficialRating(store.TypeSeries, checkedBefore)
 	if err != nil {
 		return 0, err
 	}
@@ -563,7 +570,8 @@ func (s *Scraper) run() (int, error) {
 						if j.kind == 2 {
 							_ = s.db.MarkTreeScraped(j.item.ID)
 						} else {
-							_ = s.db.UpdateItemMetadata(j.item.ID, store.MetadataUpdate{})
+							// 404 也算尝试过，避免补齐队列每天重查同一批死 ID。
+							_ = s.db.UpdateItemMetadata(j.item.ID, store.MetadataUpdate{MetadataChecked: true})
 						}
 						s.log.Info("scrape skipped (tmdb 404)", "item", j.item.ID, "name", j.item.Name)
 					} else {
@@ -724,6 +732,10 @@ func (s *Scraper) backfillStills(ctx context.Context, seasons []store.SeriesSeas
 			}
 			count++
 		}
+		// 拿到季详情就算补过一轮；TMDB 这一季没有剧照也不会每天重拉。
+		if ss.SeasonID != "" {
+			_ = s.db.MarkSeasonStillsChecked(ss.SeasonID)
+		}
 		s.advance()
 		s.pace()
 	}
@@ -743,8 +755,9 @@ func (s *Scraper) backfillGenres(ctx context.Context, movies, series []*store.It
 		} else {
 			s.savePeopleImages(m.Credits.Cast)
 			if err := s.db.UpdateItemMetadata(it.ID, store.MetadataUpdate{
-				Genres: genresJSON(m.Genres),
-				People: peopleJSON(m.Credits.Cast),
+				MetadataChecked: true,
+				Genres:          genresJSON(m.Genres),
+				People:          peopleJSON(m.Credits.Cast),
 			}); err != nil {
 				s.log.Warn("update movie genres failed", "item", it.ID, "err", err)
 			} else {
@@ -765,8 +778,9 @@ func (s *Scraper) backfillGenres(ctx context.Context, movies, series []*store.It
 		} else {
 			s.savePeopleImages(tv.Credits.Cast)
 			if err := s.db.UpdateItemMetadata(it.ID, store.MetadataUpdate{
-				Genres: genresJSON(tv.Genres),
-				People: peopleJSON(tv.Credits.Cast),
+				MetadataChecked: true,
+				Genres:          genresJSON(tv.Genres),
+				People:          peopleJSON(tv.Credits.Cast),
 			}); err != nil {
 				s.log.Warn("update series genres failed", "item", it.ID, "err", err)
 			} else {
@@ -1000,6 +1014,10 @@ func (s *Scraper) backfillRuntime(ctx context.Context, movies []*store.Item, sea
 			}
 			count++
 		}
+		// 拿到季详情就算补过一轮；TMDB 没有单集时长也不会每天重拉整季。
+		if ss.SeasonID != "" {
+			_ = s.db.MarkSeasonRuntimeChecked(ss.SeasonID)
+		}
 		s.advance()
 		s.pace()
 	}
@@ -1067,6 +1085,7 @@ func (s *Scraper) scrapeMovie(ctx context.Context, it *store.Item) error {
 		BackdropPath:    backdrop,
 		LogoPath:        logo,
 		LogoChecked:     logoChecked,
+		MetadataChecked: true,
 		Genres:          genresJSON(m.Genres),
 		People:          peopleJSON(m.Credits.Cast),
 		OfficialRating:  m.Certification(),
@@ -1129,6 +1148,7 @@ func (s *Scraper) scrapeSeries(ctx context.Context, it *store.Item) error {
 		BackdropPath:    backdrop,
 		LogoPath:        logo,
 		LogoChecked:     logoChecked,
+		MetadataChecked: true,
 		Genres:          genresJSON(tv.Genres),
 		People:          peopleJSON(tv.Credits.Cast),
 		OfficialRating:  tv.ContentRating(),

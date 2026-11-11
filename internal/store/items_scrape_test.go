@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestScrapeMetadataSurvivesRescan(t *testing.T) {
 	db := newTestDB(t)
@@ -71,13 +74,14 @@ func TestMissingRuntimeQueries(t *testing.T) {
 	if err := db.UpdateItemMetadata("m1", MetadataUpdate{Overview: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if items, err := db.ItemsMissingRuntime(TypeMovie); err != nil || len(items) != 1 {
+	before := time.Now().Unix()
+	if items, err := db.ItemsMissingRuntime(TypeMovie, before); err != nil || len(items) != 1 {
 		t.Fatalf("missing runtime movies = %v %v", items, err)
 	}
 	if err := db.UpdateItemRuntime("m1", 90*60*10_000_000); err != nil {
 		t.Fatal(err)
 	}
-	if items, err := db.ItemsMissingRuntime(TypeMovie); err != nil || len(items) != 0 {
+	if items, err := db.ItemsMissingRuntime(TypeMovie, before); err != nil || len(items) != 0 {
 		t.Fatalf("movie still missing runtime: %v %v", items, err)
 	}
 
@@ -93,14 +97,14 @@ func TestMissingRuntimeQueries(t *testing.T) {
 	if err := db.UpdateEpisodeMetadata("e1", "第一集", "", "", 0, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	seasons, err := db.SeriesSeasonsMissingEpisodeRuntime()
+	seasons, err := db.SeriesSeasonsMissingEpisodeRuntime(before)
 	if err != nil || len(seasons) != 1 || seasons[0].SeriesID != "s1" || seasons[0].Season != 1 {
 		t.Fatalf("missing runtime seasons = %+v %v", seasons, err)
 	}
 	if err := db.UpdateItemRuntime("e1", 45*60*10_000_000); err != nil {
 		t.Fatal(err)
 	}
-	if seasons, err := db.SeriesSeasonsMissingEpisodeRuntime(); err != nil || len(seasons) != 0 {
+	if seasons, err := db.SeriesSeasonsMissingEpisodeRuntime(before); err != nil || len(seasons) != 0 {
 		t.Fatalf("season still missing runtime: %+v %v", seasons, err)
 	}
 }
@@ -196,7 +200,8 @@ func TestMissingEpisodeStills(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	seasons, err := db.SeriesSeasonsMissingEpisodeStill()
+	before := time.Now().Unix()
+	seasons, err := db.SeriesSeasonsMissingEpisodeStill(before)
 	if err != nil || len(seasons) != 1 || seasons[0].SeriesID != "s1" || seasons[0].Season != 1 {
 		t.Fatalf("missing stills = %+v %v", seasons, err)
 	}
@@ -204,8 +209,108 @@ func TestMissingEpisodeStills(t *testing.T) {
 	if err := db.UpdateItemImage("e1", "images/still.jpg"); err != nil {
 		t.Fatal(err)
 	}
-	if seasons, err := db.SeriesSeasonsMissingEpisodeStill(); err != nil || len(seasons) != 0 {
+	if seasons, err := db.SeriesSeasonsMissingEpisodeStill(before); err != nil || len(seasons) != 0 {
 		t.Fatalf("still still missing: %+v %v", seasons, err)
+	}
+}
+
+// TMDB 本身没有评分/类型/时长的条目，尝试一次后应退出补齐队列，
+// 不能每天重复请求。
+func TestMissingMetadataConverges(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	movie, _ := db.GetItem("m1")
+	movie.TmdbID = "99"
+	if err := db.UpsertItem(movie); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE items SET run_time_ticks = 0, official_rating = '', genres = '' WHERE id = 'm1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateItemMetadata("m1", MetadataUpdate{Overview: "x"}); err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().Unix()
+	if items, err := db.ItemsMissingOfficialRating(TypeMovie, before); err != nil || len(items) != 1 {
+		t.Fatalf("missing ratings = %v %v", items, err)
+	}
+	if items, err := db.ItemsMissingGenres(TypeMovie, before); err != nil || len(items) != 1 {
+		t.Fatalf("missing genres = %v %v", items, err)
+	}
+	if items, err := db.ItemsMissingRuntime(TypeMovie, before); err != nil || len(items) != 1 {
+		t.Fatalf("missing runtime = %v %v", items, err)
+	}
+
+	// TMDB 三个字段都返回空，仍要记一次尝试
+	if err := db.UpdateItemRating("m1", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateItemRuntime("m1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateItemMetadata("m1", MetadataUpdate{MetadataChecked: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if items, err := db.ItemsMissingOfficialRating(TypeMovie, before); err != nil || len(items) != 0 {
+		t.Fatalf("ratings not converged: %v %v", items, err)
+	}
+	if items, err := db.ItemsMissingGenres(TypeMovie, before); err != nil || len(items) != 0 {
+		t.Fatalf("genres not converged: %v %v", items, err)
+	}
+	if items, err := db.ItemsMissingRuntime(TypeMovie, before); err != nil || len(items) != 0 {
+		t.Fatalf("runtime not converged: %v %v", items, err)
+	}
+
+	// 过了重试间隔还会再试一次
+	later := time.Now().Add(31 * 24 * time.Hour).Unix()
+	if items, err := db.ItemsMissingGenres(TypeMovie, later); err != nil || len(items) != 1 {
+		t.Fatalf("genres should retry after interval: %v %v", items, err)
+	}
+}
+
+// 季级补缺（单集剧照/时长）同样要收敛，并带回季 ID 用于标记。
+func TestMissingSeasonWorkConverges(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	series, _ := db.GetItem("s1")
+	series.TmdbID = "123"
+	if err := db.UpsertItem(series); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateItemMetadata("s1", MetadataUpdate{Overview: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	// e1 已刮削但无剧照、无时长
+	if err := db.UpdateEpisodeMetadata("e1", "第一集", "", "", 0, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().Unix()
+	stillSeasons, err := db.SeriesSeasonsMissingEpisodeStill(before)
+	if err != nil || len(stillSeasons) != 1 || stillSeasons[0].SeasonID != "se1" {
+		t.Fatalf("missing stills = %+v %v", stillSeasons, err)
+	}
+	runtimeSeasons, err := db.SeriesSeasonsMissingEpisodeRuntime(before)
+	if err != nil || len(runtimeSeasons) != 1 || runtimeSeasons[0].SeasonID != "se1" {
+		t.Fatalf("missing runtime = %+v %v", runtimeSeasons, err)
+	}
+
+	if err := db.MarkSeasonStillsChecked("se1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MarkSeasonRuntimeChecked("se1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if seasons, err := db.SeriesSeasonsMissingEpisodeStill(before); err != nil || len(seasons) != 0 {
+		t.Fatalf("stills not converged: %+v %v", seasons, err)
+	}
+	if seasons, err := db.SeriesSeasonsMissingEpisodeRuntime(before); err != nil || len(seasons) != 0 {
+		t.Fatalf("runtime not converged: %+v %v", seasons, err)
 	}
 }
 

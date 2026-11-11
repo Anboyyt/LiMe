@@ -154,16 +154,20 @@ type MetadataUpdate struct {
 	BackdropPath    string
 	LogoPath        string
 	// LogoChecked 表示这次刮削已经尝试过 logo（含 TMDB 没有 logo 的情况）。
-	LogoChecked    bool
-	Genres         string
-	People         string
-	OfficialRating string
+	LogoChecked bool
+	// MetadataChecked 表示这次刮削已经尝试过类型/分级/时长，
+	// 即使 TMDB 返回空值也算一次，避免补齐任务每天重复请求。
+	MetadataChecked bool
+	Genres          string
+	People          string
+	OfficialRating  string
 }
 
 // UpdateItemMetadata 写回电影/剧集/季的刮削结果，并打上 scraped_at。
 // 注意不要动 updated_at：扫描器靠它判断条目是否还存在。
 func (d *DB) UpdateItemMetadata(id string, m MetadataUpdate) error {
 	score := RatingScore(m.OfficialRating)
+	now := time.Now().Unix()
 	_, err := d.Exec(`
 UPDATE items SET
   overview         = CASE WHEN ? <> '' THEN ? ELSE overview END,
@@ -175,6 +179,9 @@ UPDATE items SET
   backdrop_path    = CASE WHEN ? <> '' THEN ? ELSE backdrop_path END,
   logo_path        = CASE WHEN ? <> '' THEN ? ELSE logo_path END,
   logo_checked     = CASE WHEN ? THEN 1 ELSE logo_checked END,
+  genres_checked_at  = CASE WHEN ? THEN ? ELSE genres_checked_at END,
+  rating_checked_at  = CASE WHEN ? THEN ? ELSE rating_checked_at END,
+  runtime_checked_at = CASE WHEN ? THEN ? ELSE runtime_checked_at END,
   genres           = CASE WHEN ? <> '' THEN ? ELSE genres END,
   people           = CASE WHEN ? <> '' THEN ? ELSE people END,
   official_rating  = CASE WHEN ? <> '' THEN ? ELSE official_rating END,
@@ -190,11 +197,14 @@ WHERE id = ?`,
 		m.BackdropPath, m.BackdropPath,
 		m.LogoPath, m.LogoPath,
 		m.LogoChecked,
+		m.MetadataChecked, now,
+		m.MetadataChecked, now,
+		m.MetadataChecked, now,
 		m.Genres, m.Genres,
 		m.People, m.People,
 		m.OfficialRating, m.OfficialRating,
 		score, score,
-		time.Now().Unix(), id,
+		now, id,
 	)
 	return err
 }
@@ -228,12 +238,15 @@ WHERE id = ?`,
 }
 
 // UpdateItemRating 只补分级，不动其他元数据。
+// 即使 rating 为空也记一次尝试时间：TMDB 没分级的条目不用每天重试。
 func (d *DB) UpdateItemRating(id, rating string) error {
+	now := time.Now().Unix()
 	if rating == "" {
-		return nil
+		_, err := d.Exec(`UPDATE items SET rating_checked_at = ? WHERE id = ?`, now, id)
+		return err
 	}
-	_, err := d.Exec(`UPDATE items SET official_rating = ?, rating_score = ? WHERE id = ?`,
-		rating, RatingScore(rating), id)
+	_, err := d.Exec(`UPDATE items SET official_rating = ?, rating_score = ?, rating_checked_at = ? WHERE id = ?`,
+		rating, RatingScore(rating), now, id)
 	return err
 }
 
@@ -299,12 +312,14 @@ func (d *DB) UpdateItemLogo(id, logoPath string) error {
 	return err
 }
 
-// ItemsMissingOfficialRating 返回已刮过但分级仍为空的条目，用于老库补全。
-func (d *DB) ItemsMissingOfficialRating(typ string) ([]*Item, error) {
+// ItemsMissingOfficialRating 返回已刮过但分级仍为空、且距上次尝试已超过
+// checkedBefore 的条目，用于老库补全。
+func (d *DB) ItemsMissingOfficialRating(typ string, checkedBefore int64) ([]*Item, error) {
 	rows, err := d.Query(`
 SELECT `+itemColumns+` FROM items
 WHERE type = ? AND tmdb_id <> '' AND scraped_at > 0 AND official_rating = ''
-ORDER BY sort_name`, typ)
+  AND rating_checked_at < ?
+ORDER BY sort_name`, typ, checkedBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -373,11 +388,29 @@ func (d *DB) BackfillRatingScores() error {
 }
 
 // UpdateItemRuntime 只补时长，不动其他元数据。
+// 即使 ticks 为 0 也记一次尝试时间，避免 TMDB 无时长时每天重试。
 func (d *DB) UpdateItemRuntime(id string, ticks int64) error {
+	now := time.Now().Unix()
 	if ticks <= 0 {
-		return nil
+		_, err := d.Exec(`UPDATE items SET runtime_checked_at = ? WHERE id = ?`, now, id)
+		return err
 	}
-	_, err := d.Exec(`UPDATE items SET run_time_ticks = ? WHERE id = ?`, ticks, id)
+	_, err := d.Exec(`UPDATE items SET run_time_ticks = ?, runtime_checked_at = ? WHERE id = ?`,
+		ticks, now, id)
+	return err
+}
+
+// MarkSeasonStillsChecked 记录某一季的单集剧照已经补过一轮。
+func (d *DB) MarkSeasonStillsChecked(seasonID string) error {
+	_, err := d.Exec(`UPDATE items SET episode_stills_checked_at = ? WHERE id = ?`,
+		time.Now().Unix(), seasonID)
+	return err
+}
+
+// MarkSeasonRuntimeChecked 记录某一季的单集时长已经补过一轮。
+func (d *DB) MarkSeasonRuntimeChecked(seasonID string) error {
+	_, err := d.Exec(`UPDATE items SET episode_runtime_checked_at = ? WHERE id = ?`,
+		time.Now().Unix(), seasonID)
 	return err
 }
 
@@ -403,12 +436,14 @@ ORDER BY sort_name`, typ)
 	return out, rows.Err()
 }
 
-// ItemsMissingRuntime 返回已刮削、但还没有时长的条目（电影用）。
-func (d *DB) ItemsMissingRuntime(typ string) ([]*Item, error) {
+// ItemsMissingRuntime 返回已刮过但时长仍为空、且距上次尝试已超过
+// checkedBefore 的条目（电影用）。
+func (d *DB) ItemsMissingRuntime(typ string, checkedBefore int64) ([]*Item, error) {
 	rows, err := d.Query(`
 SELECT `+itemColumns+` FROM items
 WHERE type = ? AND tmdb_id <> '' AND scraped_at > 0 AND run_time_ticks = 0
-ORDER BY sort_name`, typ)
+  AND runtime_checked_at < ?
+ORDER BY sort_name`, typ, checkedBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -450,12 +485,14 @@ ORDER BY created_at DESC LIMIT ?`, libraryID, limit)
 	return out, rows.Err()
 }
 
-// ItemsMissingGenres 返回已刮削、但还没有类型/演员的条目。
-func (d *DB) ItemsMissingGenres(typ string) ([]*Item, error) {
+// ItemsMissingGenres 返回已刮削、但还没有类型/演员、且距上次尝试已超过
+// checkedBefore 的条目。
+func (d *DB) ItemsMissingGenres(typ string, checkedBefore int64) ([]*Item, error) {
 	rows, err := d.Query(`
 SELECT `+itemColumns+` FROM items
 WHERE type = ? AND tmdb_id <> '' AND scraped_at > 0 AND genres = ''
-ORDER BY sort_name`, typ)
+  AND genres_checked_at < ?
+ORDER BY sort_name`, typ, checkedBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -544,6 +581,7 @@ func (d *DB) OfficialRatingsIn(libraryIDs []string) ([]string, error) {
 
 // SeriesSeason 标记某一季里还有单集缺时长。
 type SeriesSeason struct {
+	SeasonID string
 	SeriesID string
 	TmdbID   string
 	Season   int
@@ -551,16 +589,17 @@ type SeriesSeason struct {
 
 // SeriesSeasonsMissingEpisodeStill 找出还在共用季海报的单集，
 // 按季聚合后统一去 TMDB 拉剧照。
-func (d *DB) SeriesSeasonsMissingEpisodeStill() ([]SeriesSeason, error) {
+func (d *DB) SeriesSeasonsMissingEpisodeStill(checkedBefore int64) ([]SeriesSeason, error) {
 	rows, err := d.Query(`
-SELECT DISTINCT e.series_id, s.tmdb_id, e.parent_index_number
+SELECT DISTINCT se.id, e.series_id, s.tmdb_id, e.parent_index_number
 FROM items e
 JOIN items s ON s.id = e.series_id
 JOIN items se ON se.id = e.season_id
 WHERE e.type = 'Episode' AND e.scraped_at > 0 AND s.tmdb_id <> ''
   AND e.parent_index_number > 0
   AND (e.image_path = '' OR e.image_path = se.image_path)
-ORDER BY s.tmdb_id, e.parent_index_number`)
+  AND se.episode_stills_checked_at < ?
+ORDER BY s.tmdb_id, e.parent_index_number`, checkedBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +608,7 @@ ORDER BY s.tmdb_id, e.parent_index_number`)
 	out := make([]SeriesSeason, 0, 16)
 	for rows.Next() {
 		var ss SeriesSeason
-		if err := rows.Scan(&ss.SeriesID, &ss.TmdbID, &ss.Season); err != nil {
+		if err := rows.Scan(&ss.SeasonID, &ss.SeriesID, &ss.TmdbID, &ss.Season); err != nil {
 			return nil, err
 		}
 		out = append(out, ss)
@@ -587,14 +626,16 @@ func (d *DB) UpdateItemImage(id, imagePath string) error {
 }
 
 // SeriesSeasonsMissingEpisodeRuntime 按季聚合缺时长的单集，避免逐集请求 TMDB。
-func (d *DB) SeriesSeasonsMissingEpisodeRuntime() ([]SeriesSeason, error) {
+func (d *DB) SeriesSeasonsMissingEpisodeRuntime(checkedBefore int64) ([]SeriesSeason, error) {
 	rows, err := d.Query(`
-SELECT DISTINCT e.series_id, s.tmdb_id, e.parent_index_number
+SELECT DISTINCT COALESCE(se.id, ''), e.series_id, s.tmdb_id, e.parent_index_number
 FROM items e
 JOIN items s ON s.id = e.series_id
+LEFT JOIN items se ON se.id = e.season_id
 WHERE e.type = 'Episode' AND e.run_time_ticks = 0 AND e.scraped_at > 0
   AND s.tmdb_id <> '' AND e.parent_index_number > 0
-ORDER BY s.tmdb_id, e.parent_index_number`)
+  AND COALESCE(se.episode_runtime_checked_at, 0) < ?
+ORDER BY s.tmdb_id, e.parent_index_number`, checkedBefore)
 	if err != nil {
 		return nil, err
 	}
@@ -603,7 +644,7 @@ ORDER BY s.tmdb_id, e.parent_index_number`)
 	out := make([]SeriesSeason, 0, 16)
 	for rows.Next() {
 		var ss SeriesSeason
-		if err := rows.Scan(&ss.SeriesID, &ss.TmdbID, &ss.Season); err != nil {
+		if err := rows.Scan(&ss.SeasonID, &ss.SeriesID, &ss.TmdbID, &ss.Season); err != nil {
 			return nil, err
 		}
 		out = append(out, ss)
