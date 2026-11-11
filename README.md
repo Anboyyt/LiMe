@@ -16,7 +16,7 @@
 
 ## 快速开始
 
-镜像支持 `linux/amd64` 和 `linux/arm64`。
+预构建镜像由 GitHub Actions 发布，支持 `linux/amd64` 和 `linux/arm64`。
 
 ### 方式一：用预构建镜像
 
