@@ -52,6 +52,7 @@ services:
 #   LIME_TMDB_PROXY: "http://192.168.1.100:7890"
 #
 # 其余默认值：
-#   LIME_DATA_DIR=/data  LIME_ADMIN_USER=admin  每次启动不扫描
+#   LIME_DATA_DIR=/data  LIME_ADMIN_USER=admin
 #   LIME_REALTIME_MONITOR=true  LIME_PROBE_ENABLED=true
 #   LIME_SCRAPE_WORKERS=3  LIME_SCRAPE_RATE_MS=50
+#   LIME_SCAN_ON_START 默认 true，这里显式关掉所以大库首次启动不扫描
