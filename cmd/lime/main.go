@@ -22,6 +22,76 @@ import (
 	"lime/internal/store"
 )
 
+// autoDetectLibraries 在没配 LIME_LIBRARIES 时按目录结构自动建库：
+// 根目录下的一级子目录视为分类，目录名用于推断类型。若识别不出任何
+// 分类名，就把根目录本身注册成一个混合库。
+func autoDetectLibraries(roots []string) []config.LibrarySpec {
+	if len(roots) == 0 {
+		for _, d := range []string{"/media", "/strm"} {
+			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				roots = append(roots, d)
+			}
+		}
+	}
+
+	out := make([]config.LibrarySpec, 0, 8)
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		var names []string
+		for _, e := range entries {
+			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+				names = append(names, e.Name())
+			}
+		}
+		if len(names) == 0 {
+			out = append(out, config.LibrarySpec{Name: filepath.Base(root), Path: root, Kind: "mixed"})
+			continue
+		}
+
+		specs := make([]config.LibrarySpec, 0, len(names))
+		recognized := 0
+		for _, name := range names {
+			kind := inferLibraryKind(name)
+			if kind != "mixed" {
+				recognized++
+			}
+			specs = append(specs, config.LibrarySpec{
+				Name: name,
+				Path: filepath.Join(root, name),
+				Kind: kind,
+			})
+		}
+		// 一个都认不出来，说明根目录本身就是单个媒体库。
+		if recognized == 0 {
+			out = append(out, config.LibrarySpec{Name: filepath.Base(root), Path: root, Kind: "mixed"})
+			continue
+		}
+		out = append(out, specs...)
+	}
+	return out
+}
+
+// inferLibraryKind 按目录名猜库类型；猜不出来的留给用户配置
+// LIME_LIBRARIES 或在面板里改。
+func inferLibraryKind(name string) string {
+	n := strings.ToLower(name)
+	switch {
+	case strings.Contains(n, "演唱"), strings.Contains(n, "电影"),
+		strings.Contains(n, "movie"), strings.Contains(n, "film"):
+		return "movies"
+	case strings.Contains(n, "剧"), strings.Contains(n, "动漫"), strings.Contains(n, "动画"),
+		strings.Contains(n, "综艺"), strings.Contains(n, "纪录"), strings.Contains(n, "儿童"),
+		strings.Contains(n, "tv"), strings.Contains(n, "show"), strings.Contains(n, "series"),
+		strings.Contains(n, "anime"):
+		return "tvshows"
+	default:
+		return "mixed"
+	}
+}
+
 func main() {
 	cfg := config.Load()
 
@@ -81,7 +151,16 @@ func main() {
 		os.Exit(1)
 	}
 	if len(existing) == 0 {
-		for _, spec := range cfg.Libraries {
+		specs := cfg.Libraries
+		if len(specs) == 0 {
+			// 没配 LIME_LIBRARIES 时按挂载目录自动建库：一级子目录
+			// 当作分类（电影/剧集/动漫…），目录名用于推断类型。
+			specs = autoDetectLibraries(cfg.LibraryRoots)
+			for _, spec := range specs {
+				logger.Info("library auto-detected", "name", spec.Name, "path", spec.Path, "kind", spec.Kind)
+			}
+		}
+		for _, spec := range specs {
 			lib, err := db.UpsertLibrary(spec.Name, spec.Path, spec.Kind)
 			if err != nil {
 				logger.Error("register library", "name", spec.Name, "path", spec.Path, "err", err)

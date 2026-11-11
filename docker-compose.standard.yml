@@ -21,10 +21,9 @@ services:
       LIME_SERVER_NAME: "LiMe"
       LIME_ADMIN_PASSWORD: "change-me"   # 首次启动时创建，之后改密码不覆盖
 
-      # 媒体库：名称|容器内路径|类型，多个用英文分号分隔
-      # 类型：movies（电影）/ tvshows（剧集、动漫、综艺）/ mixed（混合）
-      LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows;动漫|/media/动漫|tvshows"
-      LIME_LIBRARY_ROOTS: "/media"
+      # 首次启动没有库时，会自动把 /media 下的一级目录识别成媒体库：
+      # 电影 → movies，剧集/动漫/综艺/纪录片 → tvshows，其余 → mixed。
+      # 想手动指定就加 LIME_LIBRARIES，格式 "名称|路径|类型;名称|路径|类型"。
 
       # 大库启动时不做全量扫描；小库可删掉这行
       LIME_SCAN_ON_START: "false"
