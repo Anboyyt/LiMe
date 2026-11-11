@@ -1,0 +1,100 @@
+# LiMe 标准部署
+#
+# 用法：
+#   1. 复制本文件为 docker-compose.yml
+#   2. 改下方 volumes 里的 STRM 目录，以及管理员密码
+#   3. docker compose up -d
+#
+# 敏感项建议放同目录 .env（不要提交到仓库）：
+#   LIME_ADMIN_PASSWORD=你的密码
+#   LIME_TMDB_API_KEY=xxxx
+#   LIME_REWRITE_FROM=192.168.1.100:16868
+#   LIME_REWRITE_LOCAL=192.168.1.100:16868
+#   LIME_REWRITE_PUBLIC=https://pansave.example.com
+#   LIME_TMDB_PROXY=http://192.168.1.100:7890
+
+services:
+  lime:
+    image: lixxh/lime:latest
+    container_name: lime
+    restart: unless-stopped
+    ports:
+      - "886:886"
+
+    environment:
+      TZ: Asia/Shanghai
+
+      # ---- 基础 ----
+      # 客户端媒体库里显示的服务器名
+      LIME_SERVER_NAME: "LiMe"
+      # 数据目录（容器内），对应 volumes 的 ./data
+      LIME_DATA_DIR: "/data"
+      # 初始管理员，只在首次启动时创建，之后改密码不会被覆盖
+      LIME_ADMIN_USER: "${LIME_ADMIN_USER:-admin}"
+      LIME_ADMIN_PASSWORD: "${LIME_ADMIN_PASSWORD:-change-me}"
+
+      # ---- 媒体库 ----
+      # 格式：名称|容器内路径|类型；多个库用英文分号分隔
+      # 类型：movies（电影）/ tvshows（剧集/动漫/综艺）/ mixed（混合）
+      LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows;动漫|/media/动漫|tvshows;综艺|/media/综艺|tvshows"
+      # 运维面板里新建库时允许的根路径，多个用逗号分隔
+      LIME_LIBRARY_ROOTS: "/media"
+
+      # ---- 扫描与监控 ----
+      # 启动时全量扫描；大库建议 false，启动后手动触发或等定时任务
+      LIME_SCAN_ON_START: "${LIME_SCAN_ON_START:-false}"
+      # 定时全量扫描间隔，留空关闭，例如 "6h"
+      LIME_SCAN_INTERVAL: "${LIME_SCAN_INTERVAL:-}"
+      # 每天固定时间增量扫描（HH:MM），留空关闭
+      LIME_SCAN_DAILY_AT: "${LIME_SCAN_DAILY_AT:-03:30}"
+      # 实时监听媒体目录，PanSave 写入新 .strm 后立即入库
+      LIME_REALTIME_MONITOR: "${LIME_REALTIME_MONITOR:-true}"
+
+      # ---- STRM 302 地址改写 ----
+      # 局域网直连可保持 false；外网访问必须打开，否则客户端会去连
+      # 不可达的内网 PanSave 地址。
+      LIME_REWRITE_ENABLED: "${LIME_REWRITE_ENABLED:-false}"
+      LIME_REWRITE_FROM: "${LIME_REWRITE_FROM:-}"
+      LIME_REWRITE_LOCAL: "${LIME_REWRITE_LOCAL:-}"
+      LIME_REWRITE_PUBLIC: "${LIME_REWRITE_PUBLIC:-}"
+
+      # 播放端点强制校验 token。默认 false 兼容 Infuse 等播放器；
+      # 把 886 暴露到公网时建议 true。
+      LIME_STREAM_REQUIRE_AUTH: "${LIME_STREAM_REQUIRE_AUTH:-false}"
+
+      # PanSave 反代探测 PlaybackInfo 时使用的上游地址（可选）。
+      # 客户端直连 LiMe 时留空；经 PanSave 反代时填 PanSave 能访问的地址。
+      LIME_INTERNAL_URL: "${LIME_INTERNAL_URL:-}"
+      # PanSave 只暴露反代端口时打开：302 前先跟一跳取最终 CDN 地址
+      LIME_RESOLVE_REDIRECT: "${LIME_RESOLVE_REDIRECT:-true}"
+
+      # ---- TMDB 刮削 ----
+      LIME_TMDB_API_KEY: "${LIME_TMDB_API_KEY:-}"
+      LIME_TMDB_LANGUAGE: "zh-CN"
+      # 国内直连 api.themoviedb.org 不通；容器内不能用 127.0.0.1
+      LIME_TMDB_PROXY: "${LIME_TMDB_PROXY:-}"
+      LIME_SCRAPE_WORKERS: "3"
+      LIME_SCRAPE_RATE_MS: "50"
+      LIME_SCRAPE_TIMEOUT: "6h"
+
+      # ---- 媒体信息探测（ffprobe 读远程元数据，结果缓存）----
+      LIME_PROBE_ENABLED: "true"
+      LIME_PROBE_WORKERS: "2"
+      LIME_PROBE_TIMEOUT: "30s"
+      LIME_PROBE_SYNC_WAIT: "3s"
+
+      # 第三方集成排查用；正常可关
+      LIME_HTTP_LOG: "${LIME_HTTP_LOG:-false}"
+
+    volumes:
+      # SQLite、海报缓存、日志
+      - ./data:/data
+      # 改成你自己的 STRM 目录（PanSave 输出目录），只读即可
+      - /path/to/your/strm:/media:ro
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:886/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
