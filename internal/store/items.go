@@ -1069,6 +1069,74 @@ func isASCIILetters(s string) bool {
 	return true
 }
 
+// ItemChildren 统计剧集/季的子项数量，用于补 Jellyfin 的 ChildCount
+// 和 RecursiveItemCount。seasonCounts 是季的集数，seriesSeasons 是
+// 剧的季数，seriesEpisodes 是剧的总集数。
+func (d *DB) ItemChildren(seriesIDs, seasonIDs []string) (map[string]int, map[string]int, map[string]int, error) {
+	seasonCounts := make(map[string]int, len(seasonIDs))
+	seriesSeasons := make(map[string]int, len(seriesIDs))
+	seriesEpisodes := make(map[string]int, len(seriesIDs))
+
+	if len(seasonIDs) > 0 {
+		args := make([]any, 0, len(seasonIDs))
+		for _, id := range seasonIDs {
+			args = append(args, id)
+		}
+		rows, err := d.Query(`SELECT season_id, COUNT(*) FROM items
+WHERE type = 'Episode' AND season_id IN (`+placeholders(len(seasonIDs))+`)
+GROUP BY season_id`, args...)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for rows.Next() {
+			var id string
+			var n int
+			if err := rows.Scan(&id, &n); err != nil {
+				rows.Close()
+				return nil, nil, nil, err
+			}
+			seasonCounts[id] = n
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+
+	if len(seriesIDs) > 0 {
+		args := make([]any, 0, len(seriesIDs))
+		for _, id := range seriesIDs {
+			args = append(args, id)
+		}
+		rows, err := d.Query(`SELECT series_id, type, COUNT(*) FROM items
+WHERE series_id IN (`+placeholders(len(seriesIDs))+`) AND type IN ('Episode', 'Season')
+GROUP BY series_id, type`, args...)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for rows.Next() {
+			var id, typ string
+			var n int
+			if err := rows.Scan(&id, &typ, &n); err != nil {
+				rows.Close()
+				return nil, nil, nil, err
+			}
+			if typ == TypeSeason {
+				seriesSeasons[id] = n
+			} else {
+				seriesEpisodes[id] = n
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	return seasonCounts, seriesSeasons, seriesEpisodes, nil
+}
+
 func placeholders(n int) string {
 	if n <= 0 {
 		return ""

@@ -262,7 +262,7 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 	}
 
 	ids := make([]string, 0, len(items))
-	var seriesIDs, seasonIDs []string
+	var seriesIDs, seasonIDs, episodeParentIDs []string
 	for _, it := range items {
 		ids = append(ids, it.ID)
 		switch it.Type {
@@ -270,6 +270,14 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 			seriesIDs = append(seriesIDs, it.ID)
 		case store.TypeSeason:
 			seasonIDs = append(seasonIDs, it.ID)
+		case store.TypeEpisode:
+			// 部分客户端（网易爆米花等）按 SeriesName/SeasonName 分组渲染集列表。
+			if it.SeriesID != "" {
+				episodeParentIDs = append(episodeParentIDs, it.SeriesID)
+			}
+			if it.SeasonID != "" {
+				episodeParentIDs = append(episodeParentIDs, it.SeasonID)
+			}
 		}
 	}
 
@@ -293,6 +301,23 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 		}
 	}
 
+	// ChildCount / RecursiveItemCount 是 Jellyfin 的标准字段，缺了会让
+	// 部分客户端认为季是空的不渲染集列表。
+	seasonCounts, seriesSeasons, seriesEpisodes, err := h.db.ItemChildren(seriesIDs, seasonIDs)
+	if err != nil {
+		h.log.Warn("load child counts", "err", err)
+	}
+
+	var parentNames map[string]string
+	if len(episodeParentIDs) > 0 {
+		parentNames = make(map[string]string, len(episodeParentIDs))
+		if parents, err := h.db.ItemsByIDs(episodeParentIDs); err == nil {
+			for id, p := range parents {
+				parentNames[id] = p.Name
+			}
+		}
+	}
+
 	for _, it := range items {
 		var ps *store.Playstate
 		if s, ok := states[it.ID]; ok {
@@ -304,8 +329,20 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 		switch it.Type {
 		case store.TypeSeries:
 			applyAggregate(d.UserData, seriesProgress[it.ID])
+			if n, ok := seriesSeasons[it.ID]; ok {
+				d.ChildCount = &n
+			}
+			if n, ok := seriesEpisodes[it.ID]; ok {
+				d.RecursiveItemCount = &n
+			}
 		case store.TypeSeason:
 			applyAggregate(d.UserData, seasonProgress[it.ID])
+			if n, ok := seasonCounts[it.ID]; ok {
+				d.ChildCount = &n
+			}
+		case store.TypeEpisode:
+			d.SeriesName = parentNames[it.SeriesID]
+			d.SeasonName = parentNames[it.SeasonID]
 		}
 		out = append(out, d)
 	}

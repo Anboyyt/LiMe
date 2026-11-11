@@ -30,7 +30,11 @@ type BaseItemDto struct {
 	Type                    string            `json:"Type"`
 	MediaType               string            `json:"MediaType,omitempty"`
 	IsFolder                bool              `json:"IsFolder"`
-	ParentId                string            `json:"ParentId,omitempty"`
+	// ChildCount 是直接子项数（剧→季数、季→集数）；
+	// RecursiveItemCount 是剧的总集数。部分客户端靠它决定是否渲染集列表。
+	ChildCount         *int   `json:"ChildCount,omitempty"`
+	RecursiveItemCount *int   `json:"RecursiveItemCount,omitempty"`
+	ParentId           string `json:"ParentId,omitempty"`
 	SeriesId                string            `json:"SeriesId,omitempty"`
 	SeasonId                string            `json:"SeasonId,omitempty"`
 	SeriesName              string            `json:"SeriesName,omitempty"`
