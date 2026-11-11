@@ -1,7 +1,7 @@
 services:
   lime:
     build: .
-    # 想直接用 Docker Hub 上的镜像，设 LIME_IMAGE=xxbot/lime:latest 并去掉 build
+    # 想直接用 Docker Hub 上的镜像，设 LIME_IMAGE=lixxh/lime:latest 并去掉 build
     image: ${LIME_IMAGE:-lime:latest}
     container_name: lime
     restart: unless-stopped

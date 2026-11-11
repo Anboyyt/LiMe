@@ -1,7 +1,7 @@
 # LiMe
 
 [![docker](https://github.com/Anboyyt/LiMe/actions/workflows/docker.yml/badge.svg)](https://github.com/Anboyyt/LiMe/actions/workflows/docker.yml)
-[![Docker Pulls](https://img.shields.io/docker/pulls/xxbot/lime)](https://hub.docker.com/r/xxbot/lime)
+[![Docker Pulls](https://img.shields.io/docker/pulls/lixxh/lime)](https://hub.docker.com/r/lixxh/lime)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 一个用 Go 写的轻量媒体服务器，**兼容 Jellyfin 客户端**，专为「网盘 STRM + 302 直连」场景设计。
@@ -29,10 +29,10 @@ docker run -d --name lime \
   -e LIME_LIBRARIES="电影|/strm/电影|movies;剧集|/strm/剧集|tvshows" \
   -e LIME_ADMIN_USER=admin \
   -e LIME_ADMIN_PASSWORD=change-me \
-  xxbot/lime:latest
+  lixxh/lime:latest
 ```
 
-或者在 `docker-compose.yml` 里把 `build: .` 换成 `image: xxbot/lime:latest`。
+或者在 `docker-compose.yml` 里把 `build: .` 换成 `image: lixxh/lime:latest`。
 
 ### 方式二：从源码构建
 
