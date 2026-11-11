@@ -1,5 +1,9 @@
 # LiMe
 
+[![docker](https://github.com/Anboyyt/LiMe/actions/workflows/docker.yml/badge.svg)](https://github.com/Anboyyt/LiMe/actions/workflows/docker.yml)
+[![Docker Pulls](https://img.shields.io/docker/pulls/xxbot/lime)](https://hub.docker.com/r/xxbot/lime)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 一个用 Go 写的轻量媒体服务器，**兼容 Jellyfin 客户端**，专为「网盘 STRM + 302 直连」场景设计。
 
 服务端不接触视频字节、不转码、不缓存 URL —— 播放时只回一个 `302`，让客户端直连云盘。
@@ -12,12 +16,35 @@
 
 ## 快速开始
 
+镜像支持 `linux/amd64` 和 `linux/arm64`。
+
+### 方式一：用预构建镜像
+
 ```bash
-docker compose up -d
+docker run -d --name lime \
+  --restart unless-stopped \
+  -p 886:886 \
+  -v /path/to/data:/data \
+  -v /path/to/strm:/strm:ro \
+  -e LIME_LIBRARIES="电影|/strm/电影|movies;剧集|/strm/剧集|tvshows" \
+  -e LIME_ADMIN_USER=admin \
+  -e LIME_ADMIN_PASSWORD=change-me \
+  xxbot/lime:latest
+```
+
+或者在 `docker-compose.yml` 里把 `build: .` 换成 `image: xxbot/lime:latest`。
+
+### 方式二：从源码构建
+
+```bash
+docker compose up -d --build
 ```
 
 打开 `http://<服务器IP>:886` 就是媒体界面，用首次启动自动创建的账号登录；
 运维面板在 `http://<服务器IP>:886/web/`。
+
+> 首次启动会自动扫描 `LIME_LIBRARIES` 指定的目录。扫描大库时建议设置
+> `LIME_SCAN_ON_START=false`，启动后在面板里手动触发。
 
 ## Web 界面
 
