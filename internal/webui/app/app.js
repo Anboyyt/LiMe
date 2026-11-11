@@ -13,6 +13,12 @@
 
   const TYPE = { Movie: '电影', Series: '剧集', Season: '季', Episode: '单集' };
 
+  // 产品版本（/health 公开接口，不依赖登录）
+  fetch('/health').then((r) => r.json()).then((d) => {
+    const el = $('#brandVer');
+    if (el && d && d.productVersion) el.textContent = ' ' + d.productVersion;
+  }).catch(() => {});
+
   // ---------- 主题 ----------
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;

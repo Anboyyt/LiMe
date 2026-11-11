@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"lime/internal/dto"
+	"lime/internal/version"
 )
 
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
@@ -12,6 +13,8 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 		"status":  "ok",
 		"name":    "LiMe",
 		"version": h.cfg.Version,
+		// 产品版本与 Jellyfin 协议版本分开，便于外部检查部署的是哪一版。
+		"productVersion": version.Version,
 	})
 }
 

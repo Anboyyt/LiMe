@@ -7,13 +7,17 @@ import (
 	"lime/internal/library"
 	"lime/internal/scrape"
 	"lime/internal/store"
+	"lime/internal/version"
 )
 
 // webStats 是运维面板首页的数据。只读，不涉及播放。
 type webStats struct {
-	ServerName    string         `json:"ServerName"`
-	Version       string         `json:"Version"`
-	ServerID      string         `json:"ServerId"`
+	ServerName string `json:"ServerName"`
+	// Version 是伪装给 Jellyfin 客户端的协议版本，客户端会做兼容校验。
+	Version string `json:"Version"`
+	// ProductVersion 是 LiMe 自身的发布版本，仅用于展示。
+	ProductVersion string `json:"ProductVersion"`
+	ServerID       string `json:"ServerId"`
 	StartedAt     int64          `json:"StartedAt"`
 	UptimeSec     int64          `json:"UptimeSec"`
 	Scan          library.Status `json:"Scan"`
@@ -40,9 +44,10 @@ func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, webStats{
-		ServerName:    h.cfg.ServerName,
-		Version:       h.cfg.Version,
-		ServerID:      h.serverID,
+		ServerName:     h.cfg.ServerName,
+		Version:        h.cfg.Version,
+		ProductVersion: version.Version,
+		ServerID:       h.serverID,
 		StartedAt:     h.startedAt.Unix(),
 		UptimeSec:     int64(time.Since(h.startedAt).Seconds()),
 		Scan:          h.scanner.Status(),

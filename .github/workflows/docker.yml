@@ -48,5 +48,6 @@ jobs:
           build-args: |
             GOPROXY=https://proxy.golang.org,direct
             APK_MIRROR=dl-cdn.alpinelinux.org
+            LIME_VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'edge' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

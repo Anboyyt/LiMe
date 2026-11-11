@@ -203,7 +203,7 @@
     const scan = s.Scan || {};
     const dot = scan.Running ? 'running' : (scan.LastError ? 'fail' : 'done');
     $('#sideFoot').innerHTML =
-      `${esc(s.ServerName)} v${esc(s.Version)}<br>
+      `${esc(s.ServerName)} <span class="muted">${esc(s.ProductVersion || 'dev')}</span><br>
        已运行 ${fmtUptime(s.UptimeSec || 0)}<br>
        <span class="dot ${dot}"></span> ${scan.Running ? '扫描中' : '空闲'}`;
   }
@@ -953,7 +953,7 @@
   // ---------- 系统 ----------
   async function renderSystem() {
     $('#crumb').textContent = '系统';
-    const [info, cfg, scan, settings, backdrops, posters, failures] = await Promise.all([
+    const [info, cfg, scan, settings, backdrops, posters, failures, stats] = await Promise.all([
       api('/System/Info'),
       api('/System/Configuration'),
       api('/web/api/scan'),
@@ -961,11 +961,13 @@
       api('/web/api/images/backdrops'),
       api('/web/api/images/posters'),
       api('/web/api/scrape/failures?limit=1'),
+      api('/web/api/stats'),
     ]);
     const fc = (k) => (failures.Counts && failures.Counts[k]) || 0;
     const infoRows = [
       ['服务器名', info.ServerName],
-      ['版本', info.Version],
+      ['LiMe 版本', stats.ProductVersion || 'dev'],
+      ['Jellyfin 兼容版本', info.Version],
       ['服务器 ID', info.Id],
       ['地址', info.LocalAddress],
       ['数据目录', info.ProgramDataPath],
