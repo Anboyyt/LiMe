@@ -34,7 +34,9 @@ type BaseItemDto struct {
 	// RecursiveItemCount 是剧的总集数。部分客户端靠它决定是否渲染集列表。
 	ChildCount         *int   `json:"ChildCount,omitempty"`
 	RecursiveItemCount *int   `json:"RecursiveItemCount,omitempty"`
-	ParentId           string `json:"ParentId,omitempty"`
+	// MediaSourceCount 是片源数量；部分客户端用它判断条目是否可播放。
+	MediaSourceCount int    `json:"MediaSourceCount,omitempty"`
+	ParentId         string `json:"ParentId,omitempty"`
 	SeriesId                string            `json:"SeriesId,omitempty"`
 	SeasonId                string            `json:"SeasonId,omitempty"`
 	SeriesName              string            `json:"SeriesName,omitempty"`

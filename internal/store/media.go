@@ -187,6 +187,47 @@ FROM media_sources WHERE item_id = ? ORDER BY sort_rank, size DESC, id`, itemID)
 	return out, rows.Err()
 }
 
+// MediaSourcesByItems 批量查询片源，按 item_id 分组，用于列表接口
+// 一次性补齐 MediaSources / MediaSourceCount。
+func (d *DB) MediaSourcesByItems(itemIDs []string) (map[string][]*MediaSource, error) {
+	out := make(map[string][]*MediaSource, len(itemIDs))
+	if len(itemIDs) == 0 {
+		return out, nil
+	}
+
+	args := make([]any, 0, len(itemIDs))
+	for _, id := range itemIDs {
+		args = append(args, id)
+	}
+	rows, err := d.Query(`
+SELECT id, item_id, strm_path, url, cloud, drive_id, cloud_file_id, sha1_etag,
+       size, container, file_name, version_name, sort_rank,
+       duration_ticks, probe_status, strm_mtime, strm_size, updated_at
+FROM media_sources WHERE item_id IN (`+placeholders(len(itemIDs))+`)
+ORDER BY item_id, sort_rank, size DESC, id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			s   MediaSource
+			upd int64
+		)
+		if err := rows.Scan(
+			&s.ID, &s.ItemID, &s.StrmPath, &s.URL, &s.Cloud, &s.DriveID, &s.CloudFileID,
+			&s.SHA1ETag, &s.Size, &s.Container, &s.FileName, &s.VersionName, &s.SortRank,
+			&s.DurationTicks, &s.ProbeStatus, &s.StrmMtime, &s.StrmSize, &upd,
+		); err != nil {
+			return nil, err
+		}
+		s.UpdatedAt = time.Unix(upd, 0)
+		out[s.ItemID] = append(out[s.ItemID], &s)
+	}
+	return out, rows.Err()
+}
+
 func (d *DB) GetMediaSource(id string) (*MediaSource, error) {
 	var (
 		s   MediaSource

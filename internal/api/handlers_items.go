@@ -200,6 +200,37 @@ func (h *Handler) itemToDto(it *store.Item, ps *store.Playstate, fields ...itemF
 	return d
 }
 
+// simpleMediaSources 给列表响应生成精简片源信息。详情/播放仍走
+// PlaybackInfo，这里只提供客户端列表渲染需要的字段。
+func simpleMediaSources(it *store.Item, srcs []*store.MediaSource) []dto.MediaSourceDto {
+	out := make([]dto.MediaSourceDto, 0, len(srcs))
+	for _, s := range srcs {
+		name := s.VersionName
+		if name == "" {
+			name = s.FileName
+		}
+		if name == "" {
+			name = "默认"
+		}
+		out = append(out, dto.MediaSourceDto{
+			Protocol:             "Http",
+			Id:                   s.ID,
+			Path:                 s.StrmPath,
+			Type:                 "Default",
+			Name:                 name,
+			Container:            s.Container,
+			Size:                 s.Size,
+			IsRemote:             true,
+			SupportsDirectPlay:   true,
+			SupportsDirectStream: true,
+			SupportsTranscoding:  false,
+			RunTimeTicks:         it.RunTimeTicks,
+			MediaStreams:         []dto.MediaStreamDto{},
+		})
+	}
+	return out
+}
+
 func parseGenres(raw string) []string {
 	out := []string{}
 	if raw == "" {
@@ -318,6 +349,13 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 		}
 	}
 
+	// 片源信息：部分客户端（网易爆米花）靠 MediaSources / MediaSourceCount
+	// 判断条目能否播放，缺了会把集卡片渲染成空骨架。
+	sourcesByItem, err := h.db.MediaSourcesByItems(ids)
+	if err != nil {
+		h.log.Warn("load media sources", "err", err)
+	}
+
 	for _, it := range items {
 		var ps *store.Playstate
 		if s, ok := states[it.ID]; ok {
@@ -343,6 +381,15 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 		case store.TypeEpisode:
 			d.SeriesName = parentNames[it.SeriesID]
 			d.SeasonName = parentNames[it.SeasonID]
+			if srcs := sourcesByItem[it.ID]; len(srcs) > 0 {
+				d.MediaSourceCount = len(srcs)
+				d.MediaSources = simpleMediaSources(it, srcs)
+			}
+		case store.TypeMovie:
+			if srcs := sourcesByItem[it.ID]; len(srcs) > 0 {
+				d.MediaSourceCount = len(srcs)
+				d.MediaSources = simpleMediaSources(it, srcs)
+			}
 		}
 		out = append(out, d)
 	}
