@@ -58,7 +58,7 @@ docker run -d --name lime \
 ```bash
 git clone https://github.com/Anboyyt/LiMe.git
 cd LiMe
-docker compose up -d --build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
 
 打开 `http://<服务器IP>:886` 就是媒体界面，用首次启动自动创建的账号登录；

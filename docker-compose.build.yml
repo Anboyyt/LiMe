@@ -1,0 +1,10 @@
+# 源码构建覆盖文件，配合根 docker-compose.yml 使用：
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# 构建出的镜像会直接覆盖 lixxh/lime:latest 这个本地标签。
+
+services:
+  lime:
+    build: .
+    image: lixxh/lime:latest
