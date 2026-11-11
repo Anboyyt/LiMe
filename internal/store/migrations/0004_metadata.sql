@@ -1,0 +1,3 @@
+-- 刮削的类型和演员（JSON 文本，避免拆表）
+ALTER TABLE items ADD COLUMN genres TEXT NOT NULL DEFAULT '';
+ALTER TABLE items ADD COLUMN people TEXT NOT NULL DEFAULT '';

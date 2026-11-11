@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiMe</title>
+  <link rel="stylesheet" href="/app/app.css">
+</head>
+<body>
+  <div id="loadingBar" class="loading-bar"></div>
+
+  <!-- 登录 -->
+  <div id="login" class="login hidden">
+    <form class="login-card" id="loginForm">
+      <div class="logo">LiMe</div>
+      <p class="muted">登录媒体库</p>
+      <input id="luser" placeholder="用户名" autocomplete="username" required>
+      <input id="lpass" type="password" placeholder="密码" autocomplete="current-password" required>
+      <button class="btn primary" type="submit">登录</button>
+      <p id="loginErr" class="err hidden"></p>
+    </form>
+  </div>
+
+  <!-- 主界面 -->
+  <div id="app" class="app hidden">
+    <header class="topbar">
+      <a class="brand" href="#/">LiMe</a>
+      <nav id="nav"></nav>
+      <div class="spacer"></div>
+      <input id="search" placeholder="搜索电影、剧集">
+      <button id="themeBtn" class="icon-btn" title="切换亮/暗主题">☀</button>
+      <a class="icon-btn" href="/web/" title="运维面板">⚙</a>
+      <span id="userName" class="muted"></span>
+      <button id="logout" class="icon-btn" title="退出">⏻</button>
+    </header>
+    <main id="view"></main>
+  </div>
+
+  <!-- 播放器 -->
+  <div id="player" class="player hidden">
+    <div class="player-box">
+      <div class="player-head">
+        <span id="playerTitle"></span>
+        <button id="playerClose" class="icon-btn">✕</button>
+      </div>
+      <video id="video" controls playsinline></video>
+      <div class="player-foot">
+        <div class="player-controls">
+          <label>片源
+            <select id="playerSrc"></select>
+          </label>
+          <label>倍速
+            <select id="playerRate">
+              <option value="0.75">0.75×</option>
+              <option value="1" selected>1×</option>
+              <option value="1.25">1.25×</option>
+              <option value="1.5">1.5×</option>
+              <option value="2">2×</option>
+            </select>
+          </label>
+          <label>字幕
+            <select id="playerSub"><option value="">关闭</option></select>
+          </label>
+          <span id="playerHint" class="muted"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/app/app.js"></script>
+</body>
+</html>

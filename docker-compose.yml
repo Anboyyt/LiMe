@@ -1,0 +1,107 @@
+services:
+  lime:
+    build: .
+    image: lime:latest
+    container_name: lime
+    restart: unless-stopped
+    ports:
+      - "886:886"
+    environment:
+      TZ: Asia/Shanghai
+
+      # 服务显示名（客户端里看到的服务器名）
+      LIME_SERVER_NAME: "LiMe"
+
+
+      # 数据目录（容器内），映射到宿主机 ./data
+      LIME_DATA_DIR: "/data"
+
+      # 初始管理员，首次启动时创建；之后改密码不会覆盖
+      LIME_ADMIN_USER: "admin"
+      LIME_ADMIN_PASSWORD: "change-me"
+
+      # 媒体库：名称|容器内路径|类型(movies / tvshows / mixed / auto)
+      # 多库用分号分隔；名称和分类可以自己改。
+      LIME_LIBRARIES: "电影|/strm/电影|movies;剧集|/strm/剧集|tvshows;动漫|/strm/动漫|tvshows;综艺|/strm/综艺|tvshows;纪录片|/strm/纪录片|mixed;短剧|/strm/短剧|tvshows;儿童节目|/strm/儿童节目|mixed;演唱会|/strm/演唱会|movies"
+      # 面板里新建库允许的根路径（容器内），多个用逗号分隔
+      LIME_LIBRARY_ROOTS: "/strm"
+
+      # 大库全量扫描约 16 分钟，日常重启不自动扫。
+      # 需要刷新时调 POST /Library/Refresh 或面板手动扫描。
+      LIME_SCAN_ON_START: "false"
+      # 定时重扫间隔，留空关闭。例如 "6h"、"30m"
+      LIME_SCAN_INTERVAL: ""
+      # 每天固定时间做增量扫描（HH:MM，容器时区），留空关闭。
+      LIME_SCAN_DAILY_AT: "03:30"
+      # 实时监控媒体库目录（类似 Emby 的实时监控）：PanSave 写入新 .strm
+      # 后立即增量解析并补刮削，不依赖 PanSave 的入库通知。
+      LIME_REALTIME_MONITOR: "true"
+
+      # ---- STRM 302 地址改写 ----
+      # STRM 里存的是 PanSave 地址。局域网访问可保持 false 直连；
+      # 外网访问必须打开，否则客户端会去连一个不可达的内网地址。
+      LIME_REWRITE_ENABLED: "false"
+      # 实际值放同目录 .env（不进仓库），例如：
+      #   LIME_REWRITE_FROM=192.168.1.100:16868
+      LIME_REWRITE_FROM: "${LIME_REWRITE_FROM:-}"
+      LIME_REWRITE_LOCAL: "${LIME_REWRITE_LOCAL:-}"
+      LIME_REWRITE_PUBLIC: "${LIME_REWRITE_PUBLIC:-}"
+
+      # 播放端点是否强制校验 token。默认 false 兼容各类播放器（Infuse 等）；
+      # 把 886 暴露到公网时建议改成 "true"。
+      LIME_STREAM_REQUIRE_AUTH: "false"
+
+      # PanSave 反代探测 PlaybackInfo.MediaSources[].Path 时使用的上游地址。
+      # 必须是 PanSave 能直接访问的地址；不能写公网域名，否则会回环。
+      # 客户端直连 LiMe（不经反代）时留空。实际值放 .env。
+      LIME_INTERNAL_URL: "${LIME_INTERNAL_URL:-}"
+
+      # PanSave 只暴露反代端口（没有公网 PanSave 直链域名）时打开：
+      # LiMe 在 302 前先跟一跳 PanSave → 云盘 CDN，把最终地址给客户端。
+      LIME_RESOLVE_REDIRECT: "true"
+
+      # 临时排查第三方集成：记录 API 请求路径（不记录图片/静态资源）
+      LIME_HTTP_LOG: "true"
+
+      # ---- TMDB 刮削（M4）----
+      # key 放在同目录 .env（不进仓库、不同步）：LIME_TMDB_API_KEY=...
+      LIME_TMDB_API_KEY: "${LIME_TMDB_API_KEY:-}"
+      LIME_TMDB_LANGUAGE: "zh-CN"
+      # 国内直连 api.themoviedb.org 不通，走 mihomo；注意容器内不能用 127.0.0.1
+      LIME_TMDB_PROXY: "${LIME_TMDB_PROXY:-}"
+      # 刮削不再跟随扫描；在面板「系统 → 定时任务」单独设置每日刮削时间。
+      # 并发 worker 数（默认 3，上限 8）与全局请求间隔（默认 50ms = 20 req/s）
+      LIME_SCRAPE_WORKERS: "3"
+      LIME_SCRAPE_RATE_MS: "50"
+      # 单次刮削任务超时（默认 6h）
+      LIME_SCRAPE_TIMEOUT: "6h"
+
+      # ---- Telegram 播放通知 ----
+      # 推荐直接在面板「系统 → Telegram 播放通知」填写，会落到数据库并即时生效。
+      # 下面三个也可以放 .env：token/chat 都填了且没显式设 LIME_TG_NOTIFY 时自动开启。
+      LIME_TG_BOT_TOKEN: "${LIME_TG_BOT_TOKEN:-}"
+      LIME_TG_CHAT_ID: "${LIME_TG_CHAT_ID:-}"
+      # 服务器直连 api.telegram.org 不通时填代理，例如 http://192.168.1.100:7890
+      LIME_TG_PROXY: "${LIME_TG_PROXY:-}"
+      # 留空 = 有 token+chat 就自动开启；true/false 强制开关
+      LIME_TG_NOTIFY: "${LIME_TG_NOTIFY:-}"
+      LIME_TG_EVENTS: "start,pause,resume,stop"
+
+      # ---- 媒体信息探测（ffprobe 远程读取 HEAD/元数据，结果缓存）----
+      LIME_PROBE_ENABLED: "true"
+      LIME_PROBE_WORKERS: "2"
+      LIME_PROBE_TIMEOUT: "30s"
+      # PlaybackInfo 最多同步等多久；设为 0s 则完全异步（首次播放不等待）
+      LIME_PROBE_SYNC_WAIT: "3s"
+
+    volumes:
+      - ./data:/data
+      # 大库（约 29 万 STRM）；测试库 /vol1/1000/飞牛影视/影视
+      - /vol1/1000/影视:/strm:ro
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:886/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

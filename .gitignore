@@ -1,0 +1,16 @@
+# 构建产物（只匹配仓库根目录，别把 cmd/lime/ 目录吃掉）
+/lime
+/lime.exe
+/lime-linux-amd64
+*.exe
+
+# 本地数据与配置（含 TMDB Key / Telegram Token，绝不入库）
+data/
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# 内部文档（含部署路径、内网地址，不入开源仓库）
+AGENT_PROMPT.md
+TEAM.md

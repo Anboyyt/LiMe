@@ -1,0 +1,3 @@
+-- M6：用户与凭据管理
+ALTER TABLE users ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE access_tokens ADD COLUMN name TEXT NOT NULL DEFAULT '';

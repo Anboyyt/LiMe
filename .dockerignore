@@ -1,0 +1,15 @@
+data/
+strm/
+*.db
+*.db-shm
+*.db-wal
+.git/
+.github/
+.gitignore
+README.md
+AGENT_PROMPT.md
+TEAM.md
+*.exe
+lime-linux-amd64
+
+.env

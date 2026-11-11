@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiMe · 运维面板</title>
+  <link rel="stylesheet" href="style.css?v=20">
+</head>
+<body>
+  <!-- 登录 -->
+  <div id="login" class="login hidden">
+    <form class="login-card" id="loginForm">
+      <div class="logo">LiMe</div>
+      <p class="muted">媒体服务器运维面板</p>
+      <input id="luser" placeholder="用户名" autocomplete="username" required>
+      <input id="lpass" type="password" placeholder="密码" autocomplete="current-password" required>
+      <button class="primary" type="submit">登录</button>
+      <p id="loginErr" class="err hidden"></p>
+    </form>
+  </div>
+
+  <!-- 主界面 -->
+  <div id="app" class="app hidden">
+    <aside class="side">
+      <div class="brand"><b>LiMe</b><span>运维面板</span></div>
+      <nav id="nav">
+        <a href="#/overview" data-nav="overview">概览</a>
+        <div class="nav-title">媒体库</div>
+        <div id="navLibs"></div>
+        <div class="nav-title">其他</div>
+        <a href="#/libraries" id="navLibraries" data-nav="libraries">媒体库管理</a>
+        <a href="#/sessions" data-nav="sessions">会话</a>
+        <a href="#/history" id="navHistory" data-nav="history">播放记录</a>
+        <a href="#/notify" id="navNotify" data-nav="notify">通知</a>
+        <a href="#/users" id="navUsers" data-nav="users">用户</a>
+        <a href="#/keys" id="navKeys" data-nav="keys">API Key</a>
+        <a href="#/system" data-nav="system">系统</a>
+      </nav>
+      <div class="side-foot" id="sideFoot"></div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div id="crumb" class="crumb">概览</div>
+        <input id="search" placeholder="搜索标题，回车">
+        <button id="scanBtn" class="ghost" title="触发一次全量扫描">立即扫描</button>
+        <a class="back-media" href="/" title="返回媒体库">← 返回媒体库</a>
+        <span id="userName" class="muted"></span>
+        <button id="themeBtn" class="ghost" title="切换亮/暗主题">☀</button>
+        <button id="logout" class="ghost">退出</button>
+      </header>
+      <section id="view"></section>
+    </main>
+  </div>
+
+  <!-- 文件夹选择弹窗 -->
+  <div id="dirModal" class="modal hidden">
+    <div class="modal-card dir-modal-card">
+      <h3>选择文件夹</h3>
+      <div class="dir-current" id="dirCurrent"></div>
+      <div class="dir-list" id="dirList"></div>
+      <div class="modal-actions">
+        <button type="button" id="dirUp">上一级</button>
+        <button type="button" id="dirCancel">取消</button>
+        <button type="button" id="dirPick" class="primary">选择当前文件夹</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 媒体库权限弹窗 -->
+  <div id="libAccessModal" class="modal hidden">
+    <div class="modal-card access-modal">
+      <h3 id="libAccessTitle">媒体库权限</h3>
+      <p class="muted" style="margin-top:0">勾选该用户可见的媒体库；全部勾选表示不限制。</p>
+      <div id="libAccessList" class="access-list"></div>
+      <div class="modal-actions">
+        <button type="button" id="libAccessCancel">取消</button>
+        <button type="button" id="libAccessSave" class="primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 密码弹窗 -->
+  <div id="pwModal" class="modal hidden">
+    <form class="modal-card" id="pwForm">
+      <h3 id="pwTitle">修改密码</h3>
+      <input id="pwCurrent" type="password" placeholder="当前密码" autocomplete="current-password">
+      <input id="pwNew" type="password" placeholder="新密码" autocomplete="new-password">
+      <input id="pwConfirm" type="password" placeholder="确认新密码" autocomplete="new-password">
+      <p id="pwErr" class="err hidden"></p>
+      <div class="modal-actions">
+        <button type="button" id="pwCancel">取消</button>
+        <button type="submit" class="primary">确定</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js?v=28"></script>
+</body>
+</html>
