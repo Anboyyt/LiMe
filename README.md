@@ -3,7 +3,6 @@
 [![docker](https://github.com/Anboyyt/LiMe/actions/workflows/docker.yml/badge.svg)](https://github.com/Anboyyt/LiMe/actions/workflows/docker.yml)
 [![Docker Pulls](https://img.shields.io/docker/pulls/lixxh/lime)](https://hub.docker.com/r/lixxh/lime)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Telegram](https://img.shields.io/badge/Telegram-@Lime__see-26A5E4?logo=telegram&logoColor=white)](https://t.me/Lime_see)
 
 一个用 Go 写的轻量媒体服务器，**兼容 Jellyfin 客户端**，专为「网盘 STRM + 302 直连」场景设计。
 
@@ -554,12 +553,6 @@ internal/
 ```
 
 ---
-
-## 社区与更新
-
-- Telegram 频道：<https://t.me/Lime_see> —— 版本发布、变更说明和已知问题都发在这里
-- 每次打 `v*` tag，CI 会自动建 GitHub Release 并把版本信息和升级命令推送到频道
-- Docker Hub：<https://hub.docker.com/r/lixxh/lime>
 
 ## 许可证
 
