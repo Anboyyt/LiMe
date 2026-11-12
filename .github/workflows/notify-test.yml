@@ -1,0 +1,34 @@
+name: notify-test
+
+# 手动触发一条测试消息，用来确认 Telegram 配置是否正确。
+# 在 Actions → notify-test → Run workflow 运行，结果看这个 job 的 Summary。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send test message
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "${TG_TOKEN}" ] || [ -z "${TG_CHAT}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 未配置"
+            exit 1
+          fi
+          echo "chat_id=${TG_CHAT}（长度 ${#TG_CHAT}）"
+          resp=$(curl -sS --retry 3 --retry-delay 5 \
+            -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "text=LiMe 通知测试" \
+            --data-urlencode "disable_web_page_preview=true" \
+            -w "\nHTTP %{http_code}") || true
+          echo "$resp"
+          { echo '```'; echo "chat_id=${TG_CHAT}"; echo "$resp"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          case "$resp" in
+            *'"ok":true'*) echo "发送成功" ;;
+            *) echo "::error::发送失败，看上面的 Telegram 返回"; exit 1 ;;
+          esac

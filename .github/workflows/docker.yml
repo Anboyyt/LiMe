@@ -70,11 +70,16 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           VER="${TAG#v}"
           MSG=$(printf '<b>LiMe %s 已发布</b>\n\n镜像：<code>lixxh/lime:%s</code> / <code>latest</code>\n平台：linux/amd64 · linux/arm64\n升级：<code>docker compose pull && docker compose up -d</code>\n\n%s' "$TAG" "$VER" "https://github.com/${GITHUB_REPOSITORY}")
-          if ! curl -fsS --retry 3 --retry-delay 5 \
+          resp=$(curl -sS --retry 3 --retry-delay 5 \
             -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TG_CHAT}" \
             --data-urlencode "text=${MSG}" \
             --data-urlencode "parse_mode=HTML" \
-            --data-urlencode "disable_web_page_preview=true"; then
-            echo "Telegram 通知失败（不影响发布）"
-          fi
+            --data-urlencode "disable_web_page_preview=true" \
+            -w "\nHTTP %{http_code}") || true
+          echo "$resp"
+          { echo '```'; echo "$resp"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          case "$resp" in
+            *'"ok":true'*) echo "Telegram 通知已发送" ;;
+            *) echo "Telegram 通知失败（不影响发布）" ;;
+          esac
