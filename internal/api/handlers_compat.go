@@ -130,7 +130,8 @@ func (h *Handler) genres(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// similarItems 暂不做相似推荐，返回空列表让客户端正常渲染详情页。
+// similarItems 返回同类型的相似条目（电影推电影、剧集推剧集），
+// 打分见 store.SimilarItems；客户端详情页和原生 UI 的「相似推荐」都用它。
 func (h *Handler) similarItems(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.requireUser(w, r)
 	if !ok {

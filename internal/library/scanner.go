@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -690,7 +691,7 @@ func (s *Scanner) apply(w applier, lib *store.Library, e entry) (string, error) 
 		}
 		movieSort := normalizeSort(title)
 		movieKey, moviePY, movieAbbr := pinyinKey(title, movieSort)
-		movieID := itemID(lib.ID, "movie", identityKey(meta, movieSort))
+		movieID := itemID(lib.ID, "movie", movieIdentityKey(meta, e.RelPath, movieSort))
 		item = &store.Item{
 			ID:             movieID,
 			LibraryID:      lib.ID,
@@ -792,6 +793,25 @@ func applyLocalMeta(item *store.Item, e entry) {
 func identityKey(meta strm.Metadata, fallback string) string {
 	if meta.TmdbID != "" {
 		return "tmdb:" + meta.TmdbID
+	}
+	if meta.Year > 0 {
+		return fallback + "#" + strconv.Itoa(meta.Year)
+	}
+	return fallback
+}
+
+// movieIdentityKey 决定同一部电影是否归并成一个条目（一个条目可以挂多个片源）。
+//
+// 有 TMDB ID 时以它为准；没有时按「所在目录」归并。一片一目录的结构里，同一目录
+// 常有两个 .strm——-C 后缀、cd1/cd2、中日文标题不同。早先按「标题#年份」算键，
+// 标题取自各自文件名，这些文件会各成一个条目；但它们又共用同目录的 poster.jpg，
+// 显示出来就是两张一模一样的卡片。
+func movieIdentityKey(meta strm.Metadata, relPath, fallback string) string {
+	if meta.TmdbID != "" {
+		return "tmdb:" + meta.TmdbID
+	}
+	if dir := path.Dir(filepath.ToSlash(relPath)); dir != "" && dir != "." && dir != "/" {
+		return "dir:" + dir
 	}
 	if meta.Year > 0 {
 		return fallback + "#" + strconv.Itoa(meta.Year)

@@ -138,6 +138,10 @@ func (s *Scraper) refreshPoster(ctx context.Context, it store.PosterItem) error 
 	if rel == "" || rel == it.ImagePath {
 		return nil
 	}
+	// 原本没有海报：只改这一条。走 ReplacePoster 的话空旧路径会命中所有空海报条目。
+	if it.ImagePath == "" {
+		return s.db.SetPoster(it.ID, rel)
+	}
 	if err := s.db.ReplacePoster(it.ImagePath, rel); err != nil {
 		return err
 	}

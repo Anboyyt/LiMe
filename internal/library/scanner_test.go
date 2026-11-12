@@ -12,6 +12,29 @@ import (
 	"lime/internal/strm"
 )
 
+// 没有 TMDB ID 的电影按目录归并：同一目录里的多个 .strm 是同一部片的不同文件，
+// 不能因为文件名不同就各成一个条目。
+func TestMovieIdentityKeyMergesSameDir(t *testing.T) {
+	same1 := movieIdentityKey(strm.Metadata{}, filepath.Join("艺术", "演员", "YUJ-057", "YUJ-057-C.strm"), "yuj-057-c")
+	same2 := movieIdentityKey(strm.Metadata{}, filepath.Join("艺术", "演员", "YUJ-057", "YUJ-057.strm"), "yuj-057")
+	if same1 != same2 {
+		t.Fatalf("同目录应归并: %q != %q", same1, same2)
+	}
+	other := movieIdentityKey(strm.Metadata{}, filepath.Join("艺术", "演员", "YUJ-058", "YUJ-058.strm"), "yuj-058")
+	if same1 == other {
+		t.Fatalf("不同目录不应归并: %q", same1)
+	}
+	// 有 TMDB ID 时仍以它为准，多版本目录照样合并。
+	withTmdb := movieIdentityKey(strm.Metadata{TmdbID: "123"}, filepath.Join("电影", "A (2020) {tmdb-123}", "1080p", "a.strm"), "a")
+	if withTmdb != "tmdb:123" {
+		t.Fatalf("tmdb key = %q", withTmdb)
+	}
+	// 库根目录下的孤立文件没有目录可用，退回标题#年份。
+	if got := movieIdentityKey(strm.Metadata{Year: 2020}, "x.strm", "x"); got != "x#2020" {
+		t.Fatalf("root fallback = %q", got)
+	}
+}
+
 func TestVersionRankPrefersBest(t *testing.T) {
 	order := []strm.Metadata{
 		{Height: 2160, VideoRange: "DoVi"},
@@ -290,6 +313,59 @@ func TestScanLocalImagesWithoutNFO(t *testing.T) {
 		return
 	}
 	t.Fatal("movie item not found")
+}
+
+// 同一目录里文件名不同（-C 后缀 / cd1、cd2）的两个 .strm 应归并成一个条目、两个片源。
+// 修复前它们会各成一个条目，但共用同目录的 poster.jpg，UI 上就是两张一模一样的卡片。
+func TestScanMergesSameFolderSTRMs(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "艺术", "演员", "YUJ-057")
+	writeStrm(t, filepath.Join(dir, "YUJ-057-C.strm"),
+		"http://192.168.1.155:16868/strm/115/drive?drive_id=1&file_id=11&size=1000&file_name=a.mp4")
+	writeStrm(t, filepath.Join(dir, "YUJ-057.strm"),
+		"http://192.168.1.155:16868/strm/115/drive?drive_id=1&file_id=12&size=1000&file_name=a.mp4")
+	if err := os.WriteFile(filepath.Join(dir, "poster.jpg"), []byte("img"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertLibrary("test", root, "movies"); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := New(db, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+	if _, err := sc.ScanAll(); err != nil {
+		t.Fatal(err)
+	}
+
+	libs, _ := db.ListLibraries()
+	items, _, err := db.QueryItems(store.ItemQuery{LibraryID: libs[0].ID, Recursive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var movies []*store.Item
+	for _, it := range items {
+		if it.Type == store.TypeMovie {
+			movies = append(movies, it)
+		}
+	}
+	if len(movies) != 1 {
+		t.Fatalf("movies = %d, want 1", len(movies))
+	}
+	n, err := db.CountSourcesForItem(movies[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("sources = %d, want 2", n)
+	}
 }
 
 func writeStrm(t *testing.T, path, content string) {

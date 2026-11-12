@@ -1187,8 +1187,20 @@ func scanItem(row interface {
 	return &it, nil
 }
 
-// SimilarItems 返回同类型、共享类型名最多的条目（排除自己）。
+// 相似推荐的打分权重：类型交集是主信号，同演员与评分次之，年份只做轻微修正。
+const (
+	similarGenreWeight  = 3.0
+	similarPeopleWeight = 2.0
+	similarRatingWeight = 0.3
+	similarYearPenalty  = 0.2
+	similarYearCap      = 10 // 年份差最多扣 similarYearCap*similarYearPenalty
+)
+
+// SimilarItems 返回与条目相似的条目（排除自己），电影只推电影、剧集只推剧集。
 // 单集/季按所属剧集计算。
+//
+// 打分 = 类型交集×3 + 同演员数×2 + 评分×0.3 - 年份差×0.2 + 有海报/简介的小加分。
+// 早先只按 created_at 倒序，结果其实是「最近入库的同类片」，和相似度无关。
 func (d *DB) SimilarItems(itemID string, limit int) ([]*Item, error) {
 	it, err := d.GetItem(itemID)
 	if err != nil {
@@ -1211,20 +1223,55 @@ func (d *DB) SimilarItems(itemID string, limit int) ([]*Item, error) {
 	if target.Genres != "" {
 		_ = json.Unmarshal([]byte(target.Genres), &genres)
 	}
+	// 没有类型标签就失去可信的相似信号，退回「最近入库的同类型」，
+	// 总比详情页缺一块推荐好。
+	if len(genres) == 0 {
+		return d.recentSameType(target.Type, target.ID, limit)
+	}
 
-	args := []any{target.Type, target.ID}
-	where := "type = ? AND id <> ?"
-	if len(genres) > 0 {
-		where += ` AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(genres) THEN genres ELSE '[]' END) g
-			WHERE g.value IN (` + placeholders(len(genres)) + `))`
-		for _, g := range genres {
-			args = append(args, g)
+	var people []string
+	if target.People != "" {
+		var ps []struct {
+			Name string `json:"Name"`
+		}
+		if json.Unmarshal([]byte(target.People), &ps) == nil {
+			for _, p := range ps {
+				if p.Name != "" {
+					people = append(people, p.Name)
+				}
+			}
 		}
 	}
-	args = append(args, limit)
 
-	rows, err := d.Query(`SELECT `+itemColumns+` FROM items WHERE `+where+
-		` ORDER BY created_at DESC LIMIT ?`, args...)
+	// 两个相关子查询都会为每个候选行跑一次 json_each。实测 115 库（电影 1.5 万、
+	// 剧集 0.7 万）最坏 95ms，够快；WHERE 里先按类型交集收窄候选集。
+	genreMatch := `(SELECT COUNT(*) FROM json_each(CASE WHEN json_valid(items.genres) THEN items.genres ELSE '[]' END) g
+		WHERE g.value IN (` + placeholders(len(genres)) + `))`
+
+	score := fmt.Sprintf("%g*%s", similarGenreWeight, genreMatch)
+	if len(people) > 0 {
+		peopleMatch := `(SELECT COUNT(*) FROM json_each(CASE WHEN json_valid(items.people) THEN items.people ELSE '[]' END) p
+			WHERE json_extract(p.value, '$.Name') IN (` + placeholders(len(people)) + `))`
+		score += fmt.Sprintf(" + %g*%s", similarPeopleWeight, peopleMatch)
+	}
+	score += fmt.Sprintf(` + %g*COALESCE(community_rating, 0)
+		+ CASE WHEN image_path <> '' THEN 1 ELSE 0 END
+		+ CASE WHEN overview <> '' THEN 0.5 ELSE 0 END
+		- CASE WHEN ? > 0 AND production_year > 0
+		       THEN %g * MIN(ABS(production_year - ?), %d) ELSE 0 END`,
+		similarRatingWeight, similarYearPenalty, similarYearCap)
+
+	// 占位符按 SQL 文本里出现的顺序排：WHERE 的类型交集 → ORDER BY 的打分。
+	args := []any{target.Type, target.ID}
+	args = append(args, toAnyArgs(genres)...)
+	args = append(args, toAnyArgs(genres)...)
+	args = append(args, toAnyArgs(people)...)
+	args = append(args, target.ProductionYear, target.ProductionYear, limit)
+
+	rows, err := d.Query(`SELECT `+itemColumns+` FROM items
+		WHERE type = ? AND id <> ? AND `+genreMatch+` > 0
+		ORDER BY (`+score+`) DESC, community_rating DESC, created_at DESC
+		LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1239,4 +1286,36 @@ func (d *DB) SimilarItems(itemID string, limit int) ([]*Item, error) {
 		out = append(out, item)
 	}
 	return out, rows.Err()
+}
+
+// recentSameType 是相似推荐的兜底：条目没有类型标签时按最近入库取同类型。
+func (d *DB) recentSameType(itemType, excludeID string, limit int) ([]*Item, error) {
+	rows, err := d.Query(`SELECT `+itemColumns+` FROM items
+		WHERE type = ? AND id <> ?
+		ORDER BY created_at DESC LIMIT ?`, itemType, excludeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]*Item, 0, limit)
+	for rows.Next() {
+		item, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func toAnyArgs(vals []string) []any {
+	if len(vals) == 0 {
+		return nil
+	}
+	out := make([]any, len(vals))
+	for i, v := range vals {
+		out[i] = v
+	}
+	return out
 }
