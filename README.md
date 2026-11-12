@@ -9,8 +9,11 @@
 服务端不接触视频字节、不转码、不缓存 URL —— 播放时只回一个 `302`，让客户端直连云盘。
 
 ```
-客户端 → LiMe → 302 → PanSave → 302 → 115/123 → 播放
+客户端 → LiMe → 302 → 115/123 CDN → 播放
 ```
+
+LiMe 在服务端替客户端跟一跳 PanSave 的 302（`LIME_RESOLVE_REDIRECT`），
+所以外网可以直接访问 LiMe，播放流量不必再绕经 PanSave 反代。
 
 ---
 
@@ -72,10 +75,12 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 `/` 是自带的原生媒体界面，参考 Pelagica 的布局自己实现，**没有前端框架**：
 
 - 首页：随机背景 + 继续观看 + 最近添加
-- 媒体库：海报网格、按名称/最近添加排序、分页
+- 媒体库：海报网格、按名称/年份/最近添加/最新一集排序、分页
 - 详情：海报/背景、简介、类型、演员、季与单集（带剧照）、片源直链、外挂字幕、标记已看/收藏
+- **相似推荐**：详情页底部按「类型交集 + 同演员 + 评分 + 年份」打分，电影只推电影、剧集只推剧集
 - 搜索、登录、退出；播放时自动上报进度，能接上续播
-- 整个前端约 30KB（未压缩），不会出现完整 SPA 那种浏览器内存暴涨
+- 亮/暗主题可切换，配色取自 LiMe logo；字体和图标全部本地，不依赖外网 CDN
+- 整个前端约 60KB（未压缩，JS + CSS），不会出现完整 SPA 那种浏览器内存暴涨
 
 > 浏览器仍然播不了 mkv / H.265（服务端不转码）；mp4/webm 可以直接播，
 > 其他容器会复制直链，交给 VLC / 官方客户端。
@@ -126,12 +131,16 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
 `/web/` 是一个内嵌的轻量运维页（纯静态，无前端框架）：
 
-- 概览：库数量、条目/片源/播放记录统计、扫描状态
+- 概览：库数量、条目/片源/播放记录统计、扫描与刮削状态
 - 媒体库：浏览、按类型筛选、按标题搜索、分页加载
 - 条目详情：元数据、播放状态、片源列表、**复制直链**、标记已看/收藏
 - 会话：当前播放设备与进度
-- 系统：服务器信息、当前配置、扫描记录
-- 一键触发全量扫描（`POST /web/api/scan`）
+- 播放记录：最近 7 天的播放历史（`GET /web/api/playback-history`）
+- 用户：新建/删除、改名、重置密码、禁用、按库授权
+- 刮削失败：按接口错误 / 404 / 海报 / 背景图分类，支持 CSV 导出
+- 通知：Telegram 播放通知配置 + 测试消息
+- 系统：服务器信息、当前配置、扫描记录、实时监控开关、每日任务、立即备份
+- 一键触发全量扫描 / 增量扫描 / 刮削 / 海报与背景图回填
 
 > 面板**不承担播放**：服务端不转码，浏览器打不开 mkv / H.265。
 > 「复制直链」拿到的 302 地址交给 VLC / PotPlayer / 官方客户端用。
@@ -160,8 +169,8 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `LIME_REWRITE_LOCAL` | 局域网客户端使用的地址 | — |
 | `LIME_REWRITE_PUBLIC` | 外网客户端使用的地址 | — |
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token | `false` |
-| `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址，如 `http://192.168.1.100:886`；直连客户端留空 | 空 |
-| `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址给客户端（只暴露反代时用） | `false` |
+| `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址，如 `http://192.168.1.100:886`。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
+| `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端；公网直连建议开 | `false`（compose 模板里为 `true`） |
 | `LIME_TMDB_API_KEY` | TMDB v3 API Key，留空则关闭刮削 | 空 |
 | `LIME_TMDB_LANGUAGE` | 刮削语言 | `zh-CN` |
 | `LIME_TMDB_PROXY` | 访问 TMDB 的 HTTP 代理（国内需要） | 空 |
@@ -199,6 +208,13 @@ TMDB 刮削、用户与 API Key、运维面板。
 `/Items/Filters`；单集时长和剧照自动补全；原生详情页展示类型、演员和单集缩略图；
 外挂字幕（srt/ass/ssa/vtt）按需发现并提供 Jellyfin/Emby 字幕流。
 
+**M8 稳定性与观感**：
+
+| 版本 | 内容 |
+|---|---|
+| v1.0.5 | 相似推荐打分（类型/演员/评分/年份）、海报回填修复、同目录 STRM 归并、时长回填 |
+| v1.0.6 | 新 logo 与青柠绿主题、去掉装饰性渐变、公网直连不再需要 PanSave 中转、修复 logo 路由 404 |
+
 已实现的接口：
 
 ```
@@ -206,6 +222,7 @@ GET  /health
 GET  /System/Info/Public | /System/Info
 GET  /System/Configuration | /System/Configuration/public
 GET  /Branding/Configuration
+GET  /Branding/Splashscreen | /Branding/logo.png   ← LiMe logo
 POST /Users/AuthenticateByName
 GET  /Users/Public | /Users | /Users/Me | /Users/{userId}
 GET  /Users/{userId}/Views
@@ -255,12 +272,20 @@ GET|POST /web/api/scrape                  查询 / 触发刮削
 # 运维面板
 GET  /                 → 302 /web/
 GET  /web/             内嵌静态页
-GET  /web/api/stats    统计 + 扫描/刮削状态
+GET  /web/api/stats    统计 + 扫描/刮削/图片回填状态
 GET|POST /web/api/scan 查询 / 触发扫描
 GET|POST /web/api/libraries             列出 / 新建媒体库
 PUT|DELETE /web/api/libraries/{id}      修改 / 删除媒体库
 POST /web/api/libraries/{id}/scan       只扫描指定库
 GET  /web/api/browse?path=/strm         列出可选的子目录
+GET|PUT  /web/api/settings              读写面板设置（含 Telegram、实时监控）
+GET|POST /web/api/scrape                查询 / 触发刮削
+GET  /web/api/scrape/failures           刮削失败列表（?format=csv 导出）
+GET|POST /web/api/images/posters        海报回填
+GET|POST /web/api/images/backdrops      背景图回填
+GET  /web/api/playback-history          播放历史（保留 7 天）
+POST /web/api/notify/test               发送 Telegram 测试消息
+POST /web/api/backup                    立即备份数据库
 ```
 
 `/Items`、`/Items/{id}`、`/Items/Resume` 返回的 `UserData` 现在带真实数据：
@@ -277,7 +302,25 @@ GET  /web/api/browse?path=/strm         列出可选的子目录
 - `GET /emby/Library/SelectableMediaFolders`
 - `GET /emby/Items`、`GET /emby/Users`
 
-### 走 PanSave 反代（CF 隧道只暴露反代端口）
+### 部署模式
+
+两种都能用，**推荐直连**：少一跳反代，客户端直接吃 LiMe 的 302。
+
+#### 模式 A：客户端直连 LiMe（推荐）
+
+```
+客户端 → https://lime.example.com（CF Tunnel / 端口映射）
+      → LiMe 886 → 302 → 115/123 CDN → 播放
+```
+
+- `LIME_RESOLVE_REDIRECT: "true"`：LiMe 在返回 302 前先跟一跳 PanSave，
+  把最终 CDN 地址交给客户端。PanSave 的 16868 不需要暴露到公网
+- `LIME_INTERNAL_URL` 留空即可：PlaybackInfo 里的 `Path` 直接用客户端访问的域名。
+  就算填了也不影响公网客户端，见下面「自动判断」
+- CDN 直链的签名与请求 UA 绑定，LiMe 会透传客户端 UA，否则会 403
+  `invalid signature`
+
+#### 模式 B：PanSave 反代（只有反代端口对外）
 
 ```
 客户端 → https://lime.example.com（CF Tunnel）
@@ -285,22 +328,29 @@ GET  /web/api/browse?path=/strm         列出可选的子目录
       → LiMe 302 → 最终 CDN
 ```
 
-PanSave 反代会拿 PlaybackInfo 里的 `MediaSources[].Path` 去探测 302。这个地址
-必须是 **PanSave 能直接访问的上游地址**，不能是公网域名，否则探测会打回反代
-自身形成回环（日志：`302 探测失败，透明回退`）。因此：
+PanSave 反代会拿 `MediaSources[].Path` 去探测 302，这个地址必须是
+**PanSave 能直接访问的上游地址**，不能是公网域名，否则会打回反代自身形成回环
+（日志：`302 探测失败，透明回退`）。所以：
 
 ```yaml
 LIME_INTERNAL_URL: "http://192.168.1.100:886"
 LIME_RESOLVE_REDIRECT: "true"
 ```
 
-`LIME_RESOLVE_REDIRECT` 让 LiMe 在返回 302 前先跟一跳 PanSave，把最终
-`https://...cjjd19.com/...` CDN 地址交给客户端。这样即使没有单独暴露
-PanSave 的 16868 端口，VidHub / SenPlayer / 爆米花也能直接 302 播放，
-并且 CDN 支持 Range（206）。
+#### `LIME_INTERNAL_URL` 是自动判断的
 
-> 如果客户端直连 LiMe（不经 PanSave 反代），不要设置 `LIME_INTERNAL_URL`；
-> 只有局域网访问时可以关闭 `LIME_RESOLVE_REDIRECT`，保留 PanSave 自己的 302 链。
+同一个实例可以同时服务两种客户端，不需要二选一：
+
+- 请求的 `Host` 是内网地址（`192.168.x.x`、`localhost`、裸主机名）→ 用
+  `LIME_INTERNAL_URL`
+- 请求来自公网域名（经 CF Tunnel / 端口映射）→ 用请求本身的
+  `scheme://host`，并优先采信 `X-Forwarded-Proto` / `X-Forwarded-Host`
+
+所以把 `LIME_INTERNAL_URL` 配好，公网客户端走域名访问照样能播；
+只想纯直连的话留空即可。
+
+> 局域网内可以把 `LIME_RESOLVE_REDIRECT` 关掉，让客户端沿 PanSave 自己的
+> 302 链走；公网建议保持开启，省掉一次客户端往返。
 
 ### 客户端兼容
 
@@ -336,8 +386,16 @@ movie.strm + movie.zh-CN.vtt
 归并规则：
 
 - 电影：按 TMDB ID 合并，同一部片的 1080p / 2160p / HDR / DoVi 是一个条目
+- 电影**没有 TMDB ID** 时：按**所在目录**合并。同一目录里的多个 `.strm`
+  （`-C` 后缀、`cd1`/`cd2`、中日文标题不同）是一个条目的多个片源，
+  不会再出现两张一模一样的海报卡片
 - 单集：按「剧 + 季 + 集」合并，同一集的不同版本是一个条目
 - **不同集不会合并**（S01E01 和 S01E02 永远是两个条目）
+
+> 归并键变化会让条目 ID 跟着变。改版后第一次全量扫描时，旧条目会因为
+> `media_sources(drive_id, cloud_file_id)` 的唯一索引挡住新片源，日志里是
+> `UNIQUE constraint failed`。这种情况需要清库重扫（备份 → 删 `items`
+> → `POST /Library/Refresh`）。
 
 `PlaybackInfo` 和条目详情会返回多个 `MediaSources`，名称形如：
 
@@ -363,7 +421,7 @@ VidHub / SenPlayer 的版本列表里手动切低版本。媒体源 ID 不变，
 ### 时长
 
 TMDB 刮削会写回电影和单集的 `RunTimeTicks`；对升级前已刮削、时长为 0 的条目，
-启动刮削时会自动补一轮（19 部电影 + 各季单集）。有真实时长后，客户端进度条和
+启动刮削时会自动补一轮（`run_time_ticks = 0` 的电影与单集）。有真实时长后，客户端进度条和
 95% 自动判定已看才能正常工作。
 
 > 时长未知（`RunTimeTicks = 0`）时，服务端无法按 95% 自动判定「看完」，
@@ -384,9 +442,12 @@ TMDB 刮削会写回电影和单集的 `RunTimeTicks`；对升级前已刮削、
 ```
 客户端 → GET /Items/{id}/PlaybackInfo   （拿到 MediaSource，Path 指向本服务）
       → GET /Videos/{id}/stream?static=true&MediaSourceId=...
-      → 302 http://<PanSave>/strm/115/drive?file_id=...
-      → PanSave 302 到 115/123 CDN
+      → 302（LIME_RESOLVE_REDIRECT=true 时直接给 CDN 地址）
+      → 115/123 CDN（支持 Range，206）
 ```
+
+关闭 `LIME_RESOLVE_REDIRECT` 时，LiMe 只回 STRM 里的 PanSave 地址，
+由客户端再跟一跳 PanSave 的 302。
 
 `SupportsTranscoding: false`，没有任何转码路径；客户端不支持直连编码时会直接报错，这是设计边界。
 
@@ -395,15 +456,45 @@ TMDB 刮削会写回电影和单集的 `RunTimeTicks`；对升级前已刮削、
 服务端用目录名里的 `{tmdb-ID}` 精确请求 TMDB，不做标题搜索，避免刮错片：
 
 - 电影 → `/movie/{id}`，剧集 → `/tv/{id}`，单集 → `/tv/{id}/season/{n}`
-- 写回简介、原名、首播日期、评分；海报下载到 `data/images/`，由
-  `/Items/{id}/Images/Primary` 本地提供，不依赖外网始终可用
+- 写回简介、原名、首播日期、评分、类型、演员；海报/背景图/ClearLogo 下载到
+  `data/images/`，由 `/Items/{id}/Images/{type}` 本地提供，不依赖外网始终可用
 - 只处理 `scraped_at = 0` 的条目，重复扫描/重启不会重复请求
-- 封面墙在运维面板里直接可见
+- 面板里有「刮削失败」页，按接口错误 / 404 / 海报 / 背景图分类，可导出 CSV
+- **海报回填**：海报为空的条目也会进回填队列并排在最前。早先只回填
+  `image_path <> ''` 的条目，「刮过但当时 TMDB 还没图」的片会永远缺海报
+- 头像回填并发执行，共用 50ms 全局限速；头像按需下载
 
 > 国内直连 `api.themoviedb.org` 不通时，设置 `LIME_TMDB_PROXY`
 > （NAS 上 mihomo 监听 `7890`，容器里要用宿主机 IP，不能写 `127.0.0.1`）。
 > API Key 建议放在 compose 同目录的 `.env`，该文件已在 `.gitignore` /
 > `.dockerignore` 中排除，同步源码时也不要带过去。
+
+### 本地元数据（NFO / 本地图片）
+
+媒体目录里自带 `.nfo` 和图片时，**本地元数据优先**，定时 TMDB 刮削不会覆盖：
+
+```
+电影名 (2024)/movie.nfo
+电影名 (2024)/poster.jpg | folder.jpg | cover.jpg | thumb.jpg
+电影名 (2024)/fanart.jpg | backdrop.jpg
+```
+
+- 支持 Kodi / Emby 风格的 `movie` / `episodedetails` / `tvshow`
+- 识别 title / originaltitle / plot / year / premiered / runtime / rating /
+  mpaa / genre / actor / director / studio / uniqueid(tmdb)
+- 图片**不复制**，数据库存 `local:/绝对路径`，图片接口限制在媒体库根目录内（防穿越）
+- 扫描时应用 NFO 并写入 `scraped_at`，本地元数据是权威来源
+- 只改 NFO 不会触发实时监控，需要 `POST /Library/Refresh`
+
+> NFO 标题变化会改变条目 ID，可能撞 `media_sources(drive_id, cloud_file_id)`
+> 唯一索引，需要清库重扫（见上面「多版本合并」的说明）。
+
+### 搜索
+
+`items_fts` 用 SQLite FTS5 trigram 索引，增删改由触发器同步：
+
+- ≥3 个字符走 FTS：实测「流浪地球」1.2ms、「蜘蛛侠」0.5ms
+- 2 个字符的中文（如「三体」）仍走 `LIKE`，trigram 的固有限制
 
 ---
 
@@ -442,13 +533,21 @@ curl -s -X POST http://127.0.0.1:886/Users/AuthenticateByName \
 ## 目录结构
 
 ```
-cmd/lime/                 入口
+cmd/lime/                 入口、启动扫描、优雅退出
 internal/
   api/                    HTTP 路由、中间件、Jellyfin 兼容 handler
+    assets/logo.png       go:embed 的 logo（/Branding/Splashscreen）
   config/                 环境变量配置
   dto/                    Jellyfin 兼容 JSON 结构
-  library/                STRM 扫描器（遍历、识别、入库）
-  strm/                   STRM 解析 + 文件名解析
+  library/                STRM 扫描器、实时监控（fsnotify）、条目归并
+  strm/                   STRM 解析 + 文件名/目录名解析
+  nfo/                    本地 .nfo / poster.jpg 解析
+  probe/                  ffprobe 探测（时长、音轨、分辨率）
+  scrape/                 TMDB 刮削、海报/背景图/logo 回填
+  tmdb/                   TMDB API 客户端 + 图片下载
+  notify/                 Telegram 播放通知
+  pinyin/                 拼音与首字母排序
+  webui/                  内嵌媒体界面（app/）与运维面板
   store/                  SQLite 访问 + 迁移
     migrations/           SQL 迁移，按文件名顺序执行
 ```
