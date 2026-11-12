@@ -82,12 +82,7 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) playbackSourceDto(r *http.Request, itemID string, s *store.MediaSource, runtimeTicks int64) dto.MediaSourceDto {
 	d := h.mediaSourceDto(r, itemID, s, runtimeTicks)
 	// PlaybackInfo 里 Path 指向本服务的 302 端点，客户端据此播放。
-	// 走 PanSave 反代时必须给上游内网地址，否则反代探测 302 会回环。
-	if h.cfg.InternalURL != "" {
-		d.Path = h.cfg.InternalURL + h.streamPath(itemID, s.ID)
-	} else {
-		d.Path = h.absoluteStreamURL(r, itemID, s.ID)
-	}
+	d.Path = h.streamBase(r) + h.streamPath(itemID, s.ID)
 	return d
 }
 

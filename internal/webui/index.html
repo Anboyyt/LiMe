@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>LiMe · 运维面板</title>
-  <link rel="stylesheet" href="style.css?v=20">
+  <link rel="icon" href="/Branding/logo.png">
+  <link rel="stylesheet" href="style.css?v=23">
 </head>
 <body>
   <!-- 登录 -->
   <div id="login" class="login hidden">
     <form class="login-card" id="loginForm">
-      <div class="logo">LiMe</div>
+      <div class="logo"><img src="/Branding/logo.png" alt="LiMe"></div>
       <p class="muted">媒体服务器运维面板</p>
       <input id="luser" placeholder="用户名" autocomplete="username" required>
       <input id="lpass" type="password" placeholder="密码" autocomplete="current-password" required>
@@ -22,7 +23,7 @@
   <!-- 主界面 -->
   <div id="app" class="app hidden">
     <aside class="side">
-      <div class="brand"><b>LiMe</b><span>运维面板</span></div>
+      <div class="brand"><img class="brand-logo" src="/Branding/logo.png" alt="LiMe"><div class="brand-text"><b>LiMe</b><span>运维面板</span></div></div>
       <nav id="nav">
         <a href="#/overview" data-nav="overview">概览</a>
         <div class="nav-title">媒体库</div>

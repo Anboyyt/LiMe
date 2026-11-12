@@ -1,50 +1,50 @@
 :root {
-  /* 暗色主题：参考 Jellyfin Web 的深灰 + 蓝 */
-  --bg: #101014;
-  --bg-soft: #17181d;
-  --panel: #1b1c22;
-  --panel-2: #23252d;
-  --line: #2e303a;
-  --text: #eef1f6;
-  --text-soft: #c6ccd8;
-  --muted: #99a2b1;
-  --accent: #00a4dc;
-  --accent-2: #4cc2ff;
+  /* 暗色主题：取色自 LiMe logo（青柠绿 + 墨绿底） */
+  --bg: #070c09;
+  --bg-soft: #0c1310;
+  --panel: #0f1712;
+  --panel-2: #17221a;
+  --line: #27352c;
+  --text: #eef4ef;
+  --text-soft: #c2d2c7;
+  --muted: #94a69b;
+  --accent: #7edb28;
+  --accent-2: #c5fb2a;
   --ok: #3ddc97;
   --warn: #f5c451;
   --danger: #f87171;
-  --bar-bg: rgba(16, 16, 20, .82);
+  --bar-bg: rgba(7, 12, 9, .82);
   --chip-bg: rgba(255, 255, 255, .07);
   --chip-border: rgba(255, 255, 255, .1);
   --poster-border: rgba(255, 255, 255, .07);
-  --hero-fade: rgba(16, 16, 20, .97);
-  --hero-fade-2: rgba(16, 16, 20, .1);
+  --hero-fade: rgba(7, 12, 9, .97);
+  --hero-fade-2: rgba(7, 12, 9, .1);
   --shadow: 0 18px 50px rgba(0, 0, 0, .45);
   --poster-shadow: 0 10px 26px rgba(0, 0, 0, .35);
   --hero-text-shadow: 0 4px 26px rgba(0, 0, 0, .6);
   /* 毛玻璃 */
-  --glass-bg: rgba(27, 28, 34, .62);
-  --glass-bg-strong: rgba(27, 28, 34, .82);
-  --glass-border: rgba(255, 255, 255, .09);
+  --glass-bg: rgba(15, 23, 18, .62);
+  --glass-bg-strong: rgba(15, 23, 18, .82);
+  --glass-border: rgba(197, 251, 42, .12);
   --glass-blur: blur(18px) saturate(150%);
-  --primary-bg: rgba(0, 164, 220, .18);
-  --primary-bg-hover: rgba(0, 164, 220, .28);
-  --primary-fg: #9fe4ff;
-  --primary-border: rgba(76, 194, 255, .38);
+  --primary-bg: rgba(126, 219, 40, .16);
+  --primary-bg-hover: rgba(126, 219, 40, .26);
+  --primary-fg: #c8f56b;
+  --primary-border: rgba(197, 251, 42, .38);
 }
 
 [data-theme="light"] {
   /* 亮色主题 */
-  --bg: #f4f6f9;
-  --bg-soft: #edf0f5;
+  --bg: #f6f8f3;
+  --bg-soft: #eef2e8;
   --panel: #ffffff;
-  --panel-2: #f0f3f8;
-  --line: #dce2ea;
-  --text: #1a2029;
-  --text-soft: #3c4654;
-  --muted: #6b7686;
-  --accent: #0b84c8;
-  --accent-2: #0e9fbe;
+  --panel-2: #eff4ea;
+  --line: #dbe3d6;
+  --text: #16201a;
+  --text-soft: #3a463d;
+  --muted: #66756c;
+  --accent: #3f8f0e;
+  --accent-2: #63b317;
   --ok: #12996b;
   --warn: #b7791f;
   --danger: #d64545;
@@ -52,18 +52,18 @@
   --chip-bg: rgba(15, 23, 42, .05);
   --chip-border: rgba(15, 23, 42, .1);
   --poster-border: rgba(15, 23, 42, .08);
-  --hero-fade: rgba(244, 246, 249, .97);
-  --hero-fade-2: rgba(244, 246, 249, .2);
+  --hero-fade: rgba(246, 248, 243, .97);
+  --hero-fade-2: rgba(246, 248, 243, .2);
   --shadow: 0 14px 36px rgba(23, 32, 48, .12);
   --poster-shadow: 0 6px 18px rgba(23, 32, 48, .10);
   --hero-text-shadow: 0 2px 12px rgba(255, 255, 255, .85);
   --glass-bg: rgba(255, 255, 255, .66);
   --glass-bg-strong: rgba(255, 255, 255, .86);
   --glass-border: rgba(15, 23, 42, .08);
-  --primary-bg: #e7f3fb;
-  --primary-bg-hover: #d8ecf8;
-  --primary-fg: #0b6ea8;
-  --primary-border: #bfe0f2;
+  --primary-bg: #eaf6dd;
+  --primary-bg-hover: #dff1cc;
+  --primary-fg: #2f6b09;
+  --primary-border: #cde8b0;
 }
 
 * { box-sizing: border-box; }
@@ -71,10 +71,7 @@ html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--te
 html { scroll-padding-top: 80px; }
 body {
   font: 14px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
-  background:
-    radial-gradient(900px 500px at 15% -10%, rgba(0, 164, 220, .10) 0%, transparent 60%),
-    radial-gradient(800px 500px at 95% 0%, rgba(34, 211, 238, .08) 0%, transparent 55%),
-    var(--bg);
+  background: var(--bg);
   overflow-x: hidden;
 }
 a { color: inherit; text-decoration: none; }
@@ -90,7 +87,7 @@ img { display: block; }
   left: 0;
   height: 2px;
   width: 0;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  background: var(--accent);
   z-index: 100;
   opacity: 0;
   transition: width .3s ease, opacity .3s ease;
@@ -113,10 +110,7 @@ img { display: block; }
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background:
-    radial-gradient(900px 500px at 20% 0%, rgba(0, 164, 220, .16) 0%, transparent 60%),
-    radial-gradient(700px 400px at 90% 100%, rgba(34, 211, 238, .12) 0%, transparent 55%),
-    var(--bg);
+  background: var(--bg);
 }
 .login-card {
   width: 360px;
@@ -132,13 +126,15 @@ img { display: block; }
   backdrop-filter: var(--glass-blur);
 }
 .logo {
-  font-size: 32px;
-  font-weight: 800;
-  letter-spacing: .5px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  display: flex;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.logo img {
+  display: block;
+  width: 84px;
+  height: 84px;
+  border-radius: 22px;
 }
 input {
   width: 100%;
@@ -223,13 +219,19 @@ input:focus {
   border-bottom: 1px solid var(--chip-bg);
 }
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 21px;
   font-weight: 800;
   letter-spacing: .3px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--accent);
+}
+.brand img {
+  display: block;
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
 }
 .topbar nav { display: flex; gap: 4px; overflow-x: auto; }
 .topbar nav a {
@@ -335,7 +337,7 @@ input:focus {
   width: 4px;
   height: 18px;
   border-radius: 2px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  background: var(--accent);
 }
 .rail-count { color: var(--muted); font-size: 12px; }
 .rail-scroll {
@@ -437,7 +439,7 @@ input:focus {
 .card-meta .dot { opacity: .45; }
 .card-meta .seen { color: var(--ok); }
 .progress { height: 3px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 6px; }
-.progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.progress i { display: block; height: 100%; background: var(--accent); }
 /* 没有进度的卡片也占位，保证所有卡片的进度条在同一高度 */
 .progress.no-progress { visibility: hidden; }
 
@@ -547,7 +549,7 @@ input:focus {
   width: 4px;
   height: 18px;
   border-radius: 2px;
-  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+  background: var(--accent);
 }
 
 .episode {

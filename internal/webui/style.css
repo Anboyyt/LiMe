@@ -1,27 +1,27 @@
 :root {
-  /* 暗色主题：与媒体界面统一，参考 Jellyfin Web */
-  --bg: #101014;
-  --panel: #1b1c22;
-  --panel2: #23252d;
-  --line: #2e303a;
-  --text: #eef1f6;
-  --muted: #99a2b1;
-  --accent: #00a4dc;
-  --accent2: #4cc2ff;
+  /* 暗色主题：取色自 LiMe logo（青柠绿 + 墨绿底） */
+  --bg: #070c09;
+  --panel: #0f1712;
+  --panel2: #17221a;
+  --line: #27352c;
+  --text: #eef4ef;
+  --muted: #94a69b;
+  --accent: #7edb28;
+  --accent2: #c5fb2a;
   --ok: #3ddc97;
   --warn: #f5c451;
   --danger: #f87171;
   --chip-bg: rgba(255, 255, 255, .06);
   --chip-border: rgba(255, 255, 255, .1);
-  --bar-bg: rgba(16, 16, 20, .9);
-  --glass-bg: rgba(27, 28, 34, .66);
-  --glass-bg-strong: rgba(27, 28, 34, .86);
-  --glass-border: rgba(255, 255, 255, .09);
+  --bar-bg: rgba(7, 12, 9, .9);
+  --glass-bg: rgba(15, 23, 18, .66);
+  --glass-bg-strong: rgba(15, 23, 18, .86);
+  --glass-border: rgba(197, 251, 42, .12);
   --glass-blur: blur(18px) saturate(150%);
-  --primary-bg: rgba(0, 164, 220, .18);
-  --primary-bg-hover: rgba(0, 164, 220, .28);
-  --primary-fg: #9fe4ff;
-  --primary-border: rgba(76, 194, 255, .38);
+  --primary-bg: rgba(126, 219, 40, .16);
+  --primary-bg-hover: rgba(126, 219, 40, .26);
+  --primary-fg: #c8f56b;
+  --primary-border: rgba(197, 251, 42, .38);
   /* 内容区限宽：宽屏两侧留白，顶栏与内容对齐 */
   --shell-max: 1240px;
   /* 滚动条：暗色下不要浏览器默认的亮白条 */
@@ -30,14 +30,14 @@
 }
 
 [data-theme="light"] {
-  --bg: #f4f6f9;
+  --bg: #f6f8f3;
   --panel: #ffffff;
-  --panel2: #f0f3f8;
-  --line: #dce2ea;
-  --text: #1a2029;
-  --muted: #6b7686;
-  --accent: #0b84c8;
-  --accent2: #0e9fbe;
+  --panel2: #eff4ea;
+  --line: #dbe3d6;
+  --text: #16201a;
+  --muted: #66756c;
+  --accent: #3f8f0e;
+  --accent2: #63b317;
   --ok: #12996b;
   --warn: #b7791f;
   --danger: #d64545;
@@ -47,10 +47,10 @@
   --glass-bg: rgba(255, 255, 255, .7);
   --glass-bg-strong: rgba(255, 255, 255, .88);
   --glass-border: rgba(15, 23, 42, .08);
-  --primary-bg: #e7f3fb;
-  --primary-bg-hover: #d8ecf8;
-  --primary-fg: #0b6ea8;
-  --primary-border: #bfe0f2;
+  --primary-bg: #eaf6dd;
+  --primary-bg-hover: #dff1cc;
+  --primary-fg: #2f6b09;
+  --primary-border: #cde8b0;
   --scroll-thumb: rgba(15, 23, 42, .18);
   --scroll-thumb-hover: rgba(15, 23, 42, .32);
 }
@@ -99,7 +99,7 @@ a:hover { text-decoration: underline; }
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: radial-gradient(1200px 600px at 20% -10%, color-mix(in srgb, var(--accent) 14%, transparent) 0%, var(--bg) 55%);
+  background: var(--bg);
 }
 
 .login-card {
@@ -117,13 +117,14 @@ a:hover { text-decoration: underline; }
 }
 
 .logo {
-  font-size: 26px;
-  font-weight: 700;
-  letter-spacing: .5px;
-  background: linear-gradient(90deg, var(--accent), var(--accent2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  display: flex;
+  justify-content: center;
+}
+.logo img {
+  display: block;
+  width: 76px;
+  height: 76px;
+  border-radius: 20px;
 }
 
 input, select {
@@ -194,10 +195,19 @@ a.back-media:hover { border-color: var(--accent); }
 }
 
 .brand {
-  font-size: 20px;
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 18px;
 }
+.brand-logo {
+  display: block;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  flex: none;
+}
+.brand-text { min-width: 0; }
 .brand span {
   display: block;
   font-size: 11px;
@@ -260,13 +270,12 @@ main {
   padding: 22px max(22px, calc((100% - var(--shell-max)) / 2 + 22px));
   overflow-y: auto;
   flex: 1;
-  /* 内容不足一屏时上下居中；内容超出时 auto 边距归零，正常从顶部滚动 */
+  /* 内容始终从顶部开始。早先给首尾子元素加 auto 边距做上下居中，
+     内容少时（如只有一个「播放会话」卡片）会悬在页面中间，很怪。 */
   display: flex;
   flex-direction: column;
 }
 #view > * { flex: none; }
-#view > :first-child { margin-top: auto; }
-#view > :last-child { margin-bottom: auto; }
 
 /* ---------- 概览 ---------- */
 .cards {
@@ -707,26 +716,18 @@ tbody tr.drop-target td { border-top: 2px solid var(--accent); }
 
 /* ================= 视觉升级 ================= */
 :root {
-  --accent-grad: linear-gradient(135deg, var(--accent), var(--accent2));
   --shadow-panel: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 14px 36px rgba(0, 0, 0, .18);
   --shadow-float: 0 18px 50px rgba(0, 0, 0, .45);
   --ring: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
-  --primary-on: #04141d;
   color-scheme: dark;
 }
 [data-theme="light"] {
   --shadow-panel: 0 1px 0 rgba(255, 255, 255, .8) inset, 0 12px 30px rgba(15, 23, 42, .08);
   --shadow-float: 0 18px 50px rgba(15, 23, 42, .18);
-  --primary-on: #fff;
   color-scheme: light;
 }
 
-body {
-  background-image:
-    radial-gradient(1100px 700px at 8% -12%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 60%),
-    radial-gradient(900px 600px at 105% -5%, color-mix(in srgb, var(--accent2) 8%, transparent), transparent 55%);
-  background-attachment: fixed;
-}
+body { background: var(--bg); }
 
 ::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 
@@ -734,24 +735,19 @@ body {
 .side {
   border-right: 0;
   box-shadow: inset -1px 0 0 var(--glass-border);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 32%),
-    var(--glass-bg-strong);
+  background: var(--glass-bg-strong);
 }
 .brand b {
   display: block;
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 750;
   letter-spacing: .3px;
-  background: var(--accent-grad);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--accent);
 }
 nav a { transition: background .16s, color .16s, box-shadow .16s; }
 nav a:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--text); }
 nav a.active {
-  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 20%, transparent), color-mix(in srgb, var(--accent) 4%, transparent));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   box-shadow: inset 2px 0 0 var(--accent);
 }
@@ -781,18 +777,18 @@ button:hover, a.back-media:hover {
 }
 button:active, a.back-media:active { transform: translateY(1px); }
 button:focus-visible, a:focus-visible { outline: none; box-shadow: var(--ring); }
+/* 主按钮用半透明强调色，不用渐变 */
 button.primary {
-  background: var(--accent-grad);
-  border-color: transparent;
-  color: var(--primary-on);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
   font-weight: 650;
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--accent) 28%, transparent);
+  box-shadow: none;
 }
 button.primary:hover {
-  background: var(--accent-grad);
-  border-color: transparent;
-  color: var(--primary-on);
-  filter: brightness(1.06);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  color: var(--accent);
 }
 button.danger:hover {
   background: color-mix(in srgb, var(--danger) 10%, var(--panel2));
@@ -804,7 +800,7 @@ button.danger:hover {
   border-radius: 14px;
   padding: 18px 20px;
   box-shadow: var(--shadow-panel);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 55%, transparent), var(--glass-bg));
+  background: var(--glass-bg);
 }
 .panel h3 {
   display: flex;
@@ -818,8 +814,7 @@ button.danger:hover {
   width: 3px;
   height: 15px;
   border-radius: 2px;
-  background: var(--accent-grad);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent);
 }
 .cards .card {
   position: relative;
@@ -832,7 +827,6 @@ button.danger:hover {
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(140px 90px at 100% 0%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%);
   pointer-events: none;
 }
 .cards .card:hover {

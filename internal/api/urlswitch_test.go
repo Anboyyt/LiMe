@@ -79,6 +79,29 @@ func TestRewriteTargetPicksLocalForLAN(t *testing.T) {
 	}
 }
 
+// PanSave 反代进来时给内网地址；公网域名直接访问时给公网地址，
+// 否则客户端拿到 http://192.168.x.x 连不上。
+func TestStreamBasePicksByRequestHost(t *testing.T) {
+	h := &Handler{cfg: config.Config{InternalURL: "http://192.168.1.133:886"}}
+
+	viaProxy := httptest.NewRequest("GET", "http://192.168.1.133:886/Items/x/PlaybackInfo", nil)
+	if got := h.streamBase(viaProxy); got != "http://192.168.1.133:886" {
+		t.Errorf("private host got %q", got)
+	}
+
+	public := httptest.NewRequest("POST", "https://lime.example.com/Items/x/PlaybackInfo", nil)
+	public.Header.Set("X-Forwarded-Proto", "https")
+	if got := h.streamBase(public); got != "https://lime.example.com" {
+		t.Errorf("public host got %q", got)
+	}
+
+	// 没配 InternalURL 时一律用请求地址。
+	h2 := &Handler{cfg: config.Config{}}
+	if got := h2.streamBase(viaProxy); got != "http://192.168.1.133:886" {
+		t.Errorf("no internal url got %q", got)
+	}
+}
+
 func TestStreamLocationHonoursFrom(t *testing.T) {
 	h := &Handler{cfg: config.Config{
 		RewriteEnabled: true,

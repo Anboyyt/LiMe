@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>LiMe</title>
-  <link rel="stylesheet" href="/app/app.css">
+  <link rel="icon" href="/Branding/logo.png">
+  <link rel="stylesheet" href="/app/app.css?v=2">
 </head>
 <body>
   <div id="loadingBar" class="loading-bar"></div>
@@ -12,7 +13,7 @@
   <!-- 登录 -->
   <div id="login" class="login hidden">
     <form class="login-card" id="loginForm">
-      <div class="logo">LiMe</div>
+      <div class="logo"><img src="/Branding/logo.png" alt="LiMe"></div>
       <p class="muted">登录媒体库</p>
       <input id="luser" placeholder="用户名" autocomplete="username" required>
       <input id="lpass" type="password" placeholder="密码" autocomplete="current-password" required>
@@ -24,7 +25,7 @@
   <!-- 主界面 -->
   <div id="app" class="app hidden">
     <header class="topbar">
-      <a class="brand" href="#/">LiMe<span id="brandVer" class="muted"></span></a>
+      <a class="brand" href="#/"><img src="/Branding/logo.png" alt="">LiMe<span id="brandVer" class="muted"></span></a>
       <nav id="nav"></nav>
       <div class="spacer"></div>
       <input id="search" placeholder="搜索电影、剧集">

@@ -74,7 +74,9 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	// 品牌
 	mux.HandleFunc("GET /Branding/Configuration", h.brandingConfiguration)
 	mux.HandleFunc("GET /Branding/Splashscreen", h.brandingSplash)
-	mux.HandleFunc("GET /branding/logo.png", h.brandingLogo)
+	// 注意大小写：canonicalAPIPath 会把首段 branding 规范成 Branding，
+	// 注册成小写永远匹配不到，表现为 404。
+	mux.HandleFunc("GET /Branding/logo.png", h.brandingLogo)
 	mux.HandleFunc("GET /api/danmu/{itemId}/raw", h.danmuRaw)
 
 	// 认证

@@ -41,6 +41,18 @@ func (h *Handler) absoluteStreamURL(r *http.Request, itemID, sourceID string) st
 	return externalBase(r) + h.streamPath(itemID, sourceID)
 }
 
+// streamBase 决定 PlaybackInfo 里 Path 用哪个前缀。
+//
+// 走 PanSave 反代时请求的 Host 是内网地址，必须给内网上游地址，否则反代
+// 探测 302 会回环；客户端直接从公网域名（Cloudflare 隧道 / 端口映射）访问时
+// 给外部地址，否则它拿到的 http://192.168.x.x 根本连不上。
+func (h *Handler) streamBase(r *http.Request) string {
+	if h.cfg.InternalURL != "" && isPrivateHost(r.Host) {
+		return h.cfg.InternalURL
+	}
+	return externalBase(r)
+}
+
 func (h *Handler) streamPath(itemID, sourceID string) string {
 	return "/Videos/" + itemID + "/stream?static=true&MediaSourceId=" + url.QueryEscape(sourceID)
 }
