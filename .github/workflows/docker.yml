@@ -51,3 +51,48 @@ jobs:
             LIME_VERSION=${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'edge' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # 打 tag 后自动建 Release 并推送到 Telegram 频道
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag 已存在，跳过"
+          else
+            gh release create "$tag" --title "LiMe $tag" --generate-notes
+          fi
+
+      - name: Notify Telegram
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "${TG_TOKEN}" ] || [ -z "${TG_CHAT}" ]; then
+            echo "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 未配置，跳过通知"
+            exit 0
+          fi
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+          MSG=$(printf '<b>LiMe %s 已发布</b>\n\n镜像：<code>lixxh/lime:%s</code> / <code>latest</code>\n平台：linux/amd64 · linux/arm64\n升级：<code>docker compose pull && docker compose up -d</code>\n\n<a href="%s">更新说明</a>' "$TAG" "$VER" "$URL")
+          if ! curl -fsS --retry 3 --retry-delay 5 \
+            -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "text=${MSG}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "disable_web_page_preview=true"; then
+            echo "Telegram 通知失败（不影响发布）"
+          fi

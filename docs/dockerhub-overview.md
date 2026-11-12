@@ -99,5 +99,6 @@ docker run -d --name lime \
 ## 链接
 
 - GitHub：https://github.com/Anboyyt/LiMe
+- Telegram 频道（版本更新通知）：https://t.me/Lime_see
 - 许可证：MIT
 - 注意：本项目按 Jellyfin 公开 API 契约独立实现，与 Jellyfin 项目无隶属关系
