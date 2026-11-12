@@ -791,6 +791,9 @@ type ItemQuery struct {
 	Person          string
 	UserID          string
 	FavoriteOnly    bool
+	PlayedOnly      bool // 只看已看完
+	UnplayedOnly    bool // 只看未看完（含看到一半）
+	ResumableOnly   bool // 只看有进度且没看完
 	SearchTerm      string
 	SortBy          []string
 	Descending      bool
@@ -906,6 +909,21 @@ func (d *DB) buildItemWhere(q ItemQuery) ([]string, []any) {
 	if q.FavoriteOnly {
 		where = append(where,
 			`EXISTS (SELECT 1 FROM playstates ps WHERE ps.item_id = items.id AND ps.is_favorite = 1 AND ps.user_id = ?)`)
+		args = append(args, q.UserID)
+	}
+	if q.PlayedOnly {
+		where = append(where,
+			`EXISTS (SELECT 1 FROM playstates ps WHERE ps.item_id = items.id AND ps.played = 1 AND ps.user_id = ?)`)
+		args = append(args, q.UserID)
+	}
+	if q.UnplayedOnly {
+		where = append(where,
+			`NOT EXISTS (SELECT 1 FROM playstates ps WHERE ps.item_id = items.id AND ps.played = 1 AND ps.user_id = ?)`)
+		args = append(args, q.UserID)
+	}
+	if q.ResumableOnly {
+		where = append(where,
+			`EXISTS (SELECT 1 FROM playstates ps WHERE ps.item_id = items.id AND ps.played = 0 AND ps.position_ticks > 0 AND ps.user_id = ?)`)
 		args = append(args, q.UserID)
 	}
 	if q.Person != "" {

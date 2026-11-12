@@ -3,11 +3,13 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strings"
 )
 
 // NextUp 返回每个看过的剧集「接下来该看的一集」，按最近播放倒序。
 // 已看到一半的集优先返回该集本身；上一集看完则返回下一集。
-func (d *DB) NextUp(userID string, limit, start int, seriesID string) ([]*Item, int, error) {
+// libraryIDs/maxRating 与列表接口一致，在分页前过滤，保证 total 正确。
+func (d *DB) NextUp(userID string, limit, start int, seriesID string, libraryIDs []string, maxRating int) ([]*Item, int, error) {
 	if userID == "" {
 		return []*Item{}, 0, nil
 	}
@@ -59,6 +61,12 @@ WHERE p.user_id = ?
 		if it != nil {
 			ids = append(ids, it.ID)
 		}
+	}
+
+	// 把库权限/家长分级过滤放在分页之前，否则过滤后 total 会变成页大小。
+	ids, err = d.filterItemIDs(ids, libraryIDs, maxRating)
+	if err != nil {
+		return nil, 0, err
 	}
 
 	total := len(ids)
@@ -137,4 +145,64 @@ LIMIT 1`, seriesID, ord, userID)
 		return nil, nil
 	}
 	return it, err
+}
+
+// filterItemIDs 按媒体库和家长分级过滤 ID 列表，保持原顺序。
+// 空 libraryIDs 表示不限库；maxRating <= 0 表示不限分级。
+func (d *DB) filterItemIDs(ids, libraryIDs []string, maxRating int) ([]string, error) {
+	if len(ids) == 0 || (len(libraryIDs) == 0 && maxRating <= 0) {
+		return ids, nil
+	}
+
+	keep := make(map[string]struct{}, len(ids))
+	const chunk = 2000
+	for start := 0; start < len(ids); start += chunk {
+		end := start + chunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		part := ids[start:end]
+
+		where := []string{"id IN (" + placeholders(len(part)) + ")"}
+		args := make([]any, 0, len(part)+len(libraryIDs)+1)
+		for _, id := range part {
+			args = append(args, id)
+		}
+		if len(libraryIDs) > 0 {
+			where = append(where, "library_id IN ("+placeholders(len(libraryIDs))+")")
+			for _, id := range libraryIDs {
+				args = append(args, id)
+			}
+		}
+		if maxRating > 0 {
+			where = append(where, "(rating_score = 0 OR rating_score <= ?)")
+			args = append(args, maxRating)
+		}
+
+		rows, err := d.Query(`SELECT id FROM items WHERE `+strings.Join(where, " AND "), args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			keep[id] = struct{}{}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	out := ids[:0]
+	for _, id := range ids {
+		if _, ok := keep[id]; ok {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }

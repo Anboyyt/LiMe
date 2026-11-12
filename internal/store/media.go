@@ -60,6 +60,29 @@ func (d *DB) UpsertMediaSource(src *MediaSource) error { return upsertMediaSourc
 
 func upsertMediaSource(e execer, src *MediaSource) error {
 	now := time.Now().Unix()
+
+	// 同一路径最多只能有一条片源：STRM 被重新生成（file_id 变化）时，
+	// 旧行必须先删掉，否则客户端会看到重复/失效的版本。
+	if src.StrmPath != "" {
+		if _, err := e.Exec(
+			`DELETE FROM media_sources WHERE strm_path = ? AND id <> ?`,
+			src.StrmPath, src.ID,
+		); err != nil {
+			return err
+		}
+	}
+	// 条目 ID 变化（目录改名、NFO 标题变化）会让 source ID 跟着变，
+	// 但 (drive_id, cloud_file_id) 唯一索引仍指向旧行。先清掉旧行，
+	// 否则 INSERT 会报 UNIQUE constraint failed，条目变成「有卡片没片源」。
+	if src.CloudFileID != "" {
+		if _, err := e.Exec(
+			`DELETE FROM media_sources WHERE drive_id = ? AND cloud_file_id = ? AND id <> ?`,
+			src.DriveID, src.CloudFileID, src.ID,
+		); err != nil {
+			return err
+		}
+	}
+
 	_, err := e.Exec(`
 INSERT INTO media_sources (
   id, item_id, strm_path, url, cloud, drive_id, cloud_file_id, sha1_etag,

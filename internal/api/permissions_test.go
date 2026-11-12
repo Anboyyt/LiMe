@@ -3,6 +3,9 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 
@@ -153,5 +156,82 @@ func TestParentalRatingScoping(t *testing.T) {
 	}
 	if rr := f.do(http.MethodGet, "/Items/r", nil, f.adminTok); rr.Code != http.StatusOK {
 		t.Fatalf("admin R detail = %d, want 200", rr.Code)
+	}
+}
+
+// 播放进度上报也要校验库权限，不能给看不到的条目写状态。
+func TestProgressRejectsInaccessibleLibrary(t *testing.T) {
+	f := newUserFixture(t)
+	lib1, err := f.env.db.CreateLibrary("库一", []string{"/tmp/lib1"}, "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib2, err := f.env.db.CreateLibrary("库二", []string{"/tmp/lib2"}, "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "hidden", LibraryID: lib2.ID, ParentID: lib2.ID,
+		Type: store.TypeMovie, Name: "隐藏电影", SortName: "隐藏电影",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.SetLibraryAccess(f.bob.ID, []string{lib1.ID}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := f.do(http.MethodPost, "/Sessions/Playing",
+		map[string]any{"ItemId": "hidden", "PositionTicks": 100}, f.bobTok)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("progress on hidden item = %d, want 404", rr.Code)
+	}
+	if states, _ := f.env.db.Playstates(f.bob.ID, []string{"hidden"}); len(states) != 0 {
+		t.Fatal("playstate should not be written for inaccessible item")
+	}
+
+	// 授权后恢复正常。
+	if err := f.env.db.SetLibraryAccess(f.bob.ID, []string{lib1.ID, lib2.ID}); err != nil {
+		t.Fatal(err)
+	}
+	rr = f.do(http.MethodPost, "/Sessions/Playing",
+		map[string]any{"ItemId": "hidden", "PositionTicks": 100}, f.bobTok)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("progress after grant = %d, want 204", rr.Code)
+	}
+}
+
+// 图片接口：匿名仍可读（客户端 <img> 不带 token），但无效 token 不能被放行。
+func TestImageRejectsInvalidToken(t *testing.T) {
+	f := newUserFixture(t)
+	lib, err := f.env.db.CreateLibrary("库", []string{"/tmp/lib"}, "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := "images/p.jpg"
+	full := filepath.Join(f.env.cfg.DataDir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte("JPEGDATA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "p1", LibraryID: lib.ID, ParentID: lib.ID,
+		Type: store.TypeMovie, Name: "片", SortName: "片", ImagePath: rel,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/Items/p1/Images/Primary", nil)
+	req.Header.Set("X-Emby-Token", "bogus-token")
+	rr := httptest.NewRecorder()
+	f.env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("invalid token image = %d, want 404", rr.Code)
+	}
+
+	rr = f.do(http.MethodGet, "/Items/p1/Images/Primary", nil, "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("anonymous image = %d, want 200", rr.Code)
 	}
 }

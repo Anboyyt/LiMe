@@ -52,6 +52,8 @@ type Handler struct {
 	probeCounts   [3]int // [0]=全部 [1]=收藏 [2]=收藏+在追
 
 	backupMu sync.Mutex
+
+	loginLimiter *loginLimiter
 }
 
 type personDownload struct {
@@ -103,6 +105,8 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 		sessions:   newSessionHub(),
 		serverID:   serverID,
 		startedAt:  time.Now(),
+
+		loginLimiter: newLoginLimiter(),
 	}
 	// 面板里保存的 Telegram 设置优先于环境变量；worker 常驻，改配置即时生效。
 	h.notifier = notify.New(h.tgConfig(), log)

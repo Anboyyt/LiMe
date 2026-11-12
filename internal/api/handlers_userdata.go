@@ -21,18 +21,38 @@ func (h *Handler) setUserFlag(w http.ResponseWriter, r *http.Request, played boo
 		return
 	}
 
+	// Jellyfin 的路径里带了 userId。客户端一般传自己，但管理员/共享设备
+	// 可能替别人操作；以前忽略它，结果永远写到自己头上。
+	target := user
+	if id := r.PathValue("userId"); id != "" && id != user.ID {
+		if !user.IsAdmin {
+			writeError(w, http.StatusForbidden, "Forbidden")
+			return
+		}
+		u, err := h.db.GetUserByID(id)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+		target = u
+	}
+
 	itemID := r.PathValue("itemId")
 	it, err := h.db.GetItem(itemID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "item not found")
 		return
 	}
+	if !h.canAccessLibrary(target, it.LibraryID) || !ratingAllowed(target, it) {
+		writeError(w, http.StatusNotFound, "item not found")
+		return
+	}
 
 	on := r.Method == http.MethodPost
 	if played {
-		err = h.db.SetPlayed(user.ID, itemID, on)
+		err = h.db.SetPlayed(target.ID, itemID, on)
 	} else {
-		err = h.db.SetFavorite(user.ID, itemID, on)
+		err = h.db.SetFavorite(target.ID, itemID, on)
 	}
 	if err != nil {
 		h.log.Error("update user data", "item", itemID, "err", err)
@@ -40,7 +60,7 @@ func (h *Handler) setUserFlag(w http.ResponseWriter, r *http.Request, played boo
 		return
 	}
 
-	states, err := h.db.Playstates(user.ID, []string{itemID})
+	states, err := h.db.Playstates(target.ID, []string{itemID})
 	if err != nil {
 		h.log.Warn("load playstate", "item", itemID, "err", err)
 	}

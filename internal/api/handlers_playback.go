@@ -280,6 +280,11 @@ func (h *Handler) saveProgress(w http.ResponseWriter, r *http.Request, event pla
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// 进度上报也要走库权限/分级校验，不能给看不到的条目写播放状态。
+	if !h.canAccessLibrary(user, it.LibraryID) || !ratingAllowed(user, it) {
+		writeError(w, http.StatusNotFound, "item not found")
+		return
+	}
 
 	sessionID := body.PlaySessionId
 	if sessionID == "" {

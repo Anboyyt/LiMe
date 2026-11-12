@@ -167,7 +167,9 @@ FROM playstates WHERE user_id = ? AND item_id IN (` + placeholders(len(ids)) + `
 }
 
 // ResumeItemIDs 返回「继续观看」条目：有进度且未看完，按最近播放倒序。
-func (d *DB) ResumeItemIDs(userID string, types []string, limit, start int) ([]string, int, error) {
+// libraryIDs 为空表示不限库；maxRating > 0 时过滤超过家长分级的条目。
+// 两个过滤条件都进 SQL，保证 TotalRecordCount 和分页一致。
+func (d *DB) ResumeItemIDs(userID string, types, libraryIDs []string, maxRating, limit, start int) ([]string, int, error) {
 	where := []string{"p.user_id = ?", "p.played = 0", "p.position_ticks > 0"}
 	args := []any{userID}
 	if len(types) > 0 {
@@ -175,6 +177,16 @@ func (d *DB) ResumeItemIDs(userID string, types []string, limit, start int) ([]s
 		for _, t := range types {
 			args = append(args, t)
 		}
+	}
+	if len(libraryIDs) > 0 {
+		where = append(where, "i.library_id IN ("+placeholders(len(libraryIDs))+")")
+		for _, id := range libraryIDs {
+			args = append(args, id)
+		}
+	}
+	if maxRating > 0 {
+		where = append(where, "(i.rating_score = 0 OR i.rating_score <= ?)")
+		args = append(args, maxRating)
 	}
 	cond := strings.Join(where, " AND ")
 

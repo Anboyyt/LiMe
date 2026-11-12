@@ -83,7 +83,7 @@ func TestResumeItemIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ids, total, err := db.ResumeItemIDs("u1", nil, 20, 0)
+	ids, total, err := db.ResumeItemIDs("u1", nil, nil, 0, 20, 0)
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestResumeItemIDs(t *testing.T) {
 	}
 
 	// 类型过滤
-	ids, total, err = db.ResumeItemIDs("u1", []string{TypeEpisode}, 20, 0)
+	ids, total, err = db.ResumeItemIDs("u1", []string{TypeEpisode}, nil, 0, 20, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

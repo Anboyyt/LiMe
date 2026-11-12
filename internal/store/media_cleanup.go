@@ -101,3 +101,36 @@ func (d *DB) DeleteSeriesTree(seriesID string) error {
 	_, err := d.Exec(`DELETE FROM items WHERE id = ? OR series_id = ?`, seriesID, seriesID)
 	return err
 }
+
+// StaleItemsWithSources 返回库内 updated_at < before 的条目及其片源路径。
+// 全量扫描用它做安全清理：调用方确认所有路径都不存在后才删除条目，
+// 避免文件临时不可读时误删条目和播放进度。
+func (d *DB) StaleItemsWithSources(libraryID string, before int64) (map[string][]string, error) {
+	rows, err := d.Query(`
+SELECT i.id, COALESCE(ms.strm_path, '')
+FROM items i
+LEFT JOIN media_sources ms ON ms.item_id = i.id
+WHERE i.library_id = ? AND i.updated_at < ?
+GROUP BY i.id, ms.strm_path`, libraryID, before)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string][]string)
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return nil, err
+		}
+		paths, ok := out[id]
+		if !ok {
+			paths = []string{}
+		}
+		if path != "" {
+			paths = append(paths, path)
+		}
+		out[id] = paths
+	}
+	return out, rows.Err()
+}

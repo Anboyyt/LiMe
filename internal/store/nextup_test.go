@@ -25,7 +25,7 @@ func seedEpisode(t *testing.T, db *DB, id, seriesID, seasonID string, season, ep
 
 func nextUpIDs(t *testing.T, db *DB, userID, seriesID string) []string {
 	t.Helper()
-	items, _, err := db.NextUp(userID, 50, 0, seriesID)
+	items, _, err := db.NextUp(userID, 50, 0, seriesID, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestNextUpLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, total, err := db.NextUp("u1", 1, 0, "")
+	items, total, err := db.NextUp("u1", 1, 0, "", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestNextUpLimit(t *testing.T) {
 		t.Fatalf("limit page: total=%d items=%v", total, items)
 	}
 
-	items, total, err = db.NextUp("u1", 1, 1, "")
+	items, total, err = db.NextUp("u1", 1, 1, "", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

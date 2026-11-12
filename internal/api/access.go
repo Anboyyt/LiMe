@@ -29,8 +29,12 @@ func (h *Handler) canAccessLibrary(user *store.User, libraryID string) bool {
 		return true
 	}
 	ids, err := h.db.LibraryAccess(user.ID)
-	if err != nil || len(ids) == 0 {
-		return true
+	if err != nil {
+		// 权限查询失败时按拒绝处理，不能 fail-open 把受限库放出去。
+		return false
+	}
+	if len(ids) == 0 {
+		return true // 没配置过权限 = 全部可见
 	}
 	for _, id := range ids {
 		if id == libraryID {
@@ -59,6 +63,7 @@ func filterViewsByAccess(views []*dto.BaseItemDto, allowed []string, all bool) [
 }
 
 // imageAccessAllowed 图片默认公开；请求带 token 时按用户的库权限校验。
+// token 无效时直接拒绝，不能再按匿名请求放行。
 func (h *Handler) imageAccessAllowed(r *http.Request, libraryID string) bool {
 	tok := parseAuth(r).Token
 	if tok == "" {
@@ -66,7 +71,7 @@ func (h *Handler) imageAccessAllowed(r *http.Request, libraryID string) bool {
 	}
 	u, err := h.db.UserByToken(tok)
 	if err != nil {
-		return true
+		return false
 	}
 	return h.canAccessLibrary(u, libraryID)
 }

@@ -318,14 +318,22 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 					rel = filepath.Base(path)
 				}
 				ref := fileRef{Path: path, RelPath: filepath.ToSlash(rel)}
+				var stub store.SourceStub
+				hasStub := false
+				if fast {
+					// 先取旧快照，再从 map 里划掉。走完剩下的就是
+					// 「库里有记录、但这次没看到」的路径，用来兜底清理停机期间的删除。
+					if k, ok := known[path]; ok {
+						stub, hasStub = k, true
+						delete(known, path)
+					}
+				}
 				if info, ierr := d.Info(); ierr == nil {
 					ref.Mtime = info.ModTime().Unix()
 					ref.Size = info.Size()
-					if fast {
-						if k, ok := known[path]; ok && k.MTime == ref.Mtime && k.Size == ref.Size {
-							atomic.AddInt64(&skipped, 1)
-							return nil
-						}
+					if fast && hasStub && stub.MTime == ref.Mtime && stub.Size == ref.Size {
+						atomic.AddInt64(&skipped, 1)
+						return nil
 					}
 				}
 				jobs <- ref
@@ -415,6 +423,9 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 	if fast {
 		s.log.Info("fast scan done",
 			"library", lib.Name, "changed", count, "skipped", atomic.LoadInt64(&skipped))
+		// 快速模式也清理「遍历没看到 + 文件确实不存在」的片源：
+		// 容器停机期间删掉的内容不会产生 fsnotify 事件，不兜底就会一直留在库里。
+		s.pruneUnseenSources(lib, known)
 	}
 
 	if count == 0 {
@@ -439,13 +450,61 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 		return count, nil
 	}
 
-	if deleted, err := s.db.DeleteItemsNotUpdated(lib.ID, started); err != nil {
-		s.log.Warn("delete stale items", "err", err)
-	} else if deleted > 0 {
-		s.log.Info("removed stale items", "library", lib.Name, "count", deleted)
-	}
+	// 不能简单地「没被本次扫描写入就删」：文件临时读不到（挂载抖动、
+	// 权限变化）时条目没被 upsert，会被误删并级联删掉播放进度。
+	// 改成确认片源文件确实不存在后再删。
+	s.pruneStaleItems(lib, started)
 
 	return count, nil
+}
+
+// pruneUnseenSources 删除本次遍历没看到、且 os.Stat 确认已不存在的片源。
+// 路径存在但被跳过（.hidden、@eaDir、无读权限）时一律保留。
+func (s *Scanner) pruneUnseenSources(lib *store.Library, unseen map[string]store.SourceStub) {
+	if len(unseen) == 0 {
+		return
+	}
+	removed := 0
+	for path := range unseen {
+		if _, err := os.Stat(path); err == nil || !os.IsNotExist(err) {
+			continue
+		}
+		removed += s.removeSourceByPath(path)
+	}
+	if removed > 0 {
+		s.log.Info("removed missing sources", "library", lib.Name, "count", removed)
+	}
+}
+
+// pruneStaleItems 清理全量扫描后 updated_at 没变的条目，但只删
+// 「所有片源文件都不存在」的条目；有任一文件存在就保留。
+func (s *Scanner) pruneStaleItems(lib *store.Library, since int64) {
+	items, err := s.db.StaleItemsWithSources(lib.ID, since)
+	if err != nil {
+		s.log.Warn("list stale items", "err", err)
+		return
+	}
+	deleted := 0
+	for id, paths := range items {
+		alive := false
+		for _, p := range paths {
+			if _, err := os.Stat(p); err == nil || !os.IsNotExist(err) {
+				alive = true
+				break
+			}
+		}
+		if alive {
+			continue
+		}
+		if err := s.db.DeleteItem(id); err != nil {
+			s.log.Warn("delete stale item", "item", id, "err", err)
+			continue
+		}
+		deleted++
+	}
+	if deleted > 0 {
+		s.log.Info("removed stale items", "library", lib.Name, "count", deleted)
+	}
 }
 
 func parseEntry(f fileRef) (entry, error) {

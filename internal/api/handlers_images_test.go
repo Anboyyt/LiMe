@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"lime/internal/config"
 	"lime/internal/store"
@@ -153,5 +154,28 @@ func TestItemImage(t *testing.T) {
 	}
 	if rr := get("/Items/m1/Images/Primary"); rr.Code != http.StatusNotFound {
 		t.Fatalf("traversal should 404, got %d", rr.Code)
+	}
+}
+
+// 替换同路径的本地海报后，ImageTag 必须变化，否则客户端和缩放缓存都用旧图。
+func TestImageTagTracksLocalFileChange(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "poster.jpg")
+	if err := os.WriteFile(p, []byte("one"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rel := "local:" + filepath.ToSlash(p)
+	tag1 := imageTag(rel)
+
+	if err := os.WriteFile(p, []byte("two"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 显式改 mtime，避免文件系统时间精度导致两次写入看起来一样。
+	mtime := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(p, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+	tag2 := imageTag(rel)
+	if tag1 == tag2 {
+		t.Fatalf("tag did not change after replacing local image: %s", tag1)
 	}
 }

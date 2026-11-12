@@ -2,6 +2,14 @@ package api
 
 import "lime/internal/store"
 
+// maxRatingOf 返回用户的家长分级上限；0 表示不限制。
+func maxRatingOf(user *store.User) int {
+	if user != nil && user.MaxParentalRating > 0 {
+		return user.MaxParentalRating
+	}
+	return 0
+}
+
 // applyRatingLimit 把用户的最高允许分级注入列表查询。
 func applyRatingLimit(user *store.User, q *store.ItemQuery) {
 	if user != nil && user.MaxParentalRating > 0 {

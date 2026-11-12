@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -16,11 +17,20 @@ import (
 )
 
 // imageTag 是图片缓存标记，客户端会拼在图片 URL 的 tag 参数里。
+// 本地图片（local:）要把 mtime/size 一起算进去，否则用户替换 poster.jpg 后
+// 路径没变、tag 没变，客户端会一直显示旧图。
 func imageTag(path string) string {
 	if path == "" {
 		return ""
 	}
-	sum := sha1.Sum([]byte(path))
+	key := path
+	if strings.HasPrefix(path, "local:") {
+		full := strings.TrimPrefix(path, "local:")
+		if st, err := os.Stat(full); err == nil {
+			key = fmt.Sprintf("%s|%d|%d", path, st.ModTime().UnixNano(), st.Size())
+		}
+	}
+	sum := sha1.Sum([]byte(key))
 	return hex.EncodeToString(sum[:])[:12]
 }
 
@@ -448,9 +458,8 @@ func (h *Handler) queryItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := parseItemQuery(r)
-	if q.FavoriteOnly {
-		q.UserID = user.ID
-	}
+	// 播放状态/收藏/续播筛选都需要用户 ID。
+	q.UserID = user.ID
 
 	allowed, all, aerr := h.allowedLibraries(user)
 	if aerr != nil {
@@ -1043,7 +1052,13 @@ func (h *Handler) resumeItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ids, total, err := h.db.ResumeItemIDs(user.ID, types, limit, start)
+	var libIDs []string
+	if !all {
+		libIDs = allowed
+	}
+	// 权限/分级过滤下推到 SQL：既避免分页后过滤导致页不满，
+	// 也保证 TotalRecordCount 是过滤后的真实总数。
+	ids, total, err := h.db.ResumeItemIDs(user.ID, types, libIDs, maxRatingOf(user), limit, start)
 	if err != nil {
 		h.log.Error("resume items", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -1064,21 +1079,6 @@ func (h *Handler) resumeItems(w http.ResponseWriter, r *http.Request) {
 			items = append(items, it)
 		}
 	}
-	if !all {
-		set := make(map[string]bool, len(allowed))
-		for _, id := range allowed {
-			set[id] = true
-		}
-		filtered := items[:0]
-		for _, it := range items {
-			if set[it.LibraryID] {
-				filtered = append(filtered, it)
-			}
-		}
-		items = filtered
-	}
-	items = filterByRating(user, items)
-	total = len(items)
 
 	writeJSON(w, http.StatusOK, dto.QueryResult{
 		Items:            h.itemsToDto(user, items, parseItemFields(r)),
@@ -1094,35 +1094,26 @@ func (h *Handler) nextUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	v := r.URL.Query()
-	start := atoiDefault(v.Get("StartIndex"), 0)
-	items, total, err := h.db.NextUp(user.ID,
-		atoiDefault(v.Get("Limit"), 25), start, v.Get("SeriesId"))
-	if err != nil {
-		h.log.Error("next up", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
 	allowed, all, aerr := h.allowedLibraries(user)
 	if aerr != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	var libIDs []string
 	if !all {
-		set := make(map[string]bool, len(allowed))
-		for _, id := range allowed {
-			set[id] = true
-		}
-		filtered := items[:0]
-		for _, it := range items {
-			if set[it.LibraryID] {
-				filtered = append(filtered, it)
-			}
-		}
-		items = filtered
+		libIDs = allowed
 	}
-	items = filterByRating(user, items)
-	total = len(items)
+
+	v := r.URL.Query()
+	start := atoiDefault(v.Get("StartIndex"), 0)
+	items, total, err := h.db.NextUp(user.ID,
+		atoiDefault(v.Get("Limit"), 25), start, v.Get("SeriesId"),
+		libIDs, maxRatingOf(user))
+	if err != nil {
+		h.log.Error("next up", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, dto.QueryResult{
 		Items:            h.itemsToDto(user, items, parseItemFields(r)),
@@ -1133,6 +1124,7 @@ func (h *Handler) nextUp(w http.ResponseWriter, r *http.Request) {
 
 func parseItemQuery(r *http.Request) store.ItemQuery {
 	v := r.URL.Query()
+	filters := splitCSV(v.Get("Filters"))
 	return store.ItemQuery{
 		ParentID:        v.Get("ParentId"),
 		Recursive:       strings.EqualFold(v.Get("Recursive"), "true"),
@@ -1144,7 +1136,14 @@ func parseItemQuery(r *http.Request) store.ItemQuery {
 		SeasonID:        v.Get("SeasonId"),
 		Person:          v.Get("Person"),
 		FavoriteOnly: strings.EqualFold(v.Get("IsFavorite"), "true") ||
-			containsFold(splitCSV(v.Get("Filters")), "IsFavorite"),
+			containsFold(filters, "IsFavorite"),
+		PlayedOnly: strings.EqualFold(v.Get("IsPlayed"), "true") ||
+			containsFold(filters, "IsPlayed"),
+		// Jellyfin 的 IsPlayed=false 等价于只看未看。
+		UnplayedOnly: strings.EqualFold(v.Get("IsPlayed"), "false") ||
+			containsFold(filters, "IsUnplayed"),
+		ResumableOnly: strings.EqualFold(v.Get("IsResumable"), "true") ||
+			containsFold(filters, "IsResumable"),
 		SearchTerm: v.Get("SearchTerm"),
 		SortBy:     splitCSV(v.Get("SortBy")),
 		Descending: strings.EqualFold(v.Get("SortOrder"), "Descending"),

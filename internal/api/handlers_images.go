@@ -175,7 +175,13 @@ func (h *Handler) serveScaledImage(w http.ResponseWriter, r *http.Request, full 
 		http.ServeFile(w, r, full)
 		return
 	}
-	sum := sha1.Sum([]byte(fmt.Sprintf("%s|%d|%d", full, maxW, maxH)))
+	// 缓存键带上源文件 mtime/size：本地海报被替换后路径不变，
+	// 只用路径做键会一直命中旧图。
+	cacheKey := fmt.Sprintf("%s|%d|%d", full, maxW, maxH)
+	if st, err := os.Stat(full); err == nil {
+		cacheKey = fmt.Sprintf("%s|%d|%d|%d|%d", full, maxW, maxH, st.ModTime().UnixNano(), st.Size())
+	}
+	sum := sha1.Sum([]byte(cacheKey))
 	cachePath := filepath.Join(cacheDir, hex.EncodeToString(sum[:])+".jpg")
 	if st, err := os.Stat(cachePath); err == nil && st.Size() > 0 {
 		w.Header().Set("Content-Type", "image/jpeg")
