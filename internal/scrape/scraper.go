@@ -294,9 +294,11 @@ func (s *Scraper) ScrapeItems(ids []string) (int, error) {
 
 // scrapeSeasonEpisodes 只更新指定单集，用于已刮过的季里新增的集数。
 func (s *Scraper) scrapeSeasonEpisodes(ctx context.Context, it *store.Item, only map[string]struct{}) error {
+	// 第 0 季是 TMDB 的 Specials，必须按 0 查；回退成第 1 季会拿错数据，
+	// 而且 EpisodeByNumber 用 1 永远匹配不到第 0 季的单集。
 	seasonNo := it.IndexNumber
-	if seasonNo <= 0 {
-		seasonNo = 1
+	if seasonNo < 0 {
+		seasonNo = 0
 	}
 	sd, err := s.client.SeasonDetail(ctx, it.TmdbID, seasonNo)
 	if err != nil {
@@ -1157,9 +1159,11 @@ func (s *Scraper) scrapeSeries(ctx context.Context, it *store.Item) error {
 
 // scrapeSeason 拿整季的分集信息，顺便把剧集海报继承给单集。
 func (s *Scraper) scrapeSeason(ctx context.Context, it *store.Item) error {
+	// 第 0 季是 TMDB 的 Specials，必须按 0 查；回退成第 1 季会拿错数据，
+	// 而且 EpisodeByNumber 用 1 永远匹配不到第 0 季的单集。
 	seasonNo := it.IndexNumber
-	if seasonNo <= 0 {
-		seasonNo = 1
+	if seasonNo < 0 {
+		seasonNo = 0
 	}
 
 	sd, err := s.client.SeasonDetail(ctx, it.TmdbID, seasonNo)
