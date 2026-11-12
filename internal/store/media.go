@@ -266,25 +266,78 @@ FROM media_streams WHERE source_id = ? ORDER BY stream_index`, sourceID)
 
 	out := make([]*MediaStream, 0, 4)
 	for rows.Next() {
-		var (
-			s                       MediaStream
-			interlaced, def, forced int
-		)
-		if err := rows.Scan(
-			&s.SourceID, &s.Index, &s.Type, &s.Codec, &s.Width, &s.Height, &s.BitRate,
-			&s.BitDepth, &s.Channels, &s.FrameRate, &s.Language, &s.Title, &s.VideoRange,
-			&s.Profile, &s.Level, &s.AspectRatio, &interlaced, &s.ColorPrimaries,
-			&s.ColorTransfer, &s.ColorSpace, &s.PixelFormat, &s.SampleRate, &s.ChannelLayout,
-			&def, &forced,
-		); err != nil {
+		s, err := scanMediaStream(rows)
+		if err != nil {
 			return nil, err
 		}
-		s.IsInterlaced = interlaced != 0
-		s.IsDefault = def != 0
-		s.IsForced = forced != 0
-		out = append(out, &s)
+		out = append(out, s)
 	}
 	return out, rows.Err()
+}
+
+// MediaStreamsBySources 批量取多个片源的轨道，按 source_id 分组。
+// 列表响应靠它一次查出全部轨道，避免逐条片源各发一条 SQL。
+func (d *DB) MediaStreamsBySources(sourceIDs []string) (map[string][]*MediaStream, error) {
+	out := make(map[string][]*MediaStream, len(sourceIDs))
+	const chunk = 400 // 分块，避免一条 SQL 里绑上千个变量
+	for start := 0; start < len(sourceIDs); start += chunk {
+		end := start + chunk
+		if end > len(sourceIDs) {
+			end = len(sourceIDs)
+		}
+		part := sourceIDs[start:end]
+		marks := make([]string, len(part))
+		args := make([]any, len(part))
+		for i, id := range part {
+			marks[i] = "?"
+			args[i] = id
+		}
+		rows, err := d.Query(`
+SELECT source_id, stream_index, type, codec, width, height, bit_rate, bit_depth, channels,
+       frame_rate, language, title, video_range, profile, level, aspect_ratio, is_interlaced,
+       color_primaries, color_transfer, color_space, pixel_format, sample_rate, channel_layout,
+       is_default, is_forced
+FROM media_streams WHERE source_id IN (`+strings.Join(marks, ",")+`)
+ORDER BY source_id, stream_index`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			s, err := scanMediaStream(rows)
+			if err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[s.SourceID] = append(out[s.SourceID], s)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// scanMediaStream 读一行 media_streams；列顺序与上面的 SELECT 保持一致。
+func scanMediaStream(rows *sql.Rows) (*MediaStream, error) {
+	var (
+		s                       MediaStream
+		interlaced, def, forced int
+	)
+	if err := rows.Scan(
+		&s.SourceID, &s.Index, &s.Type, &s.Codec, &s.Width, &s.Height, &s.BitRate,
+		&s.BitDepth, &s.Channels, &s.FrameRate, &s.Language, &s.Title, &s.VideoRange,
+		&s.Profile, &s.Level, &s.AspectRatio, &interlaced, &s.ColorPrimaries,
+		&s.ColorTransfer, &s.ColorSpace, &s.PixelFormat, &s.SampleRate, &s.ChannelLayout,
+		&def, &forced,
+	); err != nil {
+		return nil, err
+	}
+	s.IsInterlaced = interlaced != 0
+	s.IsDefault = def != 0
+	s.IsForced = forced != 0
+	return &s, nil
 }
 
 // SourceStub 是快速扫描用的片源摘要：只保留判断文件是否变化所需的字段。

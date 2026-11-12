@@ -149,8 +149,8 @@ func (h *Handler) webBrowseDirs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := r.URL.Query().Get("path")
-	if path == "" && len(h.cfg.LibraryRoots) > 0 {
-		path = h.cfg.LibraryRoots[0]
+	if path == "" {
+		path = h.libraryRoots()[0]
 	}
 	clean, err := h.checkLibraryDir(path)
 	if err != nil {
@@ -184,6 +184,34 @@ func (h *Handler) webBrowseDirs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// libraryRoots 返回面板允许建库/浏览的根路径。没配 LIME_LIBRARY_ROOTS 时
+// 回退到已注册的库路径和实际存在的 /media、/strm——标准版 compose 把媒体
+// 挂在 /media，只认 /strm 会让面板建库直接报「路径必须在这些目录下」。
+func (h *Handler) libraryRoots() []string {
+	if len(h.cfg.LibraryRoots) > 0 {
+		return h.cfg.LibraryRoots
+	}
+	var roots []string
+	if libs, err := h.db.ListLibraries(); err == nil {
+		for _, l := range libs {
+			if len(l.Paths) > 0 {
+				roots = append(roots, l.Paths...)
+			} else if l.Path != "" {
+				roots = append(roots, l.Path)
+			}
+		}
+	}
+	for _, d := range []string{"/media", "/strm"} {
+		if st, err := os.Stat(d); err == nil && st.IsDir() {
+			roots = append(roots, d)
+		}
+	}
+	if len(roots) == 0 {
+		roots = []string{"/media", "/strm"}
+	}
+	return roots
+}
+
 func (h *Handler) checkLibraryDir(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -194,10 +222,7 @@ func (h *Handler) checkLibraryDir(path string) (string, error) {
 	}
 	path = filepath.Clean(path)
 
-	roots := h.cfg.LibraryRoots
-	if len(roots) == 0 {
-		roots = []string{"/strm"}
-	}
+	roots := h.libraryRoots()
 	allowed := false
 	for _, root := range roots {
 		root = filepath.Clean(root)

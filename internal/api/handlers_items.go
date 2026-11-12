@@ -200,35 +200,64 @@ func (h *Handler) itemToDto(it *store.Item, ps *store.Playstate, fields ...itemF
 	return d
 }
 
-// simpleMediaSources 给列表响应生成精简片源信息。详情/播放仍走
-// PlaybackInfo，这里只提供客户端列表渲染需要的字段。
-func simpleMediaSources(it *store.Item, srcs []*store.MediaSource) []dto.MediaSourceDto {
+// maxListStreamSources 限制列表响应里带轨道的片源数量。
+// 大列表（>500 个片源）不带轨道，避免 payload 和 SQL 变量数失控。
+const maxListStreamSources = 500
+
+// listMediaSources 给列表响应生成片源信息。字段与详情保持一致（含轨道），
+// 但不扫外挂字幕：列表一次几十上百条，没必要挨个 stat 同目录。
+//
+// 客户端（SenPlayer 等）打开集详情时直接拿 Episodes 列表里这条渲染「媒体信息」，
+// 只给空 MediaStreams 会让剧集页永远没有视频/音频参数。
+func (h *Handler) listMediaSources(it *store.Item, srcs []*store.MediaSource, streamsBy map[string][]*store.MediaStream) []dto.MediaSourceDto {
 	out := make([]dto.MediaSourceDto, 0, len(srcs))
 	for _, s := range srcs {
-		name := s.VersionName
-		if name == "" {
-			name = s.FileName
-		}
-		if name == "" {
-			name = "默认"
-		}
+		bitrate := sourceBitrate(s, it.RunTimeTicks)
+		ms, defaultAudio := h.mediaStreamDtos(nil, "", s, streamsBy[s.ID], bitrate, false)
 		out = append(out, dto.MediaSourceDto{
-			Protocol:             "Http",
-			Id:                   s.ID,
-			Path:                 s.StrmPath,
-			Type:                 "Default",
-			Name:                 name,
-			Container:            s.Container,
-			Size:                 s.Size,
-			IsRemote:             true,
-			SupportsDirectPlay:   true,
-			SupportsDirectStream: true,
-			SupportsTranscoding:  false,
-			RunTimeTicks:         it.RunTimeTicks,
-			MediaStreams:         []dto.MediaStreamDto{},
+			Protocol:                "Http",
+			Id:                      s.ID,
+			Path:                    s.StrmPath,
+			Type:                    "Default",
+			Name:                    sourceDisplayName(s, streamsBy[s.ID], bitrate),
+			Container:               s.Container,
+			Size:                    s.Size,
+			Bitrate:                 bitrate,
+			IsRemote:                true,
+			SupportsDirectPlay:      true,
+			SupportsDirectStream:    true,
+			SupportsTranscoding:     false,
+			RunTimeTicks:            it.RunTimeTicks,
+			MediaStreams:            ms,
+			DefaultAudioStreamIndex: defaultAudio,
 		})
 	}
 	return out
+}
+
+// streamsForSources 一次批量取出本页所有片源的轨道。
+func (h *Handler) streamsForSources(sourcesByItem map[string][]*store.MediaSource) map[string][]*store.MediaStream {
+	ids := make([]string, 0, len(sourcesByItem)*2)
+	for _, srcs := range sourcesByItem {
+		if len(ids) >= maxListStreamSources {
+			break
+		}
+		for _, s := range srcs {
+			if len(ids) >= maxListStreamSources {
+				break
+			}
+			ids = append(ids, s.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	m, err := h.db.MediaStreamsBySources(ids)
+	if err != nil {
+		h.log.Warn("load media streams", "err", err)
+		return nil
+	}
+	return m
 }
 
 func parseGenres(raw string) []string {
@@ -355,6 +384,10 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 	if err != nil {
 		h.log.Warn("load media sources", "err", err)
 	}
+	var streamsBy map[string][]*store.MediaStream
+	if len(sourcesByItem) > 0 {
+		streamsBy = h.streamsForSources(sourcesByItem)
+	}
 
 	for _, it := range items {
 		var ps *store.Playstate
@@ -383,12 +416,12 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 			d.SeasonName = parentNames[it.SeasonID]
 			if srcs := sourcesByItem[it.ID]; len(srcs) > 0 {
 				d.MediaSourceCount = len(srcs)
-				d.MediaSources = simpleMediaSources(it, srcs)
+				d.MediaSources = h.listMediaSources(it, srcs, streamsBy)
 			}
 		case store.TypeMovie:
 			if srcs := sourcesByItem[it.ID]; len(srcs) > 0 {
 				d.MediaSourceCount = len(srcs)
-				d.MediaSources = simpleMediaSources(it, srcs)
+				d.MediaSources = h.listMediaSources(it, srcs, streamsBy)
 			}
 		}
 		out = append(out, d)
@@ -657,6 +690,35 @@ func (h *Handler) mediaSourceDto(r *http.Request, itemID string, s *store.MediaS
 	streams, _ := h.db.MediaStreamsBySource(s.ID)
 
 	bitrate := sourceBitrate(s, runtimeTicks)
+	ms, defaultAudio := h.mediaStreamDtos(r, itemID, s, streams, bitrate, true)
+
+	name := sourceDisplayName(s, streams, bitrate)
+
+	return dto.MediaSourceDto{
+		Protocol:                   "Http",
+		Id:                         s.ID,
+		Path:                       h.absoluteStreamURL(r, itemID, s.ID),
+		DirectStreamUrl:            h.absoluteStreamURL(r, itemID, s.ID),
+		Type:                       "Default",
+		Name:                       name,
+		Container:                  s.Container,
+		Size:                       s.Size,
+		Bitrate:                    bitrate,
+		IsRemote:                   true,
+		SupportsDirectPlay:         true,
+		SupportsDirectStream:       true,
+		SupportsTranscoding:        false,
+		RunTimeTicks:               s.DurationTicks,
+		MediaStreams:               ms,
+		DefaultAudioStreamIndex:    defaultAudio,
+		DefaultSubtitleStreamIndex: nil,
+	}
+}
+
+// mediaStreamDtos 把库里的轨道转成 Jellyfin DTO。
+// externalSubs=true 时顺带扫同目录外挂字幕（要 stat 目录，列表响应传 false）。
+// r 为 nil 时只可能是列表场景，此时 externalSubs 必为 false。
+func (h *Handler) mediaStreamDtos(r *http.Request, itemID string, s *store.MediaSource, streams []*store.MediaStream, bitrate int64, externalSubs bool) ([]dto.MediaStreamDto, *int) {
 	ms := make([]dto.MediaStreamDto, 0, len(streams))
 	var defaultAudio *int
 
@@ -715,45 +777,27 @@ func (h *Handler) mediaSourceDto(r *http.Request, itemID string, s *store.MediaS
 	}
 
 	// 外挂字幕：同目录、同文件名的 .srt/.ass/.ssa/.vtt
-	for i, sub := range strm.FindSubtitles(s.StrmPath) {
-		index := externalSubtitleIndexBase + i
-		ms = append(ms, dto.MediaStreamDto{
-			Type:                   "Subtitle",
-			Index:                  index,
-			Codec:                  sub.Format,
-			IsDefault:              false,
-			IsExternal:             true,
-			IsTextSubtitleStream:   true,
-			SupportsExternalStream: true,
-			DeliveryMethod:         "External",
-			DeliveryUrl:            h.subtitleURL(r, itemID, s.ID, index, sub.Format),
-			Language:               sub.Language,
-			Title:                  sub.Title,
-			DisplayTitle:           sub.Title,
-		})
+	if externalSubs && r != nil {
+		for i, sub := range strm.FindSubtitles(s.StrmPath) {
+			index := externalSubtitleIndexBase + i
+			ms = append(ms, dto.MediaStreamDto{
+				Type:                   "Subtitle",
+				Index:                  index,
+				Codec:                  sub.Format,
+				IsDefault:              false,
+				IsExternal:             true,
+				IsTextSubtitleStream:   true,
+				SupportsExternalStream: true,
+				DeliveryMethod:         "External",
+				DeliveryUrl:            h.subtitleURL(r, itemID, s.ID, index, sub.Format),
+				Language:               sub.Language,
+				Title:                  sub.Title,
+				DisplayTitle:           sub.Title,
+			})
+		}
 	}
 
-	name := sourceDisplayName(s, streams, bitrate)
-
-	return dto.MediaSourceDto{
-		Protocol:                   "Http",
-		Id:                         s.ID,
-		Path:                       h.absoluteStreamURL(r, itemID, s.ID),
-		DirectStreamUrl:            h.absoluteStreamURL(r, itemID, s.ID),
-		Type:                       "Default",
-		Name:                       name,
-		Container:                  s.Container,
-		Size:                       s.Size,
-		Bitrate:                    bitrate,
-		IsRemote:                   true,
-		SupportsDirectPlay:         true,
-		SupportsDirectStream:       true,
-		SupportsTranscoding:        false,
-		RunTimeTicks:               s.DurationTicks,
-		MediaStreams:               ms,
-		DefaultAudioStreamIndex:    defaultAudio,
-		DefaultSubtitleStreamIndex: nil,
-	}
+	return ms, defaultAudio
 }
 
 func (h *Handler) userViews(w http.ResponseWriter, r *http.Request) {

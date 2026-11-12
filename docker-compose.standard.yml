@@ -1,36 +1,61 @@
-# LiMe 标准部署
+# LiMe 标准部署模板
 #
 #   docker compose up -d
 #
 # 只需要改两处：
-#   1. LIME_ADMIN_PASSWORD
+#   1. LIME_ADMIN_PASSWORD —— 初始管理员密码
 #   2. volumes 里的 STRM 目录
 #
-# 其余配置都有默认值，需要时再往下加（见文件末尾注释）。
+# 其他都有默认值，按需再往下加（见文件末尾）。
+# 可选密钥（TMDB Key、代理等）放同目录 .env，参考 .env.example。
 
 services:
   lime:
     image: lixxh/lime:latest
     container_name: lime
     restart: unless-stopped
+
     ports:
+      # 左边是宿主机端口，被占用时只改左边，例如 "1886:886"
       - "886:886"
 
     environment:
       TZ: Asia/Shanghai
+
+      # 客户端（Emby / Jellyfin App）里显示的服务器名
       LIME_SERVER_NAME: "LiMe"
-      LIME_ADMIN_PASSWORD: "change-me"   # 首次启动时创建，之后改密码不覆盖
 
-      # 首次启动没有库时，会自动把 /media 下的一级目录识别成媒体库：
-      # 电影 → movies，剧集/动漫/综艺/纪录片 → tvshows，其余 → mixed。
-      # 想手动指定就加 LIME_LIBRARIES，格式 "名称|路径|类型;名称|路径|类型"。
+      # 数据目录，对应下面 volumes 的 ./data
+      LIME_DATA_DIR: "/data"
 
-      # 大库启动时不做全量扫描；小库可删掉这行
+      # 初始管理员：只在首次启动创建，之后改密码不会被 .env 覆盖
+      LIME_ADMIN_USER: "admin"
+      LIME_ADMIN_PASSWORD: "change-me"
+
+      # 媒体库：没配 LIME_LIBRARIES 时按 /media 下的一级子目录自动建库，
+      # 并按目录名猜类型：
+      #   电影 / 演唱会 → movies
+      #   剧集 / 动漫 / 综艺 / 纪录片 / 儿童 → tvshows
+      #   其余 → mixed
+      # 想手动指定就取消下面这行的注释，格式 "名称|路径|类型"，
+      # 多个库用英文分号分隔：
+      # LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
+
+      # 启动时是否全量扫描。大库（十万级 STRM）建议 false，
+      # 首次启动后在面板里手动扫描；小库可以改成 true
       LIME_SCAN_ON_START: "false"
 
+      # 每天固定时间做增量扫描（HH:MM，容器时区），留空关闭
+      LIME_SCAN_DAILY_AT: "03:30"
+
+      # 监听媒体目录，PanSave 写入新 .strm 后自动入库
+      LIME_REALTIME_MONITOR: "true"
+
     volumes:
-      - ./data:/data                    # SQLite、海报缓存
-      - /path/to/your/strm:/media:ro    # ← 改成你的 STRM 目录
+      # SQLite 数据库、海报/Logo 缓存、备份
+      - ./data:/data
+      # ← 改成你的 STRM 目录；只读即可
+      - /path/to/your/strm:/media:ro
 
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:886/health"]
@@ -39,20 +64,28 @@ services:
       retries: 3
       start_period: 10s
 
-# ---- 按需追加，不是必须 ----
+# ---------------------------------------------------------------------------
+# 按需追加，都不是必须的
+# ---------------------------------------------------------------------------
 #
-# 外网访问（302 改写，否则客户端会连内网 PanSave 地址）：
+# 外网访问（打开 302 地址改写，否则客户端会去连内网 PanSave 地址）：
 #   LIME_REWRITE_ENABLED: "true"
-#   LIME_REWRITE_FROM: "192.168.1.100:16868"
-#   LIME_REWRITE_LOCAL: "192.168.1.100:16868"
-#   LIME_REWRITE_PUBLIC: "https://pansave.example.com"
+#   LIME_REWRITE_FROM: "192.168.1.100:16868"      # STRM 里的原始地址
+#   LIME_REWRITE_LOCAL: "192.168.1.100:16868"     # 局域网可访问的地址
+#   LIME_REWRITE_PUBLIC: "https://pansave.example.com"  # 外网地址
 #
-# TMDB 刮削：
-#   LIME_TMDB_API_KEY: "xxxx"
-#   LIME_TMDB_PROXY: "http://192.168.1.100:7890"
+# 端口暴露到公网时，建议强制校验播放 token：
+#   LIME_STREAM_REQUIRE_AUTH: "true"
+#
+# TMDB 刮削（Key 和代理放 .env）：
+#   LIME_TMDB_API_KEY: "${LIME_TMDB_API_KEY:-}"
+#   LIME_TMDB_PROXY: "${LIME_TMDB_PROXY:-}"   # 容器内不能用 127.0.0.1
+#
+# PanSave 只暴露反向代理端口、没有云盘直链时：
+#   LIME_INTERNAL_URL: "http://192.168.1.100:886"
+#   LIME_RESOLVE_REDIRECT: "true"
 #
 # 其余默认值：
-#   LIME_DATA_DIR=/data  LIME_ADMIN_USER=admin
+#   LIME_DATA_DIR=/data  LIME_ADMIN_USER=admin  LIME_SERVER_NAME=LiMe
 #   LIME_REALTIME_MONITOR=true  LIME_PROBE_ENABLED=true
-#   LIME_SCRAPE_WORKERS=3  LIME_SCRAPE_RATE_MS=50
-#   LIME_SCAN_ON_START 默认 true，这里显式关掉所以大库首次启动不扫描
+#   LIME_PROBE_WORKERS=2  LIME_SCRAPE_WORKERS=3  LIME_SCRAPE_RATE_MS=50
