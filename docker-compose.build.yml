@@ -1,10 +1,18 @@
 # 源码构建覆盖文件，配合根 docker-compose.yml 使用：
 #
-#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#   LIME_VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev) \
+#     docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#
+# 不给 LIME_VERSION 时版本号是 dev（Dockerfile 的默认值），/health 里会显示
+# productVersion=dev；带上上面那句就会显示成 v1.0.8 / v1.0.8-3-gabc1234 这样。
 #
 # 构建出的镜像会直接覆盖 lixxh/lime:latest 这个本地标签。
 
 services:
   lime:
-    build: .
+    build:
+      context: .
+      args:
+        # CI 用 tag 名，本地构建用 git describe 的结果，都不传就是 dev
+        LIME_VERSION: ${LIME_VERSION:-dev}
     image: lixxh/lime:latest
