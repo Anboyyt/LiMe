@@ -58,6 +58,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Notify Telegram
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -69,7 +73,22 @@ jobs:
           fi
           TAG="${GITHUB_REF_NAME}"
           VER="${TAG#v}"
-          MSG=$(printf '<b>LiMe %s 已发布</b>\n\n镜像：<code>lixxh/lime:%s</code> / <code>latest</code>\n平台：linux/amd64 · linux/arm64\n升级：<code>docker compose pull && docker compose up -d</code>\n\n%s' "$TAG" "$VER" "https://github.com/${GITHUB_REPOSITORY}")
+
+          # 上一个 tag 到本次 tag 的提交，去掉 docs/ci/chore 这类噪音
+          PREV=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
+          if [ -n "$PREV" ]; then
+            CHANGES=$(git log --no-merges --pretty=format:'• %s' "${PREV}..${TAG}" \
+              | grep -vE '^• (docs|ci|chore)(\(|:| )' | head -12 || true)
+          else
+            CHANGES=$(git log --no-merges --pretty=format:'• %s' -n 10 "$TAG" || true)
+          fi
+          [ -z "$CHANGES" ] && CHANGES="• 无功能变更（仅文档 / CI）"
+          # 去掉 feat:/fix: 这类前缀，再按 parse_mode=HTML 转义
+          CHANGES=$(printf '%s' "$CHANGES" \
+            | sed -E 's/^• (feat|fix|perf|refactor)(\([^)]*\))?: /• /' \
+            | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')
+
+          MSG=$(printf '<b>LiMe %s 已发布</b>\n\n<b>本次更新</b>\n%s\n\n镜像：<code>lixxh/lime:%s</code> / <code>latest</code>\n平台：linux/amd64 · linux/arm64\n升级：<code>docker compose pull && docker compose up -d</code>\n\n%s' "$TAG" "$CHANGES" "$VER" "https://github.com/${GITHUB_REPOSITORY}")
           resp=$(curl -sS --retry 3 --retry-delay 5 \
             -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TG_CHAT}" \
