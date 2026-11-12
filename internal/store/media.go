@@ -74,9 +74,13 @@ func upsertMediaSource(e execer, src *MediaSource) error {
 	// 条目 ID 变化（目录改名、NFO 标题变化）会让 source ID 跟着变，
 	// 但 (drive_id, cloud_file_id) 唯一索引仍指向旧行。先清掉旧行，
 	// 否则 INSERT 会报 UNIQUE constraint failed，条目变成「有卡片没片源」。
+	//
+	// `cloud_file_id <> ''` 不能省：idx_media_sources_cloud 是部分索引，
+	// 少了这个条件 SQLite 用不上它，每条片源都要全表扫 29 万行，全量扫描会退化成 O(n²)。
 	if src.CloudFileID != "" {
 		if _, err := e.Exec(
-			`DELETE FROM media_sources WHERE drive_id = ? AND cloud_file_id = ? AND id <> ?`,
+			`DELETE FROM media_sources
+WHERE drive_id = ? AND cloud_file_id = ? AND cloud_file_id <> '' AND id <> ?`,
 			src.DriveID, src.CloudFileID, src.ID,
 		); err != nil {
 			return err

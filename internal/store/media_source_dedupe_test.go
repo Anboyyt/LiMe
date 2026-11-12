@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,5 +103,30 @@ func TestUpsertMediaSourceKeepsDifferentCloudFiles(t *testing.T) {
 	srcs, _ := db.MediaSourcesByItem("e1")
 	if len(srcs) != 2 {
 		t.Fatalf("sources = %d, want 2", len(srcs))
+	}
+}
+
+// idx_media_sources_cloud 是部分索引；清理旧片源的 DELETE 必须带上
+// cloud_file_id <> ”，否则会退化成全表扫描，全量扫描直接 O(n²)。
+func TestMediaSourceCloudCleanupUsesIndex(t *testing.T) {
+	db := newTestDB(t)
+	rows, err := db.Query(`EXPLAIN QUERY PLAN DELETE FROM media_sources
+WHERE drive_id = ? AND cloud_file_id = ? AND cloud_file_id <> '' AND id <> ?`, "5", "1", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, notused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &notused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail)
+	}
+	if !strings.Contains(plan.String(), "idx_media_sources_cloud") {
+		t.Fatalf("delete should use partial index, plan = %s", plan.String())
 	}
 }
