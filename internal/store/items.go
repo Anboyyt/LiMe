@@ -788,7 +788,7 @@ type ItemQuery struct {
 	OfficialRatings []string
 	MaxRating       int // >0 时只返回 rating_score 0（未分级）或不高于该值的条目
 	SeasonID        string
-	Person          string
+	Persons         []string // 演员名，多个之间 OR
 	UserID          string
 	FavoriteOnly    bool
 	PlayedOnly      bool // 只看已看完
@@ -926,11 +926,14 @@ func (d *DB) buildItemWhere(q ItemQuery) ([]string, []any) {
 			`EXISTS (SELECT 1 FROM playstates ps WHERE ps.item_id = items.id AND ps.played = 0 AND ps.position_ticks > 0 AND ps.user_id = ?)`)
 		args = append(args, q.UserID)
 	}
-	if q.Person != "" {
+	if len(q.Persons) > 0 {
+		// 名字大小写不敏感：客户端拿到的 Person 名字可能和库里存储的格式有差异。
 		where = append(where,
 			`EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(people) THEN people ELSE '[]' END) p
-			 WHERE json_extract(p.value, '$.Name') = ?)`)
-		args = append(args, q.Person)
+			 WHERE LOWER(json_extract(p.value, '$.Name')) IN (`+placeholders(len(q.Persons))+`))`)
+		for _, name := range q.Persons {
+			args = append(args, strings.ToLower(strings.TrimSpace(name)))
+		}
 	}
 	if term := strings.TrimSpace(q.SearchTerm); term != "" {
 		// 3 个字符以上走 FTS5 trigram 索引；中文两字词（如「三体」）

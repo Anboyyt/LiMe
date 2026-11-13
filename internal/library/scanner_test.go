@@ -130,6 +130,69 @@ func TestScanSmallLibrary(t *testing.T) {
 	}
 }
 
+// 只靠本地 tvshow.nfo 的演员也要挂到 Series 上，否则按演员筛选不到剧。
+func TestScanSeriesUsesTVShowNFOPeople(t *testing.T) {
+	root := t.TempDir()
+	showDir := filepath.Join(root, "剧集", "本地剧 (2023) {tmdb-99}")
+	writeStrm(t, filepath.Join(showDir, "Season 1", "本地剧.S01E01.strm"),
+		"http://192.168.1.155:16868/strm/123/drive?drive_id=6&file_id=1&size=10&file_name=a.mp4")
+
+	nfoXML := `<?xml version="1.0" encoding="utf-8"?>
+<tvshow>
+  <title>本地剧</title>
+  <plot>本地简介</plot>
+  <actor><name>本地演员</name><role>主角</role></actor>
+</tvshow>`
+	if err := os.WriteFile(filepath.Join(showDir, "tvshow.nfo"), []byte(nfoXML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpsertLibrary("test", root, "tvshows"); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := New(db, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))
+	if _, err := sc.ScanAll(); err != nil {
+		t.Fatal(err)
+	}
+
+	libs, _ := db.ListLibraries()
+	items, _, err := db.QueryItems(store.ItemQuery{LibraryID: libs[0].ID, Recursive: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var series *store.Item
+	for _, it := range items {
+		if it.Type == store.TypeSeries {
+			series = it
+		}
+	}
+	if series == nil {
+		t.Fatal("series item not found")
+	}
+	if !strings.Contains(series.People, "本地演员") {
+		t.Fatalf("series people = %q", series.People)
+	}
+
+	matches, total, err := db.QueryItems(store.ItemQuery{
+		Persons: []string{"本地演员"}, Types: []string{store.TypeSeries},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(matches) != 1 || matches[0].ID != series.ID {
+		t.Fatalf("person filter total=%d items=%v", total, matches)
+	}
+}
+
 // 入库时间要用 STRM 文件的真实修改时间，不能用扫描时刻，
 // 否则整库扫描的条目会挤在同一秒，首页「最近添加」等于随机顺序。
 func TestScanUsesSTRMMtimeForCreatedAt(t *testing.T) {

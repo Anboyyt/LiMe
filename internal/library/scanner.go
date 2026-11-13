@@ -138,6 +138,7 @@ type entry struct {
 	Local    *nfo.Metadata
 	Poster   string
 	Backdrop string
+	Show     *nfo.Metadata // 剧集根目录的 tvshow.nfo
 }
 
 // applier 既可以是 *store.DB，也可以是 *store.Batch。
@@ -356,6 +357,7 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 	pending := 0
 
 	var batch *store.Batch
+	var changedIDs []string
 
 	// commit 提交后必须把 batch 置空，否则会一直占着唯一连接。
 	commit := func() {
@@ -384,14 +386,18 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 		}
 
 		var applyErr error
+		var changedID string
 		if batch != nil {
-			_, applyErr = s.apply(batch, lib, e)
+			changedID, applyErr = s.apply(batch, lib, e)
 		} else {
-			_, applyErr = s.apply(s.db, lib, e) // 事务不可用时逐条写，保证不丢数据
+			changedID, applyErr = s.apply(s.db, lib, e) // 事务不可用时逐条写，保证不丢数据
 		}
 		if applyErr != nil {
 			s.log.Warn("apply item", "path", e.Path, "err", applyErr)
 			continue
+		}
+		if fast && changedID != "" {
+			changedIDs = append(changedIDs, changedID)
 		}
 
 		if batch != nil {
@@ -419,6 +425,23 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 	}
 
 	commit()
+
+	// 本地 NFO 的演员只会写进 items.people，扫描后展开到 persons 表，
+	// 客户端按 PersonIds 筛演员时才能反查到名字。
+	if count > 0 {
+		var n int
+		var err error
+		if fast {
+			n, err = s.db.IndexPersonsFromItems(changedIDs)
+		} else {
+			n, err = s.db.IndexPersonsFromLibrary(lib.ID)
+		}
+		if err != nil {
+			s.log.Warn("index persons", "library", lib.Name, "err", err)
+		} else if n > 0 {
+			s.log.Debug("persons indexed", "library", lib.Name, "persons", n)
+		}
+	}
 
 	if fast {
 		s.log.Info("fast scan done",
@@ -551,6 +574,10 @@ func parseEntry(f fileRef) (entry, error) {
 	// 单集的 NFO 标题只用于该集名称，不能覆盖剧名。
 	dir := filepath.Dir(f.Path)
 	local := nfo.Load(dir, stem)
+	var show *nfo.Metadata
+	if meta.IsEpisode {
+		show = nfo.LoadSeries(dir)
+	}
 	if local != nil {
 		if !meta.IsEpisode && local.Title != "" {
 			meta.Title = local.Title
@@ -576,6 +603,7 @@ func parseEntry(f fileRef) (entry, error) {
 		Local:    local,
 		Poster:   poster,
 		Backdrop: backdrop,
+		Show:     show,
 	}, nil
 }
 
@@ -691,7 +719,7 @@ func (s *Scanner) apply(w applier, lib *store.Library, e entry) (string, error) 
 		seriesKey, seriesPY, seriesAbbr := pinyinKey(seriesName, seriesSort)
 		seriesID := itemID(lib.ID, "series", identityKey(meta, seriesSort))
 
-		if err := w.UpsertItem(&store.Item{
+		series := &store.Item{
 			ID:             seriesID,
 			LibraryID:      lib.ID,
 			ParentID:       lib.ID,
@@ -704,7 +732,9 @@ func (s *Scanner) apply(w applier, lib *store.Library, e entry) (string, error) 
 			ProductionYear: meta.Year,
 			TmdbID:         meta.TmdbID,
 			CreatedAt:      createdAt,
-		}); err != nil {
+		}
+		applySeriesLocalMeta(series, e.Show)
+		if err := w.UpsertItem(series); err != nil {
 			return "", err
 		}
 
@@ -837,6 +867,47 @@ func applyLocalMeta(item *store.Item, e entry) {
 	}
 	if t := m.RuntimeTicks(); t > 0 {
 		item.RunTimeTicks = t
+	}
+	if g := m.GenresJSON(); g != "" {
+		item.Genres = g
+	}
+	if p := m.PeopleJSON(); p != "" {
+		item.People = p
+	}
+	item.ScrapedAt = time.Now().Unix()
+}
+
+// applySeriesLocalMeta 把剧集根目录 tvshow.nfo 的元数据写到 Series 条目。
+// 单集自己的 NFO 只属于那一集；演员、简介、类型这些是剧级的。
+func applySeriesLocalMeta(item *store.Item, m *nfo.Metadata) {
+	if m == nil {
+		return
+	}
+	if item.Name == "" || item.Name == "未知剧集" {
+		if m.Title != "" {
+			item.Name = m.Title
+		}
+	}
+	if m.OriginalTitle != "" {
+		item.OriginalTitle = m.OriginalTitle
+	}
+	if item.ProductionYear == 0 && m.Year > 0 {
+		item.ProductionYear = m.Year
+	}
+	if item.TmdbID == "" && m.TmdbID != "" {
+		item.TmdbID = m.TmdbID
+	}
+	if v := m.Overview(); v != "" {
+		item.Overview = v
+	}
+	if v := m.PremiereDate(); v != "" {
+		item.PremiereDate = v
+	}
+	if v := m.OfficialRating(); v != "" {
+		item.OfficialRating = v
+	}
+	if m.Rating > 0 {
+		item.CommunityRating = m.Rating
 	}
 	if g := m.GenresJSON(); g != "" {
 		item.Genres = g
@@ -1117,6 +1188,11 @@ func (s *Scanner) RefreshFilesWithIDs(paths []string) (int, []string, error) {
 		if id, err := s.refreshOneFile(libs, path); err == nil && id != "" {
 			count++
 			add(id)
+		}
+	}
+	if len(ids) > 0 {
+		if _, err := s.db.IndexPersonsFromItems(ids); err != nil {
+			s.log.Warn("index persons after refresh", "err", err)
 		}
 	}
 	return count, ids, nil

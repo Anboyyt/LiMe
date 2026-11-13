@@ -390,7 +390,9 @@ LIME_RESOLVE_REDIRECT: "true"
 针对 SenPlayer / VidHub / Filmly（爆米花）实际请求补过的兼容点：
 
 - API 路径首段大小写不敏感：`/emby/videos/{id}/stream.mkv` 和 `/Videos/...` 等价
-- `/Items/Counts`、`/Items/Filters`、`/Items/{id}/Similar`、`/Persons`、`/Studios`
+- `/Items/Counts`、`/Items/Filters`、`/Items/{id}/Similar`、`/Studios`
+- 演员：`/Persons` 列表、`/Persons/{name|id}`、`/Items?PersonIds=` 反查该演员的全部电影/剧集；
+  `/Items/{personId}` 也能返回 Person 条目（客户端点演员直接跳详情）
 - `/MediaSegments/{id}`、`/Items/{id}/ThemeMedia|ThemeSongs|ThemeVideos|LocalTrailers|SpecialFeatures`
 - `/DisplayPreferences/{id}`、`/System/Ping`、`/Plugins`、`/Devices`
 - `/api/danmu/{id}/raw` 返回空数组，避免弹幕插件报错

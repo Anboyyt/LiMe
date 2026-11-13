@@ -873,7 +873,7 @@ func (s *Scraper) backfillGenres(ctx context.Context, movies, series []*store.It
 		if err != nil {
 			s.log.Warn("genres movie failed", "item", it.ID, "err", err)
 		} else {
-			s.savePeopleImages(m.Credits.Cast)
+			s.savePeople(m.Credits.Cast)
 			if err := s.db.UpdateItemMetadata(it.ID, store.MetadataUpdate{
 				MetadataChecked: true,
 				Genres:          genresJSON(m.Genres),
@@ -896,7 +896,7 @@ func (s *Scraper) backfillGenres(ctx context.Context, movies, series []*store.It
 		if err != nil {
 			s.log.Warn("genres series failed", "item", it.ID, "err", err)
 		} else {
-			s.savePeopleImages(tv.Credits.Cast)
+			s.savePeople(tv.Credits.Cast)
 			if err := s.db.UpdateItemMetadata(it.ID, store.MetadataUpdate{
 				MetadataChecked: true,
 				Genres:          genresJSON(tv.Genres),
@@ -967,24 +967,29 @@ func imageTag(profilePath string) string {
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-// savePeopleImages 记录演员头像的 TMDB 地址，真正下载留到客户端请求时。
-func (s *Scraper) savePeopleImages(cast []tmdb.Credit) {
+// savePeople 把所有演员写进 persons 索引（没有头像也写），供 /Persons 和
+// PersonIds 反查使用；头像地址真正下载留到客户端请求时。
+func (s *Scraper) savePeople(cast []tmdb.Credit) {
 	if len(cast) > 15 {
 		cast = cast[:15]
 	}
 	people := make([]store.PersonImage, 0, len(cast))
 	for _, c := range cast {
-		if c.Name == "" || c.ProfilePath == "" {
+		if c.Name == "" {
 			continue
+		}
+		imageURL := ""
+		if c.ProfilePath != "" {
+			imageURL = s.cfg.TMDBImageBase + "/" + tmdb.ProfileSize + c.ProfilePath
 		}
 		people = append(people, store.PersonImage{
 			ID:       store.PersonID(c.Name),
 			Name:     c.Name,
-			ImageURL: s.cfg.TMDBImageBase + "/" + tmdb.ProfileSize + c.ProfilePath,
+			ImageURL: imageURL,
 		})
 	}
-	if err := s.db.UpsertPersonImages(people); err != nil {
-		s.log.Warn("save people images failed", "err", err)
+	if err := s.db.UpsertPersons(people); err != nil {
+		s.log.Warn("save people failed", "err", err)
 	}
 }
 
@@ -1025,7 +1030,7 @@ func (s *Scraper) backfillAvatars(ctx context.Context, movies, series []*store.I
 					if err != nil {
 						s.log.Warn("avatar series failed", "item", j.item.ID, "err", err)
 					} else {
-						s.savePeopleImages(tv.Credits.Cast)
+						s.savePeople(tv.Credits.Cast)
 						if err := s.db.UpdateItemPeople(j.item.ID, peopleJSON(tv.Credits.Cast)); err != nil {
 							s.log.Warn("update series people failed", "item", j.item.ID, "err", err)
 						} else {
@@ -1037,7 +1042,7 @@ func (s *Scraper) backfillAvatars(ctx context.Context, movies, series []*store.I
 					if err != nil {
 						s.log.Warn("avatar movie failed", "item", j.item.ID, "err", err)
 					} else {
-						s.savePeopleImages(m.Credits.Cast)
+						s.savePeople(m.Credits.Cast)
 						if err := s.db.UpdateItemPeople(j.item.ID, peopleJSON(m.Credits.Cast)); err != nil {
 							s.log.Warn("update movie people failed", "item", j.item.ID, "err", err)
 						} else {
@@ -1174,7 +1179,7 @@ func (s *Scraper) scrapeMovie(ctx context.Context, it *store.Item) error {
 	if err != nil {
 		return err
 	}
-	s.savePeopleImages(m.Credits.Cast)
+	s.savePeople(m.Credits.Cast)
 
 	poster, err := s.client.DownloadImage(ctx, m.PosterPath, tmdb.PosterSize, s.cfg.DataDir)
 	if err != nil {
@@ -1238,7 +1243,7 @@ func (s *Scraper) scrapeSeries(ctx context.Context, it *store.Item) error {
 	if err != nil {
 		return err
 	}
-	s.savePeopleImages(tv.Credits.Cast)
+	s.savePeople(tv.Credits.Cast)
 
 	poster, err := s.client.DownloadImage(ctx, tv.PosterPath, tmdb.PosterSize, s.cfg.DataDir)
 	if err != nil {

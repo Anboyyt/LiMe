@@ -461,6 +461,32 @@ func (h *Handler) queryItems(w http.ResponseWriter, r *http.Request) {
 	// 播放状态/收藏/续播筛选都需要用户 ID。
 	q.UserID = user.ID
 
+	// 客户端点演员时通常传 PersonIds（32 位哈希 ID），这里还原成名字再查。
+	if ids := splitCSV(r.URL.Query().Get("PersonIds")); len(ids) > 0 {
+		names, err := h.db.PersonNamesByIDs(ids)
+		if err != nil {
+			h.log.Error("resolve person ids", "err", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		resolved := 0
+		for _, id := range ids {
+			if name := names[id]; name != "" {
+				q.Persons = append(q.Persons, name)
+				resolved++
+			}
+		}
+		// 一个都没解析出来时返回空，不能退化成整库。
+		if resolved == 0 && len(q.Persons) == 0 {
+			writeJSON(w, http.StatusOK, dto.QueryResult{
+				Items:            []*dto.BaseItemDto{},
+				TotalRecordCount: 0,
+				StartIndex:       q.StartIndex,
+			})
+			return
+		}
+	}
+
 	allowed, all, aerr := h.allowedLibraries(user)
 	if aerr != nil {
 		h.log.Error("load library access", "err", aerr)
@@ -488,7 +514,7 @@ func (h *Handler) queryItems(w http.ResponseWriter, r *http.Request) {
 	// 对齐 Jellyfin：没有 ParentId 时父级是用户根目录，非递归只返回它的
 	// 子项（媒体库视图），而不是把整个库铺平。爆米花等客户端正是靠这个
 	// 请求拿首页，旧逻辑会一次吐出 26 万条（实测 15s / 179MB）。
-	if q.ParentID == "" && !q.Recursive && q.SearchTerm == "" {
+	if q.ParentID == "" && !q.Recursive && q.SearchTerm == "" && len(q.Persons) == 0 {
 		views, err := h.libraryViews()
 		if err != nil {
 			h.log.Error("load library views", "err", err)
@@ -567,6 +593,13 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("itemId")
 	it, err := h.db.GetItem(id)
 	if err != nil {
+		// 演员不是 media item；客户端点演员时可能直接请求 /Items/{personId}。
+		if looksLikePersonID(id) {
+			if p, perr := h.db.PersonImageByID(id); perr == nil {
+				writeJSON(w, http.StatusOK, h.personToDto(p))
+				return
+			}
+		}
 		writeError(w, http.StatusNotFound, "item not found")
 		return
 	}
@@ -1135,7 +1168,7 @@ func parseItemQuery(r *http.Request) store.ItemQuery {
 		Years:           parseInts(v.Get("Years")),
 		OfficialRatings: splitCSV(v.Get("OfficialRatings")),
 		SeasonID:        v.Get("SeasonId"),
-		Person:          v.Get("Person"),
+		Persons:         splitCSV(v.Get("Person")),
 		FavoriteOnly: strings.EqualFold(v.Get("IsFavorite"), "true") ||
 			containsFold(filters, "IsFavorite"),
 		PlayedOnly: strings.EqualFold(v.Get("IsPlayed"), "true") ||

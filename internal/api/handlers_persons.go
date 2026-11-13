@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,19 +14,84 @@ import (
 	"lime/internal/store"
 )
 
-// personByName 给客户端提供演员基础信息。
+// persons 返回演员列表。客户端按演员筛选/演员页会拉这个接口。
+func (h *Handler) persons(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireUser(w, r); !ok {
+		return
+	}
+	v := r.URL.Query()
+	start := atoiDefault(v.Get("StartIndex"), 0)
+	limit := atoiDefault(v.Get("Limit"), 0)
+	if limit <= 0 || limit > 500 {
+		limit = 500
+	}
+
+	list, total, err := h.db.ListPersons(v.Get("SearchTerm"), start, limit)
+	if err != nil {
+		h.log.Error("list persons", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	out := make([]*dto.BaseItemDto, 0, len(list))
+	for i := range list {
+		out = append(out, h.personToDto(&list[i]))
+	}
+	writeJSON(w, http.StatusOK, dto.QueryResult{
+		Items:            out,
+		TotalRecordCount: total,
+		StartIndex:       start,
+	})
+}
+
+// personByName 给客户端提供演员基础信息；路径参数可能是名字，也可能是 ID。
 func (h *Handler) personByName(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	p, err := h.db.PersonImageByName(name)
+	p, err := h.lookupPerson(r.PathValue("name"))
 	if err != nil {
 		writeError(w, http.StatusNotFound, "person not found")
 		return
 	}
+	writeJSON(w, http.StatusOK, h.personToDto(p))
+}
+
+// personImage 提供 /Persons/{name}/Images/Primary。
+func (h *Handler) personImage(w http.ResponseWriter, r *http.Request) {
+	if !strings.EqualFold(r.PathValue("imageType"), "primary") {
+		writeError(w, http.StatusNotFound, "image not found")
+		return
+	}
+	p, err := h.lookupPerson(r.PathValue("name"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "person not found")
+		return
+	}
+	h.servePersonImageFile(w, r, p)
+}
+
+// lookupPerson 同时接受演员名和 32 位 ID；Jellyfin 客户端的路由参数两种都用。
+func (h *Handler) lookupPerson(key string) (*store.PersonImage, error) {
+	if looksLikePersonID(key) {
+		if p, err := h.db.PersonImageByID(key); err == nil {
+			return p, nil
+		}
+	}
+	return h.db.PersonImageByName(key)
+}
+
+func looksLikePersonID(s string) bool {
+	if len(s) != 32 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
+}
+
+// personToDto 把演员记录转成客户端认识的 BaseItemDto。
+func (h *Handler) personToDto(p *store.PersonImage) *dto.BaseItemDto {
 	tags := map[string]string{}
 	if p.ImageURL != "" {
 		tags["Primary"] = personImageTag(p.ImageURL)
 	}
-	writeJSON(w, http.StatusOK, &dto.BaseItemDto{
+	d := &dto.BaseItemDto{
 		Name:              p.Name,
 		ServerId:          h.serverID,
 		Id:                p.ID,
@@ -39,21 +105,11 @@ func (h *Handler) personByName(w http.ResponseWriter, r *http.Request) {
 		People:            []dto.PersonDto{},
 		LocationType:      "Remote",
 		UserData:          &dto.UserItemDataDto{Key: p.ID, ItemId: p.ID},
-	})
-}
-
-// personImage 提供 /Persons/{name}/Images/Primary。
-func (h *Handler) personImage(w http.ResponseWriter, r *http.Request) {
-	if !strings.EqualFold(r.PathValue("imageType"), "primary") {
-		writeError(w, http.StatusNotFound, "image not found")
-		return
 	}
-	p, err := h.db.PersonImageByName(r.PathValue("name"))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "person not found")
-		return
+	if tags["Primary"] != "" {
+		d.PrimaryImageAspectRatio = 2.0 / 3.0
 	}
-	h.servePersonImageFile(w, r, p)
+	return d
 }
 
 // servePersonImageFile 优先读本地缓存，没有就从 TMDB 下载一次。

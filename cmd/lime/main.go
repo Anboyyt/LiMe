@@ -133,6 +133,20 @@ func main() {
 		logger.Info("pinyin sort keys built", "items", n)
 	}
 
+	// 老库升级后把 items.people 展开进 persons，演员筛选才能反查名字。
+	// 大库可能要几秒，放后台跑，不阻塞 HTTP。
+	go func() {
+		start := time.Now()
+		n, err := db.BackfillPersonsFromItems()
+		if err != nil {
+			logger.Warn("backfill persons", "err", err)
+			return
+		}
+		if n > 0 {
+			logger.Info("persons index built", "persons", n, "dur", time.Since(start).String())
+		}
+	}()
+
 	if err := db.EnsureAdmin(cfg.AdminUser, cfg.AdminPass); err != nil {
 		logger.Error("ensure admin", "err", err)
 		os.Exit(1)

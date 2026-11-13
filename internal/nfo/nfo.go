@@ -75,32 +75,32 @@ type rawRating struct {
 
 // rawNFO 不限定根节点名：movie / episodedetails / tvshow 都能解。
 type rawNFO struct {
-	Title         string `xml:"title"`
-	OriginalTitle string `xml:"originaltitle"`
-	SortTitle     string `xml:"sorttitle"`
-	Plot          string `xml:"plot"`
-	OriginalPlot  string `xml:"originalplot"`
-	Outline       string `xml:"outline"`
-	Tagline       string `xml:"tagline"`
-	Year          int    `xml:"year"`
-	Premiered     string `xml:"premiered"`
-	ReleaseDate   string `xml:"releasedate"`
-	Release       string `xml:"release"`
-	Runtime       int    `xml:"runtime"`
-	Rating        float64 `xml:"rating"`
-	MPAA          string  `xml:"mpaa"`
-	CustomRating  string  `xml:"customrating"`
-	Genre         []string `xml:"genre"`
-	Tag           []string `xml:"tag"`
-	Studio        []string `xml:"studio"`
-	Maker         string   `xml:"maker"`
-	Publisher     string   `xml:"publisher"`
-	Director      []string `xml:"director"`
-	Actor         []rawActor `xml:"actor"`
-	Poster        string     `xml:"poster"`
-	Thumb         string     `xml:"thumb"`
-	Fanart        string     `xml:"fanart"`
-	TmdbIDTag     string     `xml:"tmdbid"`
+	Title         string        `xml:"title"`
+	OriginalTitle string        `xml:"originaltitle"`
+	SortTitle     string        `xml:"sorttitle"`
+	Plot          string        `xml:"plot"`
+	OriginalPlot  string        `xml:"originalplot"`
+	Outline       string        `xml:"outline"`
+	Tagline       string        `xml:"tagline"`
+	Year          int           `xml:"year"`
+	Premiered     string        `xml:"premiered"`
+	ReleaseDate   string        `xml:"releasedate"`
+	Release       string        `xml:"release"`
+	Runtime       int           `xml:"runtime"`
+	Rating        float64       `xml:"rating"`
+	MPAA          string        `xml:"mpaa"`
+	CustomRating  string        `xml:"customrating"`
+	Genre         []string      `xml:"genre"`
+	Tag           []string      `xml:"tag"`
+	Studio        []string      `xml:"studio"`
+	Maker         string        `xml:"maker"`
+	Publisher     string        `xml:"publisher"`
+	Director      []string      `xml:"director"`
+	Actor         []rawActor    `xml:"actor"`
+	Poster        string        `xml:"poster"`
+	Thumb         string        `xml:"thumb"`
+	Fanart        string        `xml:"fanart"`
+	TmdbIDTag     string        `xml:"tmdbid"`
 	UniqueID      []rawUniqueID `xml:"uniqueid"`
 	Ratings       []rawRating   `xml:"ratings>rating"`
 }
@@ -210,6 +210,24 @@ func Parse(data []byte) (*Metadata, error) {
 func Load(dir, stem string) *Metadata {
 	for _, name := range []string{stem + ".nfo", "movie.nfo"} {
 		p := filepath.Join(dir, name)
+		st, err := os.Stat(p)
+		if err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
+			continue
+		}
+		m, err := ParseFile(p)
+		if err != nil {
+			return nil
+		}
+		return m
+	}
+	return nil
+}
+
+// LoadSeries 读取剧集根目录的 tvshow.nfo。
+// 单集通常放在 <剧名>/Season 1/ 下，所以当前目录找不到时再往上一层找。
+func LoadSeries(dir string) *Metadata {
+	for _, d := range []string{dir, filepath.Dir(dir)} {
+		p := filepath.Join(d, "tvshow.nfo")
 		st, err := os.Stat(p)
 		if err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
 			continue

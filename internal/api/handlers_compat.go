@@ -167,11 +167,6 @@ func (h *Handler) userImage(w http.ResponseWriter, r *http.Request) {
 	serveLogo(w, r)
 }
 
-// persons / studios 暂不维护演职人员库，返回空列表让客户端正常渲染。
-func (h *Handler) persons(w http.ResponseWriter, r *http.Request) {
-	h.emptyQuery(w, r)
-}
-
 func (h *Handler) studios(w http.ResponseWriter, r *http.Request) {
 	h.emptyQuery(w, r)
 }
