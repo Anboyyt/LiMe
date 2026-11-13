@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -12,6 +13,7 @@ type libraryCoverStatus struct {
 	ID     string `json:"ID"`
 	Name   string `json:"Name"`
 	Custom bool   `json:"Custom"`
+	Tag    string `json:"Tag"`
 }
 
 // webLibraryCovers 查看/切换库封面样式。
@@ -37,7 +39,9 @@ func (h *Handler) webLibraryCovers(w http.ResponseWriter, r *http.Request) {
 				has = true
 				custom++
 			}
-			out = append(out, libraryCoverStatus{ID: lib.ID, Name: lib.Name, Custom: has})
+			out = append(out, libraryCoverStatus{
+				ID: lib.ID, Name: lib.Name, Custom: has, Tag: h.coverPreviewTag(lib.ID),
+			})
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"Style":       h.libraryCoverStyle(),
@@ -83,6 +87,42 @@ func (h *Handler) webLibraryCovers(w http.ResponseWriter, r *http.Request) {
 			"BackedUp": backed,
 		})
 	}
+}
+
+// coverPreviewTag 给面板预览用的缓存标记：只查当前样式已有的文件，
+// 不触发封面生成。必须按样式区分，否则切换样式后浏览器会继续用旧图。
+func (h *Handler) coverPreviewTag(libID string) string {
+	if _, tag := h.customLibraryImage(libID, ""); tag != "" {
+		return tag
+	}
+	style := h.libraryCoverStyle()
+	if style == "latest" {
+		// 缓存文件名里的 tag 就是所选图片自身的 imageTag。
+		if rel, ok := h.latestArtworkSource(libID); ok {
+			return imageTag(rel)
+		}
+		return ""
+	}
+	absData, err := filepath.Abs(h.cfg.DataDir)
+	if err != nil {
+		return ""
+	}
+	patterns := []string{libID + "-" + style + "-*.jpg"}
+	if style == "collage" {
+		// 旧版无样式前缀的缓存也认。
+		patterns = append(patterns, libID+"-[0-9a-f]*.jpg")
+	}
+	patterns = append(patterns, libID+"-default.jpg")
+	for _, pattern := range patterns {
+		matches, _ := filepath.Glob(filepath.Join(absData, "library-images", pattern))
+		if len(matches) == 0 {
+			continue
+		}
+		if st, err := os.Stat(matches[0]); err == nil {
+			return "auto-" + strconv.FormatInt(st.ModTime().UnixNano(), 36)
+		}
+	}
+	return ""
 }
 
 // backupCustomCovers 把 library-images 下的自定义封面改名为 .bak。

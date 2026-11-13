@@ -38,7 +38,7 @@ import (
 const (
 	coverW       = 1920
 	coverH       = 1080
-	coverVersion = "cover-v4"
+	coverVersion = "cover-v5"
 )
 
 // coverTitle 是库封面的标题配置，抄自 lime-cover 的 title_config：
@@ -160,7 +160,7 @@ func coverFont() (*opentype.Font, error) {
 }
 
 // libraryCoverStyle 读库封面样式，默认 collage（斜角海报墙）。
-// minimal=单张模糊，latest=回退到库内最新海报原图。
+// minimal=单张模糊，latest=回退到库内最新背景图（无背景图时用海报）。
 func (h *Handler) libraryCoverStyle() string {
 	v, err := h.db.GetSetting("library_cover_style")
 	if err != nil {
@@ -436,38 +436,42 @@ func overlayAlpha(dst *image.RGBA, small *image.RGBA, alpha float64) {
 	stddraw.DrawMask(dst, dst.Bounds(), layer, image.Point{}, mask, image.Point{}, stddraw.Over)
 }
 
-// drawPosterWall 三列、每列三张，列间错位，整体绕右侧中心旋转 -14°。
+// drawPosterWall 三列海报墙：卡片放大、列距收紧，每列上下错位，
+// 整面墙绕自身中心轻微旋转后压在画面右侧，四边都溢出画面，避免出现空角。
 func drawPosterWall(dst *image.RGBA, posters []image.Image) {
-	const cardW, cardH = 250, 375
-	cards := make([]*image.RGBA, 0, 9)
-	for i := 0; i < 9; i++ {
-		card := image.NewRGBA(image.Rect(0, 0, cardW, cardH))
-		if err := drawCoverInto(card, posters[i%len(posters)]); err != nil {
-			continue
+	const (
+		cardW = 300
+		cardH = 450
+		cols  = 3
+		rows  = 3
+		gap   = 24.0
+		padX  = 40
+		padY  = 140
+		// 墙面中心落在画面右侧，左边缘让出标题区。
+		centerX = 1395.0
+		centerY = 540.0
+		angle   = -9.5 * math.Pi / 180
+	)
+	wallW := cols*cardW + int(float64(cols-1)*gap)
+	wallH := rows*cardH + int(float64(rows-1)*gap)
+	wall := image.NewRGBA(image.Rect(0, 0, wallW+padX*2, wallH+padY*2))
+
+	colShift := []float64{-70, 40, -40}
+	for c := 0; c < cols; c++ {
+		for r := 0; r < rows; r++ {
+			card := image.NewRGBA(image.Rect(0, 0, cardW, cardH))
+			if err := drawCoverInto(card, posters[(c*rows+r)%len(posters)]); err != nil {
+				continue
+			}
+			roundCorners(card, 18)
+			x := padX + c*(cardW+int(gap))
+			y := padY + int(colShift[c]) + r*(cardH+int(gap))
+			stddraw.Draw(wall, image.Rect(x, y, x+cardW, y+cardH), card, image.Point{}, stddraw.Over)
 		}
-		roundCorners(card, 12)
-		cards = append(cards, card)
-	}
-	if len(cards) < 9 {
-		return
 	}
 
-	baseX := []float64{860, 1190, 1520}
-	baseY := []float64{110, -30, 130}
-	const (
-		gapY  = 18.0
-		rotCX = 1230.0
-		rotCY = 540.0
-		angle = -13.0 * math.Pi / 180
-	)
-	for c := 0; c < 3; c++ {
-		for r := 0; r < 3; r++ {
-			card := cards[c*3+r]
-			cx := baseX[c] + cardW/2
-			cy := baseY[c] + float64(r)*(cardH+gapY) + cardH/2
-			drawRotated(dst, card, cx, cy, rotCX, rotCY, angle)
-		}
-	}
+	// srcCX/srcCY 与旋转中心取同一点：整张墙绕自身中心转，再摆到画面右侧。
+	drawRotated(dst, wall, centerX, centerY, centerX, centerY, angle)
 }
 
 // drawRotated 把 src 以 (srcCX,srcCY) 为中心、绕 (rotCX,rotCY) 旋转后贴到 dst。
@@ -608,6 +612,7 @@ func decodeCoverSource(full string) (image.Image, error) {
 }
 
 // renderMinimalCover 在 1/4 分辨率上做模糊和调色，再放大到 1080p，速度快很多。
+// 标题居中：中文在上、英文在下，不加左侧竖条。
 func renderMinimalCover(src image.Image, title, subtitle string) (*image.RGBA, error) {
 	const sw, sh = coverW / 4, coverH / 4
 	small := image.NewRGBA(image.Rect(0, 0, sw, sh))
@@ -616,12 +621,12 @@ func renderMinimalCover(src image.Image, title, subtitle string) (*image.RGBA, e
 	}
 	boxBlur(small, 7, 2)
 	tint := vibrantTint(small)
-	blendTint(small, tint, 0.80)
+	blendTint(small, tint, 0.84)
 
 	dst := image.NewRGBA(image.Rect(0, 0, coverW, coverH))
 	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), small, small.Bounds(), draw.Src, nil)
-	addLeftShade(dst)
-	if err := drawCoverTitle(dst, title, subtitle, 126, 1180); err != nil {
+	addVignette(dst, 0.55)
+	if err := drawCoverTitleCentered(dst, title, subtitle); err != nil {
 		return nil, err
 	}
 	return dst, nil
@@ -746,6 +751,88 @@ func newCoverFace(size float64) (font.Face, error) {
 		DPI:     72,
 		Hinting: font.HintingNone,
 	})
+}
+
+// addVignette 四周柔和压暗、中心保持通透，让居中标题更醒目。
+func addVignette(img *image.RGBA, strength float64) {
+	if strength <= 0 {
+		return
+	}
+	b := img.Bounds()
+	cx, cy := float64(coverW)/2, float64(coverH)/2
+	maxD := math.Hypot(cx, cy)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			d := math.Hypot(float64(x)+0.5-cx, float64(y)+0.5-cy) / maxD
+			a := strength * d * d
+			if a <= 0.002 {
+				continue
+			}
+			i := img.PixOffset(x, y)
+			img.Pix[i] = uint8(float64(img.Pix[i]) * (1 - a))
+			img.Pix[i+1] = uint8(float64(img.Pix[i+1]) * (1 - a))
+			img.Pix[i+2] = uint8(float64(img.Pix[i+2]) * (1 - a))
+		}
+	}
+}
+
+// drawCoverTitleCentered 中文标题在上、英文副标题在下，整体水平垂直居中。
+func drawCoverTitleCentered(dst *image.RGBA, title, subtitle string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return nil
+	}
+	maxWidth := float64(coverW) * 0.76
+
+	titleSize := 176.0
+	face, err := newCoverFace(titleSize)
+	if err != nil {
+		return err
+	}
+	width := measureSpaced(face, title, 0)
+	if width > maxWidth {
+		titleSize = math.Max(96, titleSize*maxWidth/width)
+		if face, err = newCoverFace(titleSize); err != nil {
+			return err
+		}
+		title = truncateSpaced(face, title, maxWidth)
+		width = measureSpaced(face, title, 0)
+	}
+
+	const subSpacing = 14.0
+	subSize := 68.0
+	subFace, err := newCoverFace(subSize)
+	if err != nil {
+		return err
+	}
+	subWidth := measureSpaced(subFace, subtitle, subSpacing)
+	if subWidth > maxWidth {
+		subSize = math.Max(40, subSize*maxWidth/subWidth)
+		if subFace, err = newCoverFace(subSize); err != nil {
+			return err
+		}
+		subtitle = truncateSpaced(subFace, subtitle, maxWidth, subSpacing)
+		subWidth = measureSpaced(subFace, subtitle, subSpacing)
+	}
+
+	tm := face.Metrics()
+	sm := subFace.Metrics()
+	titleH := float64(tm.Ascent+tm.Descent) / 64
+	subH := float64(sm.Ascent+sm.Descent) / 64
+	const gap = 34.0
+	blockH := titleH + gap + subH
+	top := (coverH - blockH) / 2
+	titleBase := top + float64(tm.Ascent)/64
+	subBase := top + titleH + gap + float64(sm.Ascent)/64
+	titleX := (coverW - width) / 2
+	subX := (coverW - subWidth) / 2
+
+	shadow := color.RGBA{0, 0, 0, 120}
+	drawSpaced(dst, face, title, titleX, titleBase+8, 0, shadow)
+	drawSpaced(dst, face, title, titleX, titleBase, 0, color.RGBA{255, 255, 255, 255})
+	drawSpaced(dst, subFace, subtitle, subX, subBase+6, subSpacing, shadow)
+	drawSpaced(dst, subFace, subtitle, subX, subBase, subSpacing, color.RGBA{248, 248, 248, 245})
+	return nil
 }
 
 func drawCoverTitle(dst *image.RGBA, title, subtitle string, x, maxWidth float64) error {

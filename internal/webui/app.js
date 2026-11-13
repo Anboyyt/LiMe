@@ -341,7 +341,7 @@
 
   // ---------- 媒体库管理 ----------
   const KIND_LABEL = { movies: '电影', tvshows: '剧集', mixed: '混合', auto: '自动识别' };
-  const COVER_STYLE_LABEL = { collage: '斜角海报墙', minimal: '简约模糊', latest: '库内最新海报' };
+  const COVER_STYLE_LABEL = { collage: '斜角海报墙', minimal: '简约模糊', latest: '库内最新背景图' };
 
   // 浏览目录会重渲染表单，先把名称/类型收回 state，避免输入丢失。
   function collectLibDraft() {
@@ -429,8 +429,15 @@
           <button class="primary" data-action="save-cover-style">保存样式</button>
           ${covers.CustomCount ? '<button data-action="use-auto-covers">改用自动封面</button>' : ''}
         </div>
+        <div class="cover-grid">
+          ${(covers.Libraries || []).map((l) => `
+            <figure class="cover-tile">
+              <img loading="lazy" alt="${esc(l.Name)}" src="/Items/${encodeURIComponent(l.ID)}/Images/Primary?tag=${encodeURIComponent(l.Tag || covers.Style)}&v=${encodeURIComponent(covers.Style)}&still=1&maxWidth=480">
+              <figcaption><span>${esc(l.Name)}</span><em>${l.Custom ? '自定义' : (COVER_STYLE_LABEL[covers.Style] || '')}</em></figcaption>
+            </figure>`).join('') || '<p class="muted">还没有媒体库</p>'}
+        </div>
         <p class="muted" style="margin:8px 0 0">
-          自动封面按库名取「标题 + 英文副标题 + 背景色」，与 lime-cover 的配置一致；
+          预览是各库当前封面；自动封面按库名取「标题 + 英文副标题 + 背景色」，与 lime-cover 的配置一致。
           「改用自动封面」会把已有自定义封面改名成 *.bak 备份，不会删除。
         </p>
       </div>` : '';

@@ -167,11 +167,8 @@
 
   function renderNav() {
     const hash = location.hash || '#/';
+    // 媒体库不再挤在顶栏，统一放到首页的封面卡片区。
     const links = [`<a href="#/" class="${hash === '#/' ? 'active' : ''}">首页</a>`];
-    for (const v of state.views) {
-      const h = `#/library/${encodeURIComponent(v.Id)}`;
-      links.push(`<a href="${h}" class="${hash === h ? 'active' : ''}">${esc(v.Name)}</a>`);
-    }
     links.push(`<a href="#/favorites" class="${hash === '#/favorites' ? 'active' : ''}">收藏</a>`);
     $('#nav').innerHTML = links.join('');
   }
@@ -190,6 +187,14 @@
     // 让服务端按用途缩放，手机不必下载原图。
     const w = kind === 'Primary' ? 600 : 1600;
     return `/Items/${encodeURIComponent(it.Id)}/Images/${kind}?tag=${encodeURIComponent(tag)}&maxWidth=${w}`;
+  }
+
+  // 媒体库封面是 16:9（自定义封面常是 2MB+ 的 GIF），
+  // still=1 让服务端只取首帧压成小 JPEG，首页十几张图不会拖慢。
+  function libraryCoverUrl(lib) {
+    const tag = lib.ImageTags && lib.ImageTags.Primary;
+    if (!tag) return '';
+    return `/Items/${encodeURIComponent(lib.Id)}/Images/Primary?tag=${encodeURIComponent(tag)}&still=1&maxWidth=640`;
   }
 
   function posterHTML(it) {
@@ -328,6 +333,9 @@
       </section>`;
     }
 
+    // Emby 风格：首页用封面卡片展示所有媒体库，替代顶栏的一排文字链接。
+    html += libraryShelf(state.views);
+
     const resumeItems = resume.Items || [];
     if (resumeItems.length) html += rail('继续观看', resumeItems);
     const latestItems = latest.Items || [];
@@ -347,6 +355,28 @@
       <div class="rail-head"><h2>${esc(title)}</h2><span class="rail-count">${items.length}</span></div>
       <div class="rail-scroll">${items.map(card).join('')}</div>
     </section>`;
+  }
+
+  // 首页媒体库封面区：16:9 网格，名称在封面下方。
+  function libraryShelf(views) {
+    if (!views || !views.length) return '';
+    return `<section class="library-shelf">
+      <div class="rail-head"><h2>我的媒体</h2><span class="rail-count">${views.length}</span></div>
+      <div class="library-grid">${views.map(libraryTile).join('')}</div>
+    </section>`;
+  }
+
+  function libraryTile(v) {
+    const url = libraryCoverUrl(v);
+    const cover = url
+      ? `<img class="library-cover-img" loading="lazy" src="${esc(url)}" alt=""
+           onload="this.classList.add('loaded')">`
+      : `<div class="library-cover-fallback">${esc((v.Name || '?').slice(0, 1))}</div>`;
+    const kind = v.CollectionType === 'tvshows' ? '剧集' : v.CollectionType === 'movies' ? '电影' : '';
+    return `<a class="library-tile" href="#/library/${encodeURIComponent(v.Id)}">
+      <div class="library-cover">${cover}${kind ? `<span class="library-kind">${kind}</span>` : ''}</div>
+      <div class="library-name">${esc(v.Name)}</div>
+    </a>`;
   }
 
   // ---------- 媒体库 ----------

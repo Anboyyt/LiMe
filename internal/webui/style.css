@@ -884,3 +884,38 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 6%, var(--panel
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* 库封面预览 */
+.cover-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.cover-tile {
+  margin: 0;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid var(--glass-border);
+  background: var(--panel2);
+}
+.cover-tile img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: var(--panel2);
+}
+.cover-tile figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+.cover-tile figcaption em {
+  font-style: normal;
+  color: var(--muted);
+  flex: none;
+}

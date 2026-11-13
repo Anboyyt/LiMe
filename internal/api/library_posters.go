@@ -15,15 +15,22 @@ import (
 	"strconv"
 	"strings"
 
+	xdraw "golang.org/x/image/draw"
+
 	"lime/internal/store"
 )
 
-// libraryArtwork 返回库封面：自定义上传 > 简约模糊封面 > 库内最新海报。
+// libraryArtwork 返回库封面：自定义上传 > 自动生成封面 > 库内最新背景图。
 // 路径都相对 data 目录，tag 用于客户端缓存失效。
 func (h *Handler) libraryArtwork(lib *store.Library) (primaryRel, primaryTag, backdropRel, backdropTag string) {
 	// 工具（封面生成器）上传过自定义封面时优先用它，不再用库内最新海报。
 	if rel, tag := h.customLibraryImage(lib.ID, ""); rel != "" {
 		backdropRel, backdropTag = h.customLibraryImage(lib.ID, "backdrop")
+		// 只传了 Primary 时用同一张图兜底：部分客户端优先请求 Backdrop，
+		// 返回 404 会让库卡片整块空白。
+		if backdropRel == "" {
+			backdropRel, backdropTag = rel, tag
+		}
 		return rel, tag, backdropRel, backdropTag
 	}
 
@@ -38,37 +45,22 @@ func (h *Handler) libraryArtwork(lib *store.Library) (primaryRel, primaryTag, ba
 		}
 	}
 
-	candidates, err := h.db.LibraryPosterCandidates(lib.ID, 5)
-	if err != nil {
-		return "", "", "", ""
-	}
-	for _, it := range candidates {
-		if it.ImagePath == "" {
-			continue
-		}
-		src, ok := h.resolveItemImagePath(it.ImagePath)
-		if !ok {
-			continue
-		}
-		if st, err := os.Stat(src); err != nil || st.Size() == 0 {
-			continue
-		}
-		tag := imageTag(it.ImagePath)
-		ext := strings.ToLower(filepath.Ext(it.ImagePath))
+	// 「库内最新背景图」：用最新条目的详情背景图（本身就是 16:9），
+	// 没有背景图才退回海报，避免把竖版海报裁成一条。
+	if srcRel, ok := h.latestArtworkSource(lib.ID); ok {
+		tag := imageTag(srcRel)
+		ext := strings.ToLower(filepath.Ext(srcRel))
 		if ext == "" {
 			ext = ".jpg"
 		}
 		rel := filepath.ToSlash(filepath.Join("library-images", lib.ID+"-"+tag+ext))
-		if err := h.cacheLibraryImage(lib.ID, it.ImagePath, rel); err != nil {
-			h.log.Warn("cache library poster failed", "library", lib.ID, "err", err)
-			continue
+		if err := h.cacheLibraryImage(lib.ID, srcRel, rel); err != nil {
+			h.log.Warn("cache library artwork failed", "library", lib.ID, "err", err)
+		} else {
+			// Backdrop 复用同一张图：部分客户端库卡片优先读 Backdrop。
+			primaryRel, primaryTag = rel, tag
+			backdropRel, backdropTag = rel, tag
 		}
-		primaryRel, primaryTag = rel, tag
-		backdropRel = h.validArtworkRel(it.BackdropPath)
-		if backdropRel != "" {
-			backdropTag = imageTag(backdropRel)
-		}
-		break
 	}
 
 	// 还没刮削/没有海报时，生成一张带 LiMe logo 的渐变封面。
@@ -78,6 +70,29 @@ func (h *Handler) libraryArtwork(lib *store.Library) (primaryRel, primaryTag, ba
 		}
 	}
 	return primaryRel, primaryTag, backdropRel, backdropTag
+}
+
+// latestArtworkSource 选库内最新条目的详情背景图（16:9）；没有背景图再退回海报。
+func (h *Handler) latestArtworkSource(libID string) (string, bool) {
+	items, err := h.db.LibraryPosterCandidates(libID, 5)
+	if err != nil {
+		return "", false
+	}
+	for _, it := range items {
+		for _, rel := range []string{it.BackdropPath, it.ImagePath} {
+			if rel == "" {
+				continue
+			}
+			src, ok := h.resolveItemImagePath(rel)
+			if !ok {
+				continue
+			}
+			if st, err := os.Stat(src); err == nil && st.Size() > 0 {
+				return rel, true
+			}
+		}
+	}
+	return "", false
 }
 
 // customLibraryImage 返回上传到 data/library-images 的库封面。
@@ -252,7 +267,55 @@ func (h *Handler) serveLibraryImage(w http.ResponseWriter, r *http.Request, lib 
 		return
 	}
 	w.Header().Set("Cache-Control", "public, max-age=604800")
+	// 面板预览用：still=1 时只取首帧压成小 JPEG。lime-cover 的 GIF
+	// 分辨率只有 320x180 但文件 2MB+，按宽度缩放不会变小，只能转静态图。
+	if r.URL.Query().Get("still") == "1" {
+		serveCoverStill(w, r, full, atoiDefault(r.URL.Query().Get("maxWidth"), 480))
+		return
+	}
+	maxW := atoiDefault(r.URL.Query().Get("maxWidth"), 0)
+	maxH := atoiDefault(r.URL.Query().Get("maxHeight"), 0)
+	if maxW > 0 || maxH > 0 {
+		h.serveScaledImage(w, r, full, maxW, maxH)
+		return
+	}
 	http.ServeFile(w, r, full)
+}
+
+// serveCoverStill 解码封面第一帧并等比缩到 maxW，输出 JPEG，供面板预览。
+func serveCoverStill(w http.ResponseWriter, r *http.Request, full string, maxW int) {
+	if maxW <= 0 {
+		maxW = 480
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	img, _, err := image.Decode(f)
+	_ = f.Close()
+	if err != nil {
+		http.ServeFile(w, r, full)
+		return
+	}
+	b := img.Bounds()
+	srcW, srcH := b.Dx(), b.Dy()
+	if srcW <= 0 || srcH <= 0 {
+		http.ServeFile(w, r, full)
+		return
+	}
+	dstW := maxW
+	if dstW > srcW {
+		dstW = srcW
+	}
+	dstH := dstW * srcH / srcW
+	if dstH < 1 {
+		dstH = 1
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, dstW, dstH))
+	xdraw.ApproxBiLinear.Scale(dst, dst.Bounds(), img, b, xdraw.Over, nil)
+	w.Header().Set("Content-Type", "image/jpeg")
+	_ = jpeg.Encode(w, dst, &jpeg.Options{Quality: 82})
 }
 
 // validArtworkRel 确认图片真实可读，避免返回一个客户端必然拿到 404 的 tag。
