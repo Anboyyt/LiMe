@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -26,6 +27,11 @@ type Status struct {
 	Total        int    `json:"Total"`
 	LastFinished int64  `json:"LastFinished"`
 	LastError    string `json:"LastError"`
+
+	// Partial/LastNote 表示上次运行撞到了单次时长上限：已处理的条目都已落库，
+	// 剩下的等下次继续。这不是错误，面板不应该标红。
+	Partial  bool   `json:"Partial"`
+	LastNote string `json:"LastNote"`
 }
 
 type Scraper struct {
@@ -41,6 +47,9 @@ type Scraper struct {
 	total        int
 	lastFinished int64
 	lastError    string
+	partial      bool
+	lastNote     string
+	failStreak   int // 连续失败条数，用于区分单个坏条目和 TMDB 整体不可用
 
 	workers      int
 	paceInterval time.Duration
@@ -72,9 +81,11 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger) *Scraper {
 			interval = time.Duration(n) * time.Millisecond
 		}
 	}
+	// 单次运行的时长预算。超过它只是「本次先停下，下次继续」，不是失败；
+	// LIME_SCRAPE_TIMEOUT=0 表示不设上限。
 	timeout := 6 * time.Hour
 	if v := strings.TrimSpace(os.Getenv("LIME_SCRAPE_TIMEOUT")); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
 			timeout = d
 		}
 	}
@@ -82,8 +93,46 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger) *Scraper {
 		cfg: cfg, db: db, client: client, log: log,
 		workers: workers, paceInterval: interval, timeout: timeout,
 	}
+	// 面板里保存的时长上限优先于环境变量，单位是秒；0 表示不限。
+	if v, err := db.GetSetting(scrapeTimeoutKey); err == nil {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil && n >= 0 {
+			s.timeout = time.Duration(n) * time.Second
+		}
+	}
 	s.loadStatus()
 	return s
+}
+
+const scrapeTimeoutKey = "scrape_timeout"
+
+// SetTimeoutSeconds 把时长上限（秒）保存到 settings 并立即生效，
+// 0 表示不限。保存后从下一次运行开始应用。
+func (s *Scraper) SetTimeoutSeconds(n int) error {
+	if n < 0 {
+		n = 0
+	}
+	if err := s.db.SetSetting(scrapeTimeoutKey, strconv.Itoa(n)); err != nil {
+		return err
+	}
+	s.SetTimeout(time.Duration(n) * time.Second)
+	return nil
+}
+
+// SetTimeout 更新单次运行时长上限，保存后从下一次运行开始生效。
+func (s *Scraper) SetTimeout(d time.Duration) {
+	if d < 0 {
+		d = 0
+	}
+	s.mu.Lock()
+	s.timeout = d
+	s.mu.Unlock()
+}
+
+// Timeout 返回当前生效的单次运行时长上限，0 表示不限。
+func (s *Scraper) Timeout() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.timeout
 }
 
 const scrapeStatusKey = "scrape_status"
@@ -108,6 +157,8 @@ func (s *Scraper) loadStatus() {
 	s.total = st.Total
 	s.lastFinished = st.LastFinished
 	s.lastError = st.LastError
+	s.partial = st.Partial
+	s.lastNote = st.LastNote
 	s.mu.Unlock()
 }
 
@@ -119,6 +170,8 @@ func (s *Scraper) saveStatus() {
 		Total:        s.total,
 		LastFinished: s.lastFinished,
 		LastError:    s.lastError,
+		Partial:      s.partial,
+		LastNote:     s.lastNote,
 	}
 	s.mu.Unlock()
 
@@ -140,6 +193,8 @@ func (s *Scraper) Status() Status {
 		Total:        s.total,
 		LastFinished: s.lastFinished,
 		LastError:    s.lastError,
+		Partial:      s.partial,
+		LastNote:     s.lastNote,
 	}
 }
 
@@ -171,12 +226,6 @@ func (s *Scraper) advance() {
 	s.saveStatus()
 }
 
-func (s *Scraper) setError(err error) {
-	s.mu.Lock()
-	s.lastError = err.Error()
-	s.mu.Unlock()
-}
-
 // Run 刮削所有缺元数据、带 TMDB ID 的条目。同一时间只允许一个任务。
 func (s *Scraper) Run() (int, error) {
 	return s.runGuarded("scrape", s.run)
@@ -206,7 +255,7 @@ func (s *Scraper) ScrapeItems(ids []string) (int, error) {
 		s.mu.Unlock()
 	}()
 
-	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	ctx, cancel := s.newRunContext()
 	defer cancel()
 
 	movies := make(map[string]struct{})
@@ -344,11 +393,21 @@ func (s *Scraper) runGuarded(label string, fn func() (int, error)) (int, error) 
 	s.processed = 0
 	s.total = 0
 	s.lastError = ""
+	s.partial = false
+	s.lastNote = ""
+	s.failStreak = 0
 	s.mu.Unlock()
 	s.saveStatus()
 
 	start := time.Now()
 	processed, err := fn()
+
+	// 单次时长预算到期不是失败：已处理的条目都落库了，剩余的下次继续。
+	// 统一在这里兜底，run/runAvatars 内部提前 return 的情况也能被覆盖。
+	if err != nil && errors.Is(err, context.DeadlineExceeded) {
+		s.markPartial(processed)
+		err = nil
+	}
 
 	s.mu.Lock()
 	s.running = false
@@ -356,11 +415,57 @@ func (s *Scraper) runGuarded(label string, fn func() (int, error)) (int, error) 
 	if err != nil {
 		s.lastError = err.Error()
 	}
+	note, partial := s.lastNote, s.partial
 	s.mu.Unlock()
 	s.saveStatus()
 
-	s.log.Info(label+" finished", "items", processed, "dur", time.Since(start).String(), "err", err)
+	s.log.Info(label+" finished", "items", processed, "dur", time.Since(start).String(),
+		"err", err, "partial", partial, "note", note)
 	return processed, err
+}
+
+// newRunContext 创建本次运行的 ctx。timeout<=0 表示不设时长上限。
+func (s *Scraper) newRunContext() (context.Context, context.CancelFunc) {
+	timeout := s.Timeout()
+	if timeout <= 0 {
+		return context.WithCancel(context.Background())
+	}
+	return context.WithTimeout(context.Background(), timeout)
+}
+
+// markPartial 记录「撞到单次时长上限」的状态。它不进 LastError，
+// 面板用中性提示展示，避免每天定时刮削都被标成一次失败。
+func (s *Scraper) markPartial(processed int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.partial {
+		return
+	}
+	s.partial = true
+	s.lastError = ""
+	if s.timeout > 0 {
+		s.lastNote = fmt.Sprintf("本次已达到单次运行上限 %s，处理 %d 条后暂停，剩余条目下次继续",
+			s.timeout, processed)
+	} else {
+		s.lastNote = fmt.Sprintf("本次运行已中止，处理 %d 条，剩余条目下次继续", processed)
+	}
+}
+
+// noteFailure 统计连续失败。单个坏条目（404 已单独处理、偶发超时）只进
+// failures 表，不把整个面板标红；只有连续失败很多才认为是 TMDB/代理不可用。
+func (s *Scraper) noteFailure(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failStreak++
+	if s.failStreak == 20 && s.lastError == "" {
+		s.lastError = "TMDB 请求连续失败 20 次，最后一次：" + err.Error()
+	}
+}
+
+func (s *Scraper) noteSuccess() {
+	s.mu.Lock()
+	s.failStreak = 0
+	s.mu.Unlock()
 }
 
 // runAvatars 只处理已刮削但演员 JSON 还是旧格式的条目。
@@ -369,7 +474,7 @@ func (s *Scraper) runAvatars() (int, error) {
 		return 0, errors.New("tmdb api key not configured")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	ctx, cancel := s.newRunContext()
 	defer cancel()
 
 	s.mu.Lock()
@@ -390,7 +495,11 @@ func (s *Scraper) runAvatars() (int, error) {
 		return 0, nil
 	}
 	s.log.Info("avatar backfill started", "movies", len(movies), "series", len(series))
-	return s.backfillAvatars(ctx, movies, series), nil
+	n := s.backfillAvatars(ctx, movies, series)
+	if ctx.Err() != nil {
+		s.markPartial(n)
+	}
+	return n, nil
 }
 
 func (s *Scraper) run() (int, error) {
@@ -398,7 +507,7 @@ func (s *Scraper) run() (int, error) {
 		return 0, errors.New("tmdb api key not configured")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	ctx, cancel := s.newRunContext()
 	defer cancel()
 
 	s.mu.Lock()
@@ -548,7 +657,8 @@ func (s *Scraper) run() (int, error) {
 			defer wg.Done()
 			for j := range ch {
 				if ctx.Err() != nil {
-					s.advance()
+					// 预算已用完，剩下的条目这次不处理，也不推进进度，
+					// 面板显示的 processed/total 才是真实的完成量。
 					continue
 				}
 				var err error
@@ -576,12 +686,18 @@ func (s *Scraper) run() (int, error) {
 							_ = s.db.UpdateItemMetadata(j.item.ID, store.MetadataUpdate{MetadataChecked: true})
 						}
 						s.log.Info("scrape skipped (tmdb 404)", "item", j.item.ID, "name", j.item.Name)
+						// 404 说明 TMDB 是通的，重置连续失败计数。
+						s.noteSuccess()
+					} else if ctx.Err() != nil {
+						// 预算用完后余下的请求会被立即取消，不算 TMDB 出错，
+						// 也不写 failures 表，下次运行会重新处理。
 					} else {
 						_ = s.db.RecordScrapeFailure(j.item.ID, store.FailureAPI, err.Error())
 						s.log.Warn("scrape failed", "item", j.item.ID, "name", j.item.Name, "err", err)
-						s.setError(err)
+						s.noteFailure(err)
 					}
 				} else {
+					s.noteSuccess()
 					countMu.Lock()
 					count++
 					countMu.Unlock()
@@ -600,7 +716,9 @@ func (s *Scraper) run() (int, error) {
 	close(ch)
 	wg.Wait()
 	if ctx.Err() != nil {
-		return count, ctx.Err()
+		// 时长预算用完：把手上的进度当结果返回，不计为失败。
+		s.markPartial(count)
+		return count, nil
 	}
 
 	count += s.backfillEpisodes(ctx, unscrapedEpisodes)

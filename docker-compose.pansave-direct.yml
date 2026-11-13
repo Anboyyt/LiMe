@@ -1,0 +1,142 @@
+# LiMe 标准部署 —— PanSave 有公网地址（模式 A：客户端自己跟随 302）
+#
+#   拓扑：客户端 → https://lime.<域名> → LiMe:886 → 302 → PanSave(公网) → 302 → CDN
+#
+#   局域网客户端会被改写到 LIME_REWRITE_LOCAL，不绕公网、不占上行带宽。
+#
+# 用法：
+#   1. 改三处：LIME_REWRITE_FROM / LIME_REWRITE_LOCAL、LIME_REWRITE_PUBLIC、
+#      volumes 里的 STRM 目录
+#   2. 可选：同目录 .env 放 TMDB Key / 代理
+#   3. docker compose up -d
+#
+# 前提：
+#   - LiMe 的公网入口（Cloudflare Tunnel / nginx）必须带 X-Forwarded-Proto 和
+#     X-Forwarded-Host，否则 PlaybackInfo 里会生成 http://内网IP 的播放地址。
+#   - PanSave 必须有一个客户端能直接访问的公网地址（独立域名或子域名）。
+#     当前改写只替换 scheme + host，不支持子路径前缀（https://x/pansave 不行）。
+
+services:
+  lime:
+    image: ${LIME_IMAGE:-lixxh/lime:latest}
+    container_name: lime
+    restart: unless-stopped
+
+    ports:
+      # 左边是宿主机端口，被占用时只改左边，例如 "1886:886"
+      - "886:886"
+
+    environment:
+      TZ: Asia/Shanghai
+
+      # 客户端里显示的服务器名
+      LIME_SERVER_NAME: "LiMe"
+
+      # 数据目录，对应下面 volumes 的 ./data
+      LIME_DATA_DIR: "/data"
+
+      # 初始管理员：只在首次建库时创建，之后改密码不会被这里覆盖
+      LIME_ADMIN_USER: "Lime"
+      LIME_ADMIN_PASSWORD: "change-me"
+
+      # 媒体库显式写死：换库 / 重建 data 时不会退化成单个混合库
+      # 类型：movies / tvshows / mixed；多个库用英文分号分隔
+      LIME_LIBRARIES: "电影|/strm/电影|movies;剧集|/strm/剧集|tvshows;动漫|/strm/动漫|tvshows;综艺|/strm/综艺|tvshows;纪录片|/strm/纪录片|mixed;短剧|/strm/短剧|tvshows;儿童节目|/strm/儿童节目|mixed;演唱会|/strm/演唱会|movies"
+      # 面板里新建库时允许的根路径
+      LIME_LIBRARY_ROOTS: "/strm"
+
+      # ---- 扫描 ----
+      # 大库启动不全量扫；首次启动后在面板里手动扫一次
+      LIME_SCAN_ON_START: "false"
+      # 每天固定时间做增量扫描（HH:MM，容器时区），留空关闭
+      LIME_SCAN_DAILY_AT: "03:30"
+      # 监听媒体目录，PanSave 写入新 .strm 后自动入库
+      LIME_REALTIME_MONITOR: "true"
+
+      # ---- 302 地址改写（外网播放核心，模式 A）----
+      # 必须打开，否则外网客户端会拿到内网 PanSave 地址
+      LIME_REWRITE_ENABLED: "true"
+
+      # STRM 文件里写的那个 PanSave host，必须完全一致才会改写；
+      # 不一致（例如已经是 CDN 直链）就原样返回。
+      # ← 用一个 .strm 文件确认：head -1 xxx.strm
+      LIME_REWRITE_FROM: "192.168.5.155:16868"
+
+      # 局域网客户端用的地址（NAS 的局域网 IP + PanSave 端口）
+      LIME_REWRITE_LOCAL: "192.168.5.155:16868"
+
+      # 公网客户端用的地址 ← 改成你的 PanSave 公网域名
+      # 不带端口就写 https://pansave.example.com
+      LIME_REWRITE_PUBLIC: "https://pansave.example.com"
+
+      # 模式 A 不要设置 LIME_INTERNAL_URL，也不要打开 LIME_RESOLVE_REDIRECT：
+      #   - INTERNAL_URL 非空会把 PlaybackInfo 的 Path / DirectStreamUrl 改成
+      #     内网地址，外网 Web UI 的播放和「复制直链」会失效；
+      #   - RESOLVE_REDIRECT 让 LiMe 代跟一跳，模式 A 客户端自己跟即可，
+      #     多一次请求还可能把 115 直链绑到 NAS 出口 UA。
+      LIME_RESOLVE_REDIRECT: "false"
+
+      # 公网播放是否强制校验 token：
+      #   "true"  → 更安全，但原生 Web UI 的「浏览器播放」会 401
+      #             （<video> 不带 Authorization 头），App / Infuse 不受影响
+      #   "false" → 浏览器播放可用，但拿到 /Videos/{id}/stream 就能直接 302
+      LIME_STREAM_REQUIRE_AUTH: "false"
+
+      # ---- TMDB 刮削（可选，Key / 代理放 .env）----
+      LIME_TMDB_API_KEY: "${LIME_TMDB_API_KEY:-}"
+      LIME_TMDB_LANGUAGE: "zh-CN"
+      # 国内直连 api.themoviedb.org 不通时填代理；容器内不能用 127.0.0.1
+      LIME_TMDB_PROXY: "${LIME_TMDB_PROXY:-}"
+      LIME_SCRAPE_WORKERS: "3"
+      LIME_SCRAPE_RATE_MS: "50"
+
+      # ---- 媒体信息探测（ffprobe 读远程轨道信息，结果缓存）----
+      LIME_PROBE_ENABLED: "true"
+      LIME_PROBE_WORKERS: "2"
+      LIME_PROBE_TIMEOUT: "30s"
+      LIME_PROBE_SYNC_WAIT: "3s"
+
+    volumes:
+      # SQLite 数据库、海报/Logo 缓存、备份
+      - ./data:/data
+      # ← 改成你的 STRM 目录；只读即可
+      # 注意：目录不存在时 Docker 会静默建空目录，全量扫描会删光该库条目
+      - /vol1/1000/影视/123strm/影视:/strm:ro
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:886/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    # 每次播放会打一条 stream redirect 日志，限制一下防止无限增长
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ---------------------------------------------------------------------------
+# 上线自检
+# ---------------------------------------------------------------------------
+#
+# 外网访问时，302 的 Location 应该是 PanSave 公网域名：
+#   curl -sI 'https://lime.<你的域名>/Videos/<itemId>/stream?static=true&MediaSourceId=<sourceId>' \
+#     | grep -i '^location'
+#   期望：location: https://pansave.example.com/strm/115/drive?...（不再是 192.168.x.x）
+#
+# 局域网访问时同一请求应返回 192.168.5.155:16868 开头的地址。
+#
+# 如果公网拿到的是内网地址，检查反代是否透传了 X-Forwarded-Proto / Host；
+# 如果局域网也拿到公网地址，检查请求是否经过 DNS 回环到了公网入口。
+#
+# ---------------------------------------------------------------------------
+# 可选补充
+# ---------------------------------------------------------------------------
+#
+# 临时排查第三方集成（记录 API 路径，不记录图片和静态资源）：
+#   LIME_HTTP_LOG: "true"
+#
+# PanSave 没有公网域名时不要用本文件，改用 docker-compose.pansave-public.yml
+# 里的「模式 B」：LIME_RESOLVE_REDIRECT=true，由 LiMe 在服务端代跟一跳。

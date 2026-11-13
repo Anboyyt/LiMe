@@ -347,6 +347,7 @@ main {
 }
 .dot.running { background: var(--warn); animation: pulse 1.2s infinite; }
 .dot.done { background: var(--ok); }
+.dot.partial { background: var(--warn); }
 .dot.fail { background: var(--danger); }
 @keyframes pulse { 50% { opacity: .35; } }
 
@@ -377,6 +378,7 @@ table:has(td:last-child button) th:last-child { text-align: right; }
 }
 
 .item-card {
+  position: relative;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: 10px;
@@ -388,6 +390,29 @@ table:has(td:last-child button) th:last-child { text-align: right; }
   min-height: 92px;
 }
 .item-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.item-card .card-play {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 2;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .45);
+  background: rgba(0, 0, 0, .55);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity .15s, transform .15s;
+}
+.item-card:hover .card-play { opacity: 1; }
+.item-card .card-play:hover { transform: scale(1.08); }
+@media (hover: none) { .item-card .card-play { opacity: 1; } }
 .item-card .poster {
   display: block;
   width: 100%;

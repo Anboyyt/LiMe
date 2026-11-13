@@ -1,0 +1,120 @@
+# LiMe 外网播放模板（PanSave + 云盘）
+#
+# 适用场景：LiMe 已通过 Cloudflare Tunnel / 反向代理暴露到公网，
+# 客户端在外网也能打开媒体库，播放时由 LiMe 302 到 PanSave，再由
+# PanSave 302 到 115/123 CDN。
+#
+# 前提：
+#   1. LiMe 的公网入口（CF Tunnel / nginx）要设置
+#      X-Forwarded-Proto、X-Forwarded-Host，否则 PlaybackInfo 里
+#      生成的播放地址会变成 http://内网IP。
+#   2. PanSave 需要有公网可达地址（模式 A）；
+#      没有的话用文件末尾的模式 B。
+#
+# 需要改的四处：
+#   LIME_ADMIN_PASSWORD  初始密码
+#   STRM 目录             volumes 里
+#   LIME_REWRITE_FROM    STRM 里写的那个 PanSave 地址
+#   LIME_REWRITE_PUBLIC  PanSave 的公网地址
+#
+# 局域网客户端仍然走内网 PanSave，不占公网带宽。
+
+services:
+  lime:
+    image: lixxh/lime:latest
+    container_name: lime
+    restart: unless-stopped
+
+    ports:
+      - "886:886"
+
+    environment:
+      TZ: Asia/Shanghai
+      LIME_SERVER_NAME: "LiMe"
+      LIME_DATA_DIR: "/data"
+
+      LIME_ADMIN_USER: "admin"
+      LIME_ADMIN_PASSWORD: "change-me"
+
+      # ---- 媒体库 ----
+      # 不填则按 /media 一级子目录自动建库并猜类型。
+      # 手动指定示例：
+      # LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
+
+      LIME_SCAN_ON_START: "false"
+      LIME_SCAN_DAILY_AT: "03:30"
+      LIME_REALTIME_MONITOR: "true"
+
+      # ---- 302 地址改写（外网播放核心）----
+      # 打开后 LiMe 会把 STRM 里 PanSave 的 host 换成客户端可达的地址：
+      #   局域网客户端 → LIME_REWRITE_LOCAL
+      #   公网客户端   → LIME_REWRITE_PUBLIC
+      # 判断依据是请求来源 IP 和 Host，所以反代必须传对转发头。
+      LIME_REWRITE_ENABLED: "true"
+
+      # STRM 文件里原始地址的 host，必须完全一致才会改写；
+      # 不一致（例如已经是 CDN 直链）就原样返回。
+      LIME_REWRITE_FROM: "192.168.5.133:16868"
+      # 局域网客户端用的地址（NAS 的局域网 IP + PanSave 端口）
+      LIME_REWRITE_LOCAL: "192.168.5.133:16868"
+      # 公网客户端用的地址（← 改成你的 PanSave 公网域名）
+      LIME_REWRITE_PUBLIC: "https://pansave.example.com"
+
+      # 播放端点强制校验 token。注意：打开后原生 Web UI 的「浏览器播放」
+      # 会 401（<video> 不会带 Authorization 头，URL 里也没有 api_key），
+      # 手机 App / Infuse 带 token，不受影响。需要 Web 端播放就改回 "false"。
+      LIME_STREAM_REQUIRE_AUTH: "true"
+
+      # 模式 A 不需要下面两项：
+      #   LIME_INTERNAL_URL       会把 PlaybackInfo 的 Path 改成内网地址，
+      #                           外网客户端和自带 Web UI 都拿不到可用直链
+      #   LIME_RESOLVE_REDIRECT   客户端自己跟随 302 即可，PanSave 按客户端
+      #                           UA 生成 115 直链，不需要 LiMe 代跟
+      # 只有模式 B / PanSave 作为 LiMe 反代时才需要，见文件末尾。
+
+    volumes:
+      - ./data:/data
+      # ← 改成你的 STRM 目录
+      - /path/to/your/strm:/media:ro
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:886/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# ---------------------------------------------------------------------------
+# 模式 B：PanSave 没有公网域名，只有内网/反代端口
+# ---------------------------------------------------------------------------
+#
+# 把上面模式 A 的改写与解析改成下面几行。客户端只跟一次 302，
+# LiMe 在服务端先跟一跳 PanSave，把最终的云盘 CDN 地址直接给客户端，
+# 客户端不会接触到任何内网地址。
+#
+#   LIME_REWRITE_ENABLED: "false"        # 或 true，把 FROM/LOCAL 都设成内网地址
+#   LIME_REWRITE_FROM: "192.168.5.133:16868"
+#   LIME_REWRITE_LOCAL: "192.168.5.133:16868"
+#   LIME_REWRITE_PUBLIC: ""              # 用不到
+#   LIME_RESOLVE_REDIRECT: "true"
+#   LIME_INTERNAL_URL: "http://192.168.5.133:886"
+#
+# 注意：
+#   1. RESOLVE_REDIRECT 会透传客户端 UA 去请求 PanSave，这是 115 直链
+#      签名校验所必需的，不要自己改 UA。
+#   2. LIME_INTERNAL_URL 非空时，PlaybackInfo 的 Path / DirectStreamUrl
+#      会统一变成这个内网地址。手机 App、Infuse 自己拼播放地址，不受影响；
+#      但原生 Web UI 的播放/复制直链、以及任何直接读 Path 的客户端，
+#      在外网会拿到不可达地址。别在模式 A 里开它。
+#   3. 更稳的做法仍是给 PanSave 配一个公网域名，用模式 A。
+#
+# ---------------------------------------------------------------------------
+# 其他可选项
+# ---------------------------------------------------------------------------
+#
+# TMDB 刮削（Key / 代理放同目录 .env）：
+#   LIME_TMDB_API_KEY: "${LIME_TMDB_API_KEY:-}"
+#   LIME_TMDB_PROXY: "${LIME_TMDB_PROXY:-}"
+#
+# 排查第三方集成时临时打开 API 日志（不记录图片和静态资源）：
+#   LIME_HTTP_LOG: "true"

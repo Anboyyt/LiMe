@@ -1,7 +1,9 @@
 services:
   lime:
     # 默认直接用 Docker Hub 镜像。
-    # 改了源码要本地构建：docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+    # 改了源码要本地构建（必须传版本号，产物是 lixxh/lime:local，不覆盖 latest）：
+    #   LIME_VERSION=$(git describe --tags --always --dirty) \
+    #     docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
     image: ${LIME_IMAGE:-lixxh/lime:latest}
     container_name: lime
     restart: unless-stopped

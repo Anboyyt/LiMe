@@ -44,6 +44,8 @@ services:
       LIME_SCAN_DAILY_AT: "03:30"
       # 监听媒体目录，新 .strm 落盘后自动入库
       LIME_REALTIME_MONITOR: "true"
+      # 启动时对账一次，补齐容器停机期间新增/删除的 .strm
+      LIME_REALTIME_RECONCILE: "true"
 
       # ---- STRM 302 地址改写 ----
       # 外网访问时打开，否则客户端会连到不可达的内网 PanSave 地址

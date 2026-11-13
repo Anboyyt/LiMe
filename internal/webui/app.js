@@ -35,6 +35,14 @@
   }[c]));
 
   const TYPE_LABEL = { Movie: '电影', Series: '剧集', Season: '季', Episode: '单集' };
+  // 与后端 localPlayers 保持一致；新增播放器两边都要改。
+  const LOCAL_PLAYERS = [
+    ['vlc', 'VLC'],
+    ['potplayer', 'PotPlayer'],
+    ['mpv', 'MPV'],
+    ['iina', 'IINA（macOS）'],
+    ['infuse', 'Infuse（iOS / macOS）'],
+  ];
 
   function fmtTicks(t) {
     if (!t) return '0:00';
@@ -271,6 +279,8 @@
       scrapeLine = `<span class="dot running"></span> 刮削中 ${sc.Processed || 0}/${sc.Total || 0}`;
     } else if (sc.LastError) {
       scrapeLine = `<span class="dot fail"></span> 上次刮削出错：${esc(sc.LastError)}`;
+    } else if (sc.Partial) {
+      scrapeLine = `<span class="dot partial"></span> ${esc(sc.LastNote || '上次刮削未跑完，剩余条目下次继续')}`;
     } else if (sc.LastFinished) {
       scrapeLine = `<span class="dot done"></span> 上次刮削 ${fmtUnix(sc.LastFinished)}，处理 ${sc.Processed || 0} 条`;
     } else {
@@ -331,6 +341,7 @@
 
   // ---------- 媒体库管理 ----------
   const KIND_LABEL = { movies: '电影', tvshows: '剧集', mixed: '混合', auto: '自动识别' };
+  const COVER_STYLE_LABEL = { collage: '斜角海报墙', minimal: '简约模糊', latest: '库内最新海报' };
 
   // 浏览目录会重渲染表单，先把名称/类型收回 state，避免输入丢失。
   function collectLibDraft() {
@@ -346,6 +357,7 @@
     const libs = await api('/web/api/libraries');
     state.libCache = libs || [];
     const admin = isAdmin();
+    const covers = admin ? await api('/web/api/library-covers').catch(() => null) : null;
     const edit = state.libEdit
       ? ((libs || []).find((l) => l.ID === state.libEdit.ID) || state.libEdit)
       : null;
@@ -402,7 +414,28 @@
         </p>
       </div>` : '';
 
-    $('#view').innerHTML = `${form}
+    const coverPanel = admin && covers ? `
+      <div class="panel">
+        <h3>库封面</h3>
+        <div class="kv">
+          <div><b>当前样式</b><span>${COVER_STYLE_LABEL[covers.Style] || esc(covers.Style)}</span></div>
+          <div><b>自定义封面</b><span>${covers.CustomCount ? `${covers.CustomCount} 个库（优先于自动封面）` : '无'}</span></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <select id="coverStyle" style="max-width:200px">
+            ${['collage', 'minimal', 'latest'].map((k) =>
+              `<option value="${k}" ${covers.Style === k ? 'selected' : ''}>${COVER_STYLE_LABEL[k]}</option>`).join('')}
+          </select>
+          <button class="primary" data-action="save-cover-style">保存样式</button>
+          ${covers.CustomCount ? '<button data-action="use-auto-covers">改用自动封面</button>' : ''}
+        </div>
+        <p class="muted" style="margin:8px 0 0">
+          自动封面按库名取「标题 + 英文副标题 + 背景色」，与 lime-cover 的配置一致；
+          「改用自动封面」会把已有自定义封面改名成 *.bak 备份，不会删除。
+        </p>
+      </div>` : '';
+
+    $('#view').innerHTML = `${form}${coverPanel}
       <div class="panel">
         <h3>媒体库</h3>
         <table>
@@ -637,7 +670,10 @@
              src="/Items/${esc(it.Id)}/Images/Primary?tag=${esc(tag)}&maxWidth=400">`
         : `<div class="poster placeholder">${esc((it.Name || '?').slice(0, 1))}</div>`;
 
+    const canPlay = it.Type === 'Movie' || it.Type === 'Episode';
     return `<div class="item-card" data-action="open-item" data-id="${esc(it.Id)}">
+      ${canPlay ? `<button class="card-play" title="用本地播放器播放"
+        data-action="play-local" data-item="${esc(it.Id)}">▶</button>` : ''}
       ${poster}
       <div class="name">${esc(it.Name)}</div>
       <div class="meta">${it.ProductionYear ? it.ProductionYear + ' · ' : ''}${TYPE_LABEL[it.Type] || it.Type}${ep}</div>
@@ -652,6 +688,7 @@
     $('#crumb').textContent = it.Name;
     const ud = it.UserData || {};
     const sources = it.MediaSources || [];
+    const curPlayer = localStorage.getItem('lime.localPlayer.v2') || 'potplayer';
 
     let children = '';
     if (it.Type === 'Series') {
@@ -676,8 +713,10 @@
         <td>${esc(s.Container || '—')}<div class="muted" style="font-size:11px">${fmtBytes(s.Size)}</div></td>
         <td class="muted" style="max-width:260px">${esc(streams)}</td>
         <td style="white-space:nowrap">
+          <button class="primary" data-action="play-local" data-item="${esc(it.Id)}" data-source="${esc(s.Id)}">播放</button>
+          <button data-action="playlist" data-item="${esc(it.Id)}" data-source="${esc(s.Id)}">播放列表</button>
           <button data-action="copy" data-path="${esc(s.Path)}">复制直链</button>
-          <button data-action="play" data-path="${esc(s.Path)}" data-container="${esc(s.Container)}">浏览器播放</button>
+          <button data-action="play" data-path="${esc(s.Path)}" data-container="${esc(s.Container)}">网页播放</button>
         </td>
       </tr>`;
     }).join('') || '<tr><td colspan="4" class="muted">没有片源</td></tr>';
@@ -726,6 +765,8 @@
               ${it.Overview ? `<div><b>简介</b><span>${esc(it.Overview)}</span></div>` : ''}
             </div>
             <div class="row" style="margin-top:14px">
+              ${sources.length ? `<button class="primary" data-action="play-local"
+                data-item="${esc(it.Id)}">▶ 播放</button>` : ''}
               <button data-action="toggle-played" data-id="${esc(it.Id)}" data-played="${ud.Played ? '1' : '0'}">
                 ${ud.Played ? '标记未看' : '标记已看'}</button>
               <button data-action="toggle-fav" data-id="${esc(it.Id)}" data-fav="${ud.IsFavorite ? '1' : '0'}">
@@ -737,6 +778,14 @@
 
       <div class="panel">
         <h3>片源</h3>
+        <div class="row" style="margin-bottom:8px;align-items:center">
+          <span class="muted">本地播放器</span>
+          <select id="localPlayer" style="max-width:200px">
+            ${LOCAL_PLAYERS.map(([k, l]) =>
+              `<option value="${k}" ${curPlayer === k ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <span class="muted">选择会记在这台设备；点「播放」直接唤起，不生效就用「播放列表」</span>
+        </div>
         <table class="sources">
           <thead><tr><th>名称 / 直链</th><th>容器 / 大小</th><th>流</th><th></th></tr></thead>
           <tbody>${sourceRows}</tbody>
@@ -783,6 +832,28 @@
       ta.remove();
     }
     toast('已复制直链');
+  }
+
+  // 唤起本地播放器。直接跳协议，不碰剪贴板；协议没注册时用「播放列表」回退。
+  async function playWithLocalPlayer(itemId, sourceId) {
+    const sel = $('#localPlayer');
+    const player = (sel && sel.value) || localStorage.getItem('lime.localPlayer.v2') || 'potplayer';
+    localStorage.setItem('lime.localPlayer.v2', player);
+    let target = `/web/api/play-target?itemId=${encodeURIComponent(itemId)}` +
+      `&player=${encodeURIComponent(player)}`;
+    if (sourceId) target += `&sourceId=${encodeURIComponent(sourceId)}`;
+    const r = await api(target);
+    window.location.href = r.ProtocolUrl;
+    setTimeout(() => toast(`正在用 ${r.PlayerLabel} 打开；没反应就点「播放列表」`), 1200);
+  }
+
+  async function downloadPlaylist(itemId, sourceId) {
+    const sel = $('#localPlayer');
+    const player = (sel && sel.value) || localStorage.getItem('lime.localPlayer.v2') || 'potplayer';
+    localStorage.setItem('lime.localPlayer.v2', player);
+    const r = await api(`/web/api/play-target?itemId=${encodeURIComponent(itemId)}` +
+      `&sourceId=${encodeURIComponent(sourceId)}&player=${encodeURIComponent(player)}`);
+    window.location.href = r.M3uUrl;
   }
 
   // ---------- 用户 ----------
@@ -985,6 +1056,15 @@
       ['上次错误', scan.LastError || '—'],
     ].map(([k, v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join('');
 
+    // 单次刮削时长上限：预设常用值，非预设值（环境变量配置的）也原样显示。
+    const curTimeout = settings.ScrapeTimeoutSeconds || 0;
+    const presetTimeouts = [3600, 10800, 21600, 43200, 86400, 172800, 0];
+    let timeoutOptions = presetTimeouts.map((v) =>
+      `<option value="${v}" ${curTimeout === v ? 'selected' : ''}>${scrapeTimeoutLabel(v)}</option>`);
+    if (!presetTimeouts.includes(curTimeout)) {
+      timeoutOptions.unshift(`<option value="${curTimeout}" selected>${scrapeTimeoutLabel(curTimeout)}（当前）</option>`);
+    }
+
     $('#view').innerHTML = `
       <div class="panel"><h3>服务器</h3><div class="kv">${infoRows}</div></div>
       <div class="panel"><h3>扫描</h3><div class="kv">${scanRows}</div>
@@ -996,6 +1076,7 @@
             : '未配置'}</span></div>
           <div><b>代理</b><span>${esc(settings.TMDBProxy || '—')}</span></div>
           <div><b>状态</b><span>${settings.ScrapeEnabled ? '已启用' : '未启用'}</span></div>
+          <div><b>单次上限</b><span>${scrapeTimeoutLabel(curTimeout)}</span></div>
         </div>
         <div class="row" style="margin-top:12px">
           <input id="tmdbKey" placeholder="添加一个 API Key（留空不改）" style="max-width:320px">
@@ -1003,6 +1084,11 @@
             style="max-width:320px" value="${esc(settings.TMDBProxy || '')}">
           <button class="primary" data-action="save-settings">保存</button>
           ${settings.TMDBKeyCount ? '<button data-action="clear-tmdb-keys">清空 Key</button>' : ''}
+        </div>
+        <div class="row" style="margin-top:12px">
+          <select id="scrapeTimeout" style="max-width:160px">${timeoutOptions.join('')}</select>
+          <button class="primary" data-action="save-settings">保存</button>
+          <span class="muted">单次刮削上限，到点自动暂停，剩余条目下次继续；选「不限」则一次跑完</span>
         </div>
         <p class="muted" style="margin:8px 0 0">支持多个 Key，刮削时自动轮询；遇到 429 会换下一个。</p>
       </div>
@@ -1169,6 +1255,13 @@
     return labels[scope] || esc(scope || '—');
   }
 
+  function scrapeTimeoutLabel(sec) {
+    if (!sec) return '不限';
+    if (sec % 3600 === 0) return `${sec / 3600} 小时`;
+    if (sec % 60 === 0) return `${sec / 60} 分钟`;
+    return `${sec} 秒`;
+  }
+
   function tgEventsLabel(raw) {
     if (!raw || raw === 'all') return '全部事件';
     if (raw === 'none') return '未选择';
@@ -1199,6 +1292,8 @@
         if (scanDailyAt !== undefined) body.ScanDailyAt = scanDailyAt;
         const scrapeDailyAt = val('#scrapeDailyAt');
         if (scrapeDailyAt !== undefined) body.ScrapeDailyAt = scrapeDailyAt;
+        const scrapeTimeoutEl = $('#scrapeTimeout');
+        if (scrapeTimeoutEl) body.ScrapeTimeoutSeconds = parseInt(scrapeTimeoutEl.value || '21600', 10);
         const realtimeEl = $('#realtimeMonitor');
         if (realtimeEl) body.RealtimeMonitor = realtimeEl.checked;
         const probeWarmupEl = $('#probeWarmup');
@@ -1327,6 +1422,25 @@
         await route();
         break;
       }
+      case 'save-cover-style': {
+        await api('/web/api/library-covers', {
+          method: 'POST',
+          body: JSON.stringify({ Style: $('#coverStyle').value }),
+        });
+        toast('库封面样式已保存');
+        await renderLibraries();
+        break;
+      }
+      case 'use-auto-covers': {
+        if (!confirm('把自定义封面备份为 *.bak，并改用自动生成的海报墙封面？')) break;
+        const r = await api('/web/api/library-covers', {
+          method: 'POST',
+          body: JSON.stringify({ UseAuto: true }),
+        });
+        toast(`已备份 ${(r && r.BackedUp) || 0} 张自定义封面，后台重新生成中`);
+        await renderLibraries();
+        break;
+      }
       case 'save-lib': {
         const name = ($('#libName').value || '').trim();
         const kind = $('#libKind').value;
@@ -1450,6 +1564,12 @@
         break;
       case 'copy':
         await copyText(el.dataset.path);
+        break;
+      case 'play-local':
+        await playWithLocalPlayer(el.dataset.item, el.dataset.source);
+        break;
+      case 'playlist':
+        await downloadPlaylist(el.dataset.item, el.dataset.source);
         break;
       case 'play':
         showPlayer(el.dataset.path, el.dataset.container);

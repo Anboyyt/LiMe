@@ -24,31 +24,34 @@ type BaseItemDto struct {
 	People                  []PersonDto       `json:"People"`
 	ImageTags               map[string]string `json:"ImageTags"`
 	PrimaryImageTag         string            `json:"PrimaryImageTag,omitempty"`
-	BackdropImageTags       []string          `json:"BackdropImageTags"`
-	ImageBlurHashes         map[string]any    `json:"ImageBlurHashes"`
-	LocationType            string            `json:"LocationType"`
-	Type                    string            `json:"Type"`
-	MediaType               string            `json:"MediaType,omitempty"`
-	IsFolder                bool              `json:"IsFolder"`
+	// PrimaryImageItemId 是 Emby 客户端取库封面的入口；缺省时部分客户端（Sen）
+	// 不会去拼接 /Items/{id}/Images/Primary，表现为封面空白。
+	PrimaryImageItemId string         `json:"PrimaryImageItemId,omitempty"`
+	BackdropImageTags  []string       `json:"BackdropImageTags"`
+	ImageBlurHashes    map[string]any `json:"ImageBlurHashes"`
+	LocationType       string         `json:"LocationType"`
+	Type               string         `json:"Type"`
+	MediaType          string         `json:"MediaType,omitempty"`
+	IsFolder           bool           `json:"IsFolder"`
 	// ChildCount 是直接子项数（剧→季数、季→集数）；
 	// RecursiveItemCount 是剧的总集数。部分客户端靠它决定是否渲染集列表。
-	ChildCount         *int   `json:"ChildCount,omitempty"`
-	RecursiveItemCount *int   `json:"RecursiveItemCount,omitempty"`
+	ChildCount         *int `json:"ChildCount,omitempty"`
+	RecursiveItemCount *int `json:"RecursiveItemCount,omitempty"`
 	// MediaSourceCount 是片源数量；部分客户端用它判断条目是否可播放。
-	MediaSourceCount int    `json:"MediaSourceCount,omitempty"`
-	ParentId         string `json:"ParentId,omitempty"`
-	SeriesId                string            `json:"SeriesId,omitempty"`
-	SeasonId                string            `json:"SeasonId,omitempty"`
-	SeriesName              string            `json:"SeriesName,omitempty"`
-	SeasonName              string            `json:"SeasonName,omitempty"`
-	IndexNumber             *int              `json:"IndexNumber,omitempty"`
-	ParentIndexNumber       *int              `json:"ParentIndexNumber,omitempty"`
-	CollectionType          string            `json:"CollectionType,omitempty"`
-	Overview                string            `json:"Overview,omitempty"`
-	OfficialRating          string            `json:"OfficialRating,omitempty"`
-	CommunityRating         *float64          `json:"CommunityRating,omitempty"`
-	UserData                *UserItemDataDto  `json:"UserData"`
-	MediaSources            []MediaSourceDto  `json:"MediaSources,omitempty"`
+	MediaSourceCount  int              `json:"MediaSourceCount,omitempty"`
+	ParentId          string           `json:"ParentId,omitempty"`
+	SeriesId          string           `json:"SeriesId,omitempty"`
+	SeasonId          string           `json:"SeasonId,omitempty"`
+	SeriesName        string           `json:"SeriesName,omitempty"`
+	SeasonName        string           `json:"SeasonName,omitempty"`
+	IndexNumber       *int             `json:"IndexNumber,omitempty"`
+	ParentIndexNumber *int             `json:"ParentIndexNumber,omitempty"`
+	CollectionType    string           `json:"CollectionType,omitempty"`
+	Overview          string           `json:"Overview,omitempty"`
+	OfficialRating    string           `json:"OfficialRating,omitempty"`
+	CommunityRating   *float64         `json:"CommunityRating,omitempty"`
+	UserData          *UserItemDataDto `json:"UserData"`
+	MediaSources      []MediaSourceDto `json:"MediaSources,omitempty"`
 }
 
 type PersonDto struct {

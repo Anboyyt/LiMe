@@ -55,6 +55,10 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		pendingTotal, pendingFav, pendingWatching := h.probeCountsSnapshot()
 		tg := h.tgConfig()
+		scrapeTimeout := 6 * 3600
+		if h.scraper != nil {
+			scrapeTimeout = int(h.scraper.Timeout().Seconds())
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"TMDBKeySet":            len(keys) > 0,
 			"TMDBKeyHint":           firstHint,
@@ -62,6 +66,7 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			"TMDBKeyCount":          len(keys),
 			"TMDBProxy":             proxy,
 			"ScrapeEnabled":         h.scraper != nil && h.scraper.Enabled(),
+			"ScrapeTimeoutSeconds":  scrapeTimeout,
 			"ScanDailyAt":           scanDaily,
 			"ScrapeDailyAt":         scrapeDaily,
 			"RealtimeMonitor":       h.realtime != nil && h.realtime.Enabled(),
@@ -85,23 +90,25 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPut:
 		var p struct {
-			ApiKey          *string `json:"ApiKey"`
-			ClearKeys       *bool   `json:"ClearKeys"`
-			Proxy           *string `json:"Proxy"`
-			ScanDailyAt     *string `json:"ScanDailyAt"`
-			ScrapeDailyAt   *string `json:"ScrapeDailyAt"`
-			RealtimeMonitor *bool   `json:"RealtimeMonitor"`
-			ProbeWarmup     *bool   `json:"ProbeWarmup"`
-			ProbeScope      *string `json:"ProbeScope"`
-			ProbeWindow     *string `json:"ProbeWindow"`
-			ProbeMaxRun     *string `json:"ProbeMaxRun"`
-			BackupDailyAt   *string `json:"BackupDailyAt"`
-			BackupKeep      *int    `json:"BackupKeep"`
-			TGBotToken      *string `json:"TGBotToken"`
-			TGChatID        *string `json:"TGChatID"`
-			TGProxy         *string `json:"TGProxy"`
-			TGEnabled       *bool   `json:"TGEnabled"`
-			TGEvents        *string `json:"TGEvents"`
+			ApiKey        *string `json:"ApiKey"`
+			ClearKeys     *bool   `json:"ClearKeys"`
+			Proxy         *string `json:"Proxy"`
+			ScanDailyAt   *string `json:"ScanDailyAt"`
+			ScrapeDailyAt *string `json:"ScrapeDailyAt"`
+			// 单次刮削时长上限（秒），0 表示不限。
+			ScrapeTimeoutSeconds *int    `json:"ScrapeTimeoutSeconds"`
+			RealtimeMonitor      *bool   `json:"RealtimeMonitor"`
+			ProbeWarmup          *bool   `json:"ProbeWarmup"`
+			ProbeScope           *string `json:"ProbeScope"`
+			ProbeWindow          *string `json:"ProbeWindow"`
+			ProbeMaxRun          *string `json:"ProbeMaxRun"`
+			BackupDailyAt        *string `json:"BackupDailyAt"`
+			BackupKeep           *int    `json:"BackupKeep"`
+			TGBotToken           *string `json:"TGBotToken"`
+			TGChatID             *string `json:"TGChatID"`
+			TGProxy              *string `json:"TGProxy"`
+			TGEnabled            *bool   `json:"TGEnabled"`
+			TGEvents             *string `json:"TGEvents"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -167,6 +174,19 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			if err := h.db.SetSetting("scrape_daily_at", at); err != nil {
 				writeError(w, http.StatusInternalServerError, "save setting failed")
 				return
+			}
+		}
+		if p.ScrapeTimeoutSeconds != nil {
+			n := *p.ScrapeTimeoutSeconds
+			if n < 0 || n > 30*24*3600 {
+				writeError(w, http.StatusBadRequest, "单次刮削时长应在 0（不限）到 30 天之间")
+				return
+			}
+			if h.scraper != nil {
+				if err := h.scraper.SetTimeoutSeconds(n); err != nil {
+					writeError(w, http.StatusInternalServerError, "save setting failed")
+					return
+				}
 			}
 		}
 

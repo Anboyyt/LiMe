@@ -587,6 +587,21 @@ input:focus {
 .episode .ov { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .episode .go { color: var(--muted); font-size: 18px; }
 
+.source-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.source-toolbar select {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+}
+
 .sources { display: flex; flex-direction: column; gap: 10px; }
 .source-row {
   display: flex;

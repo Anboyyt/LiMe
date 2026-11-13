@@ -260,6 +260,7 @@ func main() {
 	if len(libs) > 0 {
 		go runDailyScan(cfg, db, scanner, scraper, logger)
 		go runDailyScrape(cfg, db, scraper, logger)
+		go runDailyCovers(db, api.NewCoverGenerator(cfg, db, logger), logger)
 	}
 
 	// 实时监控媒体库（Emby 的实时监控行为）：PanSave 写入新 .strm 后
@@ -340,6 +341,29 @@ func runDailyScrape(cfg config.Config, db *store.DB, scraper *scrape.Scraper, lo
 				} else if _, err := scraper.Run(); err != nil {
 					logger.Warn("daily scrape failed", "err", err)
 				}
+			}
+		}
+		time.Sleep(time.Minute)
+	}
+}
+
+// runDailyCovers 每天夜间给所有库预生成封面，避免客户端首次打开时等待。
+// 默认 04:10，可用 settings.cover_daily_at 覆盖。
+func runDailyCovers(db *store.DB, handler *api.Handler, logger *slog.Logger) {
+	lastRun := ""
+	for {
+		at := "04:10"
+		if v, err := db.GetSetting("cover_daily_at"); err == nil && v != "" {
+			at = normalizeDaily(v)
+		}
+		now := time.Now()
+		if at != "" && now.Format("15:04") == at {
+			key := now.Format("2006-01-02") + " " + at
+			if lastRun != key {
+				lastRun = key
+				start := time.Now()
+				handler.PreGenerateCovers()
+				logger.Info("daily cover generation done", "dur", time.Since(start).String())
 			}
 		}
 		time.Sleep(time.Minute)

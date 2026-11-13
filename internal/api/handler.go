@@ -52,6 +52,8 @@ type Handler struct {
 	probeCounts   [3]int // [0]=全部 [1]=收藏 [2]=收藏+在追
 
 	backupMu sync.Mutex
+	// coverMu 串行化库封面生成，避免多个客户端同时请求时重复渲染。
+	coverMu sync.Mutex
 
 	loginLimiter *loginLimiter
 }

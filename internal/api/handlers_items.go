@@ -854,14 +854,15 @@ func (h *Handler) libraryViews() ([]*dto.BaseItemDto, error) {
 			backdrops = append(backdrops, backdropTag)
 		}
 		items = append(items, &dto.BaseItemDto{
-			Name:              lib.Name,
-			ServerId:          h.serverID,
-			Id:                lib.ID,
-			SortName:          lib.Name,
-			ImageTags:         imageTags,
-			PrimaryImageTag:   primaryTag,
-			BackdropImageTags: backdrops,
-			ImageBlurHashes:   map[string]any{},
+			Name:               lib.Name,
+			ServerId:           h.serverID,
+			Id:                 lib.ID,
+			SortName:           lib.Name,
+			ImageTags:          imageTags,
+			PrimaryImageTag:    primaryTag,
+			PrimaryImageItemId: lib.ID,
+			BackdropImageTags:  backdrops,
+			ImageBlurHashes:    map[string]any{},
 			// Emby 客户端按数组解析，null 会导致部分客户端渲染中断。
 			Genres:         []string{},
 			People:         []dto.PersonDto{},

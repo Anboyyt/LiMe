@@ -18,8 +18,8 @@ import (
 	"lime/internal/store"
 )
 
-// libraryArtwork 取库内最新条目海报，缓存成 library-images/<libID>-<tag>.jpg。
-// 返回相对 data 目录的路径和 tag；库为空或图片缺失时返回空。
+// libraryArtwork 返回库封面：自定义上传 > 简约模糊封面 > 库内最新海报。
+// 路径都相对 data 目录，tag 用于客户端缓存失效。
 func (h *Handler) libraryArtwork(lib *store.Library) (primaryRel, primaryTag, backdropRel, backdropTag string) {
 	// 工具（封面生成器）上传过自定义封面时优先用它，不再用库内最新海报。
 	if rel, tag := h.customLibraryImage(lib.ID, ""); rel != "" {
@@ -27,20 +27,29 @@ func (h *Handler) libraryArtwork(lib *store.Library) (primaryRel, primaryTag, ba
 		return rel, tag, backdropRel, backdropTag
 	}
 
+	// 简约封面：最新一张海报模糊压暗后叠库名。设置 library_cover_style=latest 可回退。
+	// Backdrop 复用同一张图：Sen 等客户端库卡片优先读 Backdrop，若这里返回条目
+	// 自己的 fanart，看到的会是原始剧照拼贴而不是生成的库封面。
+	if h.libraryCoverStyle() != "latest" {
+		if rel, tag, _, err := h.libraryCoverPoster(lib); err == nil && rel != "" {
+			return rel, tag, rel, tag
+		} else if err != nil {
+			h.log.Warn("library cover failed", "library", lib.ID, "err", err)
+		}
+	}
+
 	candidates, err := h.db.LibraryPosterCandidates(lib.ID, 5)
 	if err != nil {
 		return "", "", "", ""
 	}
-	absData, err := filepath.Abs(h.cfg.DataDir)
-	if err != nil {
-		return "", "", "", ""
-	}
-
 	for _, it := range candidates {
 		if it.ImagePath == "" {
 			continue
 		}
-		src := filepath.Join(absData, filepath.FromSlash(it.ImagePath))
+		src, ok := h.resolveItemImagePath(it.ImagePath)
+		if !ok {
+			continue
+		}
 		if st, err := os.Stat(src); err != nil || st.Size() == 0 {
 			continue
 		}
@@ -55,8 +64,9 @@ func (h *Handler) libraryArtwork(lib *store.Library) (primaryRel, primaryTag, ba
 			continue
 		}
 		primaryRel, primaryTag = rel, tag
-		if it.BackdropPath != "" {
-			backdropRel, backdropTag = it.BackdropPath, imageTag(it.BackdropPath)
+		backdropRel = h.validArtworkRel(it.BackdropPath)
+		if backdropRel != "" {
+			backdropTag = imageTag(backdropRel)
 		}
 		break
 	}
@@ -165,7 +175,10 @@ func (h *Handler) cacheLibraryImage(libID, srcRel, dstRel string) error {
 	if err != nil {
 		return err
 	}
-	src := filepath.Join(absData, filepath.FromSlash(srcRel))
+	src, ok := h.resolveItemImagePath(srcRel)
+	if !ok {
+		return os.ErrNotExist
+	}
 	dst := filepath.Join(absData, filepath.FromSlash(dstRel))
 	if !strings.HasPrefix(dst, absData+string(os.PathSeparator)) {
 		return os.ErrPermission
@@ -231,16 +244,24 @@ func (h *Handler) serveLibraryImage(w http.ResponseWriter, r *http.Request, lib 
 		return
 	}
 
-	absData, err := filepath.Abs(h.cfg.DataDir)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	full := filepath.Join(absData, filepath.FromSlash(rel))
-	if !strings.HasPrefix(full, absData+string(os.PathSeparator)) {
+	// backdrop 可能来自条目自己的本地图片（local: 前缀），必须走统一解析，
+	// 直接拼 DataDir 会变成 /data/local:/...，客户端拿到 404 就整张卡片空白。
+	full, ok := h.resolveItemImagePath(rel)
+	if !ok {
 		writeError(w, http.StatusNotFound, "image not found")
 		return
 	}
 	w.Header().Set("Cache-Control", "public, max-age=604800")
 	http.ServeFile(w, r, full)
+}
+
+// validArtworkRel 确认图片真实可读，避免返回一个客户端必然拿到 404 的 tag。
+func (h *Handler) validArtworkRel(rel string) string {
+	if rel == "" {
+		return ""
+	}
+	if _, ok := h.resolveItemImagePath(rel); ok {
+		return rel
+	}
+	return ""
 }

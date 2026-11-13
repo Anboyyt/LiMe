@@ -63,8 +63,12 @@ docker run -d --name lime \
 ```bash
 git clone https://github.com/Anboyyt/LiMe.git
 cd LiMe
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+LIME_VERSION=$(git describe --tags --always --dirty) \
+  docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 ```
+
+本地构建必须显式传 `LIME_VERSION`（不传会报错），产物标签是
+`lixxh/lime:local`，不会覆盖 `latest`；正式镜像由 CI 发布。
 
 打开 `http://<服务器IP>:886` 就是媒体界面，用首次启动自动创建的账号登录；
 运维面板在 `http://<服务器IP>:886/web/`。
@@ -106,8 +110,24 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 - 新目录要先在 `docker-compose.yml` 的 `volumes` 里挂载，再回来添加
 - 新增库只扫描这个库，不会全量重扫
 - 删除库会级联删除库内条目和播放记录，面板会二次确认
-- 库封面自动生成：优先取库内最新条目的海报；还没刮削时生成渐变 + LiMe logo 封面，刮出真实海报后自动替换
+- 库封面自动生成，见下节；还没刮削时生成渐变 + LiMe logo 封面，刮出真实海报后自动替换
 - 首次启动时用 `LIME_LIBRARIES` 建库；之后以数据库为准，环境变量不会覆盖面板里的改名/删除
+
+### 库封面
+
+默认样式是「斜角海报墙」：取库内最新 9 张海报排成三列、整体旋转，
+左侧是库名 + 英文副标题，背景用该库配置的颜色。样式可切到
+「简约模糊」（最新一张海报模糊压暗）或「库内最新海报」（原图）。
+
+- 标题 / 副标题 / 背景色内置了 lime-cover 的 `title_config`：电影类 `MOVIES`、
+  剧集 `TV SHOWS`、动漫 `ANIME`、综艺 `VARIETY`、纪录片 `DOCUMENTARY` 等；
+  可用 `settings.library_cover_titles` 覆盖（JSON，键是库名，
+  值形如 `{"subtitle":"MOVIES","color":"#2E344A"}`）
+- 有自定义封面（例如 lime-cover 上传的 GIF）时优先用自定义封面；
+  面板点「改用自动封面」会把 `*-custom.*` 改名成 `*.bak` 备份（不删除），
+  再回落到自动生成
+- 生成结果缓存在 `data/library-images/<库ID>-collage-<签名>.jpg`，
+  条目或标题配置变化会换签名重建
 
 ### 快速入库（增量扫描）
 
@@ -127,6 +147,13 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 - 新入库条目会走精准刮削（只刮受影响的电影/季/单集），不用等整轮批量刮削结束
 - 实时监控也会同步删除/改名：文件或整个目录消失后清理对应片源，空季/空剧集
   一并移除；扫描进行中的事件会攒到扫描结束后再处理，不会丢
+- **启动对账**：容器停机期间收不到 inotify 事件，启动后会对每个库做一次
+  「磁盘 `.strm` ↔ 数据库片源」比对，把停机期间的增删补齐。库根目录不存在时
+  （媒体盘没挂上）直接跳过，不会误清库；`LIME_REALTIME_RECONCILE=false` 可关闭
+- 库路径的父目录也会被监听：库目录在运行时被整体删除、改名或重建都能感知
+- 只有**已配置库路径内部**的目录会被自动发现。在库路径的上一级（例如库是
+  `/strm/电影/欧美电影`，而在 `/strm/电影` 下新建 `新分类`）不会自动入库，
+  需要把该目录加进媒体库路径，或把库路径改成上一级
 - 扫描进度分母改用库内已有片源数，不再为了显示百分比先遍历一遍整个库
 
 ## 运维面板
@@ -166,6 +193,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `LIME_SCAN_INTERVAL` | 定时重扫间隔，如 `6h`；留空关闭 | 空 |
 | `LIME_SCAN_DAILY_AT` | 每天固定时间做增量扫描，格式 `HH:MM`；留空关闭 | 空 |
 | `LIME_REALTIME_MONITOR` | 实时监控媒体库目录（类似 Emby 实时监控），新 `.strm` 出现即增量解析并补刮削 | `true` |
+| `LIME_REALTIME_RECONCILE` | 启动时做一次磁盘与片源表的对账，补齐停机期间的增删 | `true` |
 | `LIME_REWRITE_ENABLED` | 是否改写 STRM 里的地址 | `false` |
 | `LIME_REWRITE_FROM` | STRM 里的原始 host | — |
 | `LIME_REWRITE_LOCAL` | 局域网客户端使用的地址 | — |
@@ -176,6 +204,9 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 | `LIME_TMDB_API_KEY` | TMDB v3 API Key，留空则关闭刮削 | 空 |
 | `LIME_TMDB_LANGUAGE` | 刮削语言 | `zh-CN` |
 | `LIME_TMDB_PROXY` | 访问 TMDB 的 HTTP 代理（国内需要） | 空 |
+| `LIME_SCRAPE_TIMEOUT` | 单次刮削的时长上限，到点正常暂停，下次继续；`0` 不限 | `6h` |
+| `LIME_SCRAPE_WORKERS` | 刮削并发数（1-8） | `3` |
+| `LIME_SCRAPE_RATE_MS` | 每次 TMDB 请求之间的间隔（毫秒） | `50` |
 | `LIME_TG_BOT_TOKEN` | Telegram Bot Token（也可在面板填写，面板优先） | 空 |
 | `LIME_TG_CHAT_ID` | 接收通知的 Chat ID，群组为负数 | 空 |
 | `LIME_TG_PROXY` | 访问 `api.telegram.org` 的 HTTP 代理 | 空 |
@@ -461,6 +492,11 @@ TMDB 刮削会写回电影和单集的 `RunTimeTicks`；对升级前已刮削、
 - 写回简介、原名、首播日期、评分、类型、演员；海报/背景图/ClearLogo 下载到
   `data/images/`，由 `/Items/{id}/Images/{type}` 本地提供，不依赖外网始终可用
 - 只处理 `scraped_at = 0` 的条目，重复扫描/重启不会重复请求
+- **单次运行有软性时长上限**（`LIME_SCRAPE_TIMEOUT`，默认 `6h`，`0` 表示不限）。
+  到点后本次正常结束，已处理的条目全部落库，面板显示「本次已达到单次运行上限，
+  剩余条目下次继续」；这不是错误，不会标红，也不会把余下条目标成 TMDB 失败
+- 单个条目偶发失败（网络抖动、单请求 25s 超时）只进「刮削失败」列表；
+  只有连续 20 条都失败才认为 TMDB/代理整体不可用并在面板报错
 - 面板里有「刮削失败」页，按接口错误 / 404 / 海报 / 背景图分类，可导出 CSV
 - **海报回填**：海报为空的条目也会进回填队列并排在最前。早先只回填
   `image_path <> ''` 的条目，「刮过但当时 TMDB 还没图」的片会永远缺海报
@@ -566,3 +602,6 @@ internal/
 ## 许可证
 
 MIT。本项目按 Jellyfin 的公开 API 契约独立实现，与 Jellyfin 项目无隶属关系。
+
+内置的封面字体 `NotoSansSC-Black-gb.ttf` 来自 Noto Sans SC，按 SIL Open Font
+License 1.1 分发，许可证见 `internal/api/assets/fonts/OFL.txt`。

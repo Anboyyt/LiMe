@@ -11,6 +11,14 @@
     list: null,
   };
 
+  const LOCAL_PLAYERS = [
+    ['potplayer', 'PotPlayer'],
+    ['vlc', 'VLC'],
+    ['mpv', 'MPV'],
+    ['iina', 'IINA（macOS）'],
+    ['infuse', 'Infuse'],
+  ];
+
   const TYPE = { Movie: '电影', Series: '剧集', Season: '季', Episode: '单集' };
 
   // 产品版本（/health 公开接口，不依赖登录）
@@ -698,8 +706,14 @@
     }
 
     const sources = it.MediaSources || [];
+    const curPlayer = localStorage.getItem('lime.localPlayer.v2') || 'potplayer';
     const sourceHTML = sources.length ? `<div class="section">
       <h2>片源</h2>
+      <div class="source-toolbar">
+        <span class="badge">本地播放器</span>
+        <select id="localPlayer">${LOCAL_PLAYERS.map(([k, l]) =>
+          `<option value="${k}" ${curPlayer === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      </div>
       <div class="sources">${sources.map((s) => {
         const subs = (s.MediaStreams || []).filter((m) => m.Type === 'Subtitle').length;
         return `
@@ -707,8 +721,10 @@
           <div class="path">${esc(s.Name || 'Default')}<br>${esc(s.Path)}</div>
           <span class="badge">${esc(s.Container || '—')}</span>
           ${subs ? `<span class="badge">${subs} 字幕</span>` : ''}
+          <button class="btn primary" data-local="${esc(s.Id)}" data-item="${esc(it.Id)}">播放</button>
+          <button class="btn" data-playlist="${esc(s.Id)}" data-item="${esc(it.Id)}">播放列表</button>
           <button class="btn" data-copy="${esc(s.Path)}">复制直链</button>
-          <button class="btn primary" data-play="${esc(s.Path)}" data-container="${esc(s.Container)}">播放</button>
+          <button class="btn" data-play="${esc(s.Path)}" data-container="${esc(s.Container)}">网页播放</button>
         </div>`;
       }).join('')}
       </div></div>` : '';
@@ -748,8 +764,18 @@
     $('#favBtn').onclick = () => toggleFavorite(it, ud);
     $('#backBtn').onclick = () => history.back();
 
+    const playerSel = $('#localPlayer');
+    if (playerSel) {
+      playerSel.onchange = () => localStorage.setItem('lime.localPlayer.v2', playerSel.value);
+    }
     view.querySelectorAll('[data-copy]').forEach((b) => {
       b.onclick = () => copyText(b.dataset.copy);
+    });
+    view.querySelectorAll('[data-local]').forEach((b) => {
+      b.onclick = () => playLocal(b.dataset.item, b.dataset.local);
+    });
+    view.querySelectorAll('[data-playlist]').forEach((b) => {
+      b.onclick = () => playPlaylist(b.dataset.item, b.dataset.playlist);
     });
     view.querySelectorAll('[data-play]').forEach((b) => {
       b.onclick = () => {
@@ -835,11 +861,27 @@
       const full = await api('/Items/' + encodeURIComponent(it.Id));
       it = full;
     }
-    const sources = it.MediaSources || [];
-    const src = sources[0];
+    const src = (it.MediaSources || [])[0];
     if (!src) return toast('没有片源', true);
-    const start = (it.UserData && it.UserData.PlaybackPositionTicks) || 0;
-    playSource(it, src.Path, src.Container, start, src.MediaStreams || [], sources, 0);
+    return playLocal(it.Id, src.Id);
+  }
+
+  // 唤起系统播放器。默认 PotPlayer，选择记在这台设备。
+  async function playLocal(itemId, sourceId) {
+    const player = localStorage.getItem('lime.localPlayer.v2') || 'potplayer';
+    let path = `/web/api/play-target?itemId=${encodeURIComponent(itemId)}` +
+      `&player=${encodeURIComponent(player)}`;
+    if (sourceId) path += `&sourceId=${encodeURIComponent(sourceId)}`;
+    const r = await api(path);
+    location.href = r.ProtocolUrl;
+    setTimeout(() => toast(`正在用 ${r.PlayerLabel} 打开；没反应就用「播放列表」`), 1200);
+  }
+
+  async function playPlaylist(itemId, sourceId) {
+    const player = localStorage.getItem('lime.localPlayer.v2') || 'potplayer';
+    const r = await api(`/web/api/play-target?itemId=${encodeURIComponent(itemId)}` +
+      `&sourceId=${encodeURIComponent(sourceId)}&player=${encodeURIComponent(player)}`);
+    location.href = r.M3uUrl;
   }
 
   function playSource(it, url, container, startTicks, streams, sources, sourceIdx) {
