@@ -91,6 +91,34 @@ func TestPlaybackSessionTTL(t *testing.T) {
 	}
 }
 
+func TestBackfillPlayedFromProgress(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	if err := db.UpsertPlaystate("u1", "m1", 7200*10_000_000*95/100, false); err != nil {
+		t.Fatal(err)
+	}
+	// 时长未知的条目不能凭进度推断已播。
+	if err := db.UpsertPlaystate("u1", "e1", 999999999, false); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.BackfillPlayedFromProgress(PlayedPercent)
+	if err != nil || n != 1 {
+		t.Fatalf("backfilled = %d, %v; want 1", n, err)
+	}
+	states, err := db.Playstates("u1", []string{"m1", "e1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !states["m1"].Played || states["m1"].PositionTicks != 0 {
+		t.Fatalf("m1 = %+v, want played with position 0", states["m1"])
+	}
+	if states["e1"].Played {
+		t.Fatal("item without runtime should not be marked played")
+	}
+}
+
 func TestResumeItemIDs(t *testing.T) {
 	db := newTestDB(t)
 	seedPlaybackFixture(t, db)

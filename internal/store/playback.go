@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// PlayedPercent 是自动标记已播的进度阈值，和 Jellyfin/Emby 客户端习惯一致。
+const PlayedPercent = 90
+
 const (
 	// PlaybackSessionTTL 是会话被视为「仍在播放」的最长静默时间。
 	// 部分客户端不发 /Sessions/Playing/Stopped，只能靠 TTL 兜底。
@@ -54,6 +57,27 @@ ON CONFLICT(id) DO UPDATE SET
 func (d *DB) DeletePlaybackSession(id string) error {
 	_, err := d.Exec(`DELETE FROM playback_sessions WHERE id = ?`, id)
 	return err
+}
+
+// BackfillPlayedFromProgress 把进度已到阈值、但仍未标记已播的记录补齐。
+// 老版本只在 Stopped 时判定，很多客户端没发或位置为 0，留下了大量「快看完但未播」。
+func (d *DB) BackfillPlayedFromProgress(percent int) (int64, error) {
+	if percent <= 0 {
+		percent = PlayedPercent
+	}
+	res, err := d.Exec(`
+UPDATE playstates SET played = 1, position_ticks = 0
+WHERE played = 0 AND position_ticks > 0
+  AND EXISTS (
+    SELECT 1 FROM items i
+    WHERE i.id = playstates.item_id
+      AND i.run_time_ticks > 0
+      AND playstates.position_ticks * 100 >= i.run_time_ticks * ?
+  )`, percent)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // PurgeStalePlaybackSessions 删除超过 TTL 没更新的会话记录。

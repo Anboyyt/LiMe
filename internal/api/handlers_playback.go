@@ -308,28 +308,6 @@ func (h *Handler) saveProgress(w http.ResponseWriter, r *http.Request, event pla
 		}
 	}
 
-	played := false
-	if event == playbackStop {
-		played = h.isPlayed(itemID, body.PositionTicks)
-		h.log.Info("playback stopped", "user", user.Name, "item", itemID,
-			"position_ticks", body.PositionTicks, "paused", body.IsPaused,
-			"play_session", sessionID)
-		if err := h.db.DeletePlaybackSession(sessionID); err != nil {
-			h.log.Warn("delete playback session", "id", sessionID, "err", err)
-		}
-	} else {
-		if err := h.db.UpsertPlaybackSession(&store.PlaybackSession{
-			ID:            sessionID,
-			UserID:        user.ID,
-			DeviceID:      deviceID,
-			ItemID:        itemID,
-			PositionTicks: body.PositionTicks,
-			IsPaused:      body.IsPaused,
-		}); err != nil {
-			h.log.Warn("save playback session", "id", sessionID, "err", err)
-		}
-	}
-
 	position := body.PositionTicks
 	if event != playbackStart && position <= 0 {
 		// 部分客户端暂停/停止上报时 PositionTicks 为 0，直接用会把已有的
@@ -341,8 +319,37 @@ func (h *Handler) saveProgress(w http.ResponseWriter, r *http.Request, event pla
 			}
 		}
 	}
-	if played {
+
+	// 进度心跳也参与「已播」判定：很多客户端不发 Stopped，
+	// 或 Stopped 里的 PositionTicks 是 0，只靠停止事件会永远标不上。
+	played := false
+	if event == playbackStop || event == playbackProgress {
+		played = h.isPlayed(itemID, position)
+	}
+
+	if event == playbackStop {
+		h.log.Info("playback stopped", "user", user.Name, "item", itemID,
+			"position_ticks", position, "paused", body.IsPaused,
+			"play_session", sessionID)
+		if err := h.db.DeletePlaybackSession(sessionID); err != nil {
+			h.log.Warn("delete playback session", "id", sessionID, "err", err)
+		}
+	} else {
+		if err := h.db.UpsertPlaybackSession(&store.PlaybackSession{
+			ID:            sessionID,
+			UserID:        user.ID,
+			DeviceID:      deviceID,
+			ItemID:        itemID,
+			PositionTicks: position,
+			IsPaused:      body.IsPaused,
+		}); err != nil {
+			h.log.Warn("save playback session", "id", sessionID, "err", err)
+		}
+	}
+
+	if played && event == playbackStop {
 		// 看完就把进度清零，否则客户端会在「已看」的条目上画一半的进度条。
+		// 进度中提前判定为已播时保留位置，等真正的 Stopped 再清。
 		position = 0
 	}
 	if err := h.db.UpsertPlaystate(user.ID, itemID, position, played); err != nil {
@@ -448,13 +455,13 @@ func (h *Handler) recordPlaybackHistory(user *store.User, a authInfo, deviceID s
 	}
 }
 
-// isPlayed 播放进度到 95% 视为看完。没有时长信息时只能靠客户端上报接近结尾。
+// isPlayed 播放进度到 90% 视为看完。没有时长信息时无法判定。
 func (h *Handler) isPlayed(itemID string, positionTicks int64) bool {
 	it, err := h.db.GetItem(itemID)
 	if err != nil || it.RunTimeTicks <= 0 {
 		return false
 	}
-	return positionTicks >= it.RunTimeTicks*95/100
+	return positionTicks >= it.RunTimeTicks*store.PlayedPercent/100
 }
 
 func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {

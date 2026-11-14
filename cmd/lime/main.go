@@ -121,6 +121,12 @@ func main() {
 		logger.Error("migrate", "err", err)
 		os.Exit(1)
 	}
+	// 老版本只在 Stopped 时判定已播，补齐进度已到 90% 但仍是未播的记录。
+	if n, err := db.BackfillPlayedFromProgress(store.PlayedPercent); err != nil {
+		logger.Warn("backfill played states", "err", err)
+	} else if n > 0 {
+		logger.Info("played states backfilled", "count", n)
+	}
 	// 清理不发 Stopped 的客户端留下的僵尸会话。
 	if n, err := db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionRetention)); err != nil {
 		logger.Warn("purge stale playback sessions", "err", err)
