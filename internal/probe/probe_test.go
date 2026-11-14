@@ -265,3 +265,43 @@ func TestWarmIngestedItemsQueuesSources(t *testing.T) {
 		t.Fatalf("jobs = %v, want s-new probe + s-done segments", got)
 	}
 }
+
+func TestPickFingerprintSources(t *testing.T) {
+	srcs := make([]store.SeasonEpisodeSource, 20)
+	for i := range srcs {
+		srcs[i] = store.SeasonEpisodeSource{ItemID: "e" + strconv.Itoa(i+1), IndexNumber: i + 1}
+	}
+	ids := func(in []store.SeasonEpisodeSource) []string {
+		out := make([]string, len(in))
+		for i := range in {
+			out[i] = in[i].ItemID
+		}
+		return out
+	}
+
+	got := pickFingerprintSources(srcs, []string{"e15"}, 8)
+	if len(got) != 8 {
+		t.Fatalf("focus sample = %d, want 8", len(got))
+	}
+	found := false
+	for _, s := range got {
+		if s.ItemID == "e15" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("focus episode missing: %v", ids(got))
+	}
+
+	got = pickFingerprintSources(srcs, []string{"e2", "e18"}, 8)
+	if len(got) != 8 {
+		t.Fatalf("two-focus sample = %d, want 8", len(got))
+	}
+	seen := map[string]bool{}
+	for _, s := range got {
+		seen[s.ItemID] = true
+	}
+	if !seen["e2"] || !seen["e18"] {
+		t.Fatalf("focus episodes missing: %v", ids(got))
+	}
+}

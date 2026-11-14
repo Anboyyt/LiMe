@@ -20,15 +20,41 @@ import (
 // StartSeasonFingerprint 异步分析某一季的片头片尾，返回是否成功启动。
 // 同一时间只跑一个季，避免把 NAS 的 CPU 和网盘带宽打满。
 func (p *Prober) StartSeasonFingerprint(seriesID string, season int) bool {
+	return p.startSeasonFingerprint(seriesID, season, nil)
+}
+
+// startSeasonFingerprint 是带 focus 的版本：focus 里的单集会优先进入
+// 采样窗口，保证刚入库的最新一集一定被分析到。
+// 同一季 30 分钟内只跑一次，避免连续入库时反复扫同一季。
+func (p *Prober) startSeasonFingerprint(seriesID string, season int, focus []string) bool {
 	if p == nil || !p.enabled || p.ffmpegBin == "" || seriesID == "" || !p.segmentsOn.Load() {
 		return false
 	}
-	if !p.fpRunning.CompareAndSwap(false, true) {
+	key := fmt.Sprintf("%s|%d", seriesID, season)
+	p.fpMu.Lock()
+	if last, ok := p.fpSeasonLast[key]; ok && time.Since(last) < 30*time.Minute {
+		p.fpMu.Unlock()
 		return false
 	}
+	p.fpMu.Unlock()
+
+	if !p.fpRunning.CompareAndSwap(false, true) {
+		// 已有别的季在跑：新集入库触发的请求 5 分钟后再试一次，
+		// 避免刚好撞上就永久漏掉；播放触发的请求交给下次播放/夜间预热。
+		if len(focus) > 0 {
+			time.AfterFunc(5*time.Minute, func() {
+				p.startSeasonFingerprint(seriesID, season, focus)
+			})
+		}
+		return false
+	}
+	p.fpMu.Lock()
+	p.fpSeasonLast[key] = time.Now()
+	p.fpMu.Unlock()
+
 	go func() {
 		defer p.fpRunning.Store(false)
-		if err := p.analyzeSeason(seriesID, season); err != nil {
+		if err := p.analyzeSeason(seriesID, season, focus); err != nil {
 			p.log.Warn("fingerprint season failed", "series", seriesID, "season", season, "err", err)
 			return
 		}
@@ -55,7 +81,69 @@ type fpCandidate struct {
 
 type fpSpan struct{ start, end float64 }
 
-func (p *Prober) analyzeSeason(seriesID string, season int) error {
+// focusFingerprintLimit 是「新集入库」触发的指纹采样上限。
+// 只取新集和前后几集，避免为了一集去分析整季几十集音频。
+const focusFingerprintLimit = 6
+
+// pickFingerprintSources 从整季里挑一小段采样。
+// focus 非空时以 focus 为中心向两边扩展，保证刚入库的集一定在样本里；
+// 没有 focus 时保持原来的行为（前 40 集）。
+func pickFingerprintSources(srcs []store.SeasonEpisodeSource, focus []string, limit int) []store.SeasonEpisodeSource {
+	if limit <= 0 {
+		limit = 40
+	}
+	if len(srcs) <= limit {
+		return srcs
+	}
+	if len(focus) == 0 {
+		return srcs[:limit]
+	}
+	focusSet := make(map[string]bool, len(focus))
+	for _, id := range focus {
+		focusSet[id] = true
+	}
+	var positions []int
+	for i := range srcs {
+		if focusSet[srcs[i].ItemID] {
+			positions = append(positions, i)
+		}
+	}
+	if len(positions) == 0 {
+		return srcs[:limit]
+	}
+
+	selected := make(map[int]bool, limit)
+	for _, i := range positions {
+		if len(selected) >= limit {
+			break
+		}
+		selected[i] = true
+	}
+	for radius := 1; len(selected) < limit; radius++ {
+		added := false
+		for _, i := range positions {
+			for _, j := range []int{i - radius, i + radius} {
+				if j < 0 || j >= len(srcs) || selected[j] || len(selected) >= limit {
+					continue
+				}
+				selected[j] = true
+				added = true
+			}
+		}
+		if !added {
+			break
+		}
+	}
+	out := make([]store.SeasonEpisodeSource, 0, len(selected))
+	for i := range srcs {
+		if selected[i] {
+			out = append(out, srcs[i])
+		}
+	}
+	return out
+}
+
+func (p *Prober) analyzeSeason(seriesID string, season int, focus []string) error {
 	srcs, err := p.db.SeasonSources(seriesID, season)
 	if err != nil {
 		return err
@@ -63,9 +151,11 @@ func (p *Prober) analyzeSeason(seriesID string, season int) error {
 	if len(srcs) < 2 {
 		return fmt.Errorf("not enough episodes: %d", len(srcs))
 	}
-	if len(srcs) > 40 {
-		srcs = srcs[:40]
+	limit := 40
+	if len(focus) > 0 {
+		limit = focusFingerprintLimit
 	}
+	srcs = pickFingerprintSources(srcs, focus, limit)
 
 	eps := make([]*fpEpisode, len(srcs))
 	sem := make(chan struct{}, 3)

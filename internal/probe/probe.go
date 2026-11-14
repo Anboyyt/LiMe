@@ -43,6 +43,9 @@ type Prober struct {
 	segTriggers map[string]time.Time
 
 	fpRunning atomic.Bool
+	// fpSeasonLast 记录每季上次指纹分析时间，避免新集连续入库时反复扫同一季。
+	fpMu         sync.Mutex
+	fpSeasonLast map[string]time.Time
 }
 
 // probeJob 让探测和片段回填共用同一个 worker 池。
@@ -54,12 +57,13 @@ type probeJob struct {
 
 func New(cfg config.Config, db *store.DB, log *slog.Logger) *Prober {
 	p := &Prober{
-		db:          db,
-		log:         log,
-		timeout:     cfg.ProbeTimeout,
-		queue:       make(chan probeJob, 256),
-		inflight:    make(map[string]chan struct{}),
-		segTriggers: make(map[string]time.Time),
+		db:           db,
+		log:          log,
+		timeout:      cfg.ProbeTimeout,
+		queue:        make(chan probeJob, 256),
+		inflight:     make(map[string]chan struct{}),
+		segTriggers:  make(map[string]time.Time),
+		fpSeasonLast: make(map[string]time.Time),
 	}
 	p.segmentsOn.Store(cfg.SegmentExtract)
 	if !cfg.ProbeEnabled {
@@ -429,6 +433,7 @@ func (p *Prober) WarmIngestedItems(itemIDs []string) int {
 		return 0
 	}
 	queued := 0
+	chans := make([]<-chan struct{}, 0, len(srcs))
 	for _, s := range srcs {
 		var ch <-chan struct{}
 		if s.ProbeStatus != "done" {
@@ -438,12 +443,49 @@ func (p *Prober) WarmIngestedItems(itemIDs []string) int {
 		}
 		if ch != nil {
 			queued++
+			chans = append(chans, ch)
 		}
 	}
 	if queued > 0 {
 		p.log.Info("ingest probe queued", "items", len(itemIDs), "sources", len(srcs), "queued", queued)
 	}
+	// 章节扫描完成后如果一条片段都没有，再用音频指纹补这一季。
+	if len(chans) > 0 && p.segmentsOn.Load() {
+		go p.fingerprintIngested(itemIDs, chans)
+	}
 	return queued
+}
+
+// fingerprintIngested 等探测跑完后，只对「章节扫描成功但没有片段」的
+// 新单集启动指纹分析。按季合并，避免一次入库触发多次整季扫描。
+func (p *Prober) fingerprintIngested(itemIDs []string, chans []<-chan struct{}) {
+	WaitAll(chans, 3*time.Minute)
+
+	type seasonKey struct {
+		series string
+		season int
+	}
+	groups := make(map[seasonKey][]string)
+	for _, id := range itemIDs {
+		it, err := p.db.GetItem(id)
+		if err != nil || it == nil || it.Type != store.TypeEpisode || it.SeriesID == "" || it.ParentIndexNumber < 0 {
+			continue
+		}
+		if done, _ := p.db.SegmentAnalysisDone(id); !done {
+			continue
+		}
+		segs, err := p.db.MediaSegmentsForItem(id, nil)
+		if err != nil || len(segs) > 0 {
+			continue
+		}
+		k := seasonKey{it.SeriesID, it.ParentIndexNumber}
+		groups[k] = append(groups[k], id)
+	}
+	for k, ids := range groups {
+		if p.startSeasonFingerprint(k.series, k.season, ids) {
+			p.log.Info("fingerprint season started", "series", k.series, "season", k.season, "focus", len(ids))
+		}
+	}
 }
 
 func (p *Prober) warmupOnce(limit int, scope string) int {
