@@ -50,6 +50,39 @@ func seedPlaybackFixture(t *testing.T, db *DB) {
 	}
 }
 
+func TestPlaybackSessionTTL(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	if err := db.UpsertPlaybackSession(&PlaybackSession{
+		ID: "fresh", UserID: "u1", ItemID: "m1", PositionTicks: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertPlaybackSession(&PlaybackSession{
+		ID: "stale", UserID: "u1", ItemID: "e1", PositionTicks: 200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE playback_sessions SET updated_at = ? WHERE id = 'stale'`,
+		time.Now().Add(-PlaybackSessionTTL-time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := db.ListPlaybackSessions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != "fresh" {
+		t.Fatalf("sessions = %+v, want only fresh", list)
+	}
+
+	n, err := db.PurgeStalePlaybackSessions(time.Now().Add(-PlaybackSessionTTL))
+	if err != nil || n != 1 {
+		t.Fatalf("purged = %d, %v; want 1", n, err)
+	}
+}
+
 func TestResumeItemIDs(t *testing.T) {
 	db := newTestDB(t)
 	seedPlaybackFixture(t, db)

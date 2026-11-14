@@ -31,6 +31,7 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 		http.Redirect(w, r, "/web/", http.StatusFound)
 	})
 	mux.HandleFunc("GET /web/api/stats", h.webStatsHandler)
+	mux.HandleFunc("GET /web/api/logs", h.webLogs)
 	mux.HandleFunc("GET /web/api/libraries", h.webLibraries)
 	mux.HandleFunc("POST /web/api/libraries", h.webLibraries)
 	mux.HandleFunc("GET /web/api/browse", h.webBrowseDirs)

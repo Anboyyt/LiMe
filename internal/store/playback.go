@@ -5,6 +5,10 @@ import (
 	"time"
 )
 
+// PlaybackSessionTTL 是会话被视为「仍在播放」的最长静默时间。
+// 部分客户端不发 /Sessions/Playing/Stopped，只能靠 TTL 兜底。
+const PlaybackSessionTTL = 30 * time.Minute
+
 type PlaybackSession struct {
 	ID            string
 	UserID        string
@@ -46,6 +50,15 @@ func (d *DB) DeletePlaybackSession(id string) error {
 	return err
 }
 
+// PurgeStalePlaybackSessions 删除超过 TTL 没更新的会话记录。
+func (d *DB) PurgeStalePlaybackSessions(before time.Time) (int64, error) {
+	res, err := d.Exec(`DELETE FROM playback_sessions WHERE updated_at < ?`, before.Unix())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
 func (d *DB) ListPlaybackSessions() ([]*PlaybackSession, error) {
 	rows, err := d.Query(`
 SELECT s.id, s.user_id, COALESCE(u.name, ''), s.device_id,
@@ -54,8 +67,9 @@ SELECT s.id, s.user_id, COALESCE(u.name, ''), s.device_id,
 FROM playback_sessions s
 LEFT JOIN users u ON u.id = s.user_id
 LEFT JOIN devices d ON d.user_id = s.user_id AND d.device_id = s.device_id
+WHERE s.updated_at >= ?
 ORDER BY s.updated_at DESC
-LIMIT 50`)
+LIMIT 50`, time.Now().Add(-PlaybackSessionTTL).Unix())
 	if err != nil {
 		return nil, err
 	}

@@ -236,8 +236,8 @@
         case 'libraries': await renderLibraries(); break;
         case 'item': await renderItem(decodeURIComponent(arg)); break;
         case 'search': await renderSearch(decodeURIComponent(arg)); break;
-        case 'sessions': await renderSessions(); break;
         case 'history': await renderHistory(); break;
+        case 'logs': await renderLogs(); break;
         case 'notify': await renderNotify(); break;
         case 'users': await renderUsers(); break;
         case 'keys': await renderKeys(); break;
@@ -251,7 +251,10 @@
 
   // ---------- 概览 ----------
   async function renderOverview() {
-    const s = await api('/web/api/stats');
+    const [s, sessions] = await Promise.all([
+      api('/web/api/stats'),
+      api('/Sessions').catch(() => []),
+    ]);
     state.stats = s;
     renderLibNav();
     renderSideFoot();
@@ -295,6 +298,18 @@
         <td>${l.Items}</td>
       </tr>`).join('') || `<tr><td colspan="4" class="muted">没有媒体库</td></tr>`;
 
+    const sessionRows = (sessions || []).map((x) => {
+      const it = x.NowPlayingItem;
+      const pos = x.PlayState?.PositionTicks;
+      return `<tr>
+        <td>${esc(x.UserName || '—')}</td>
+        <td>${esc(x.DeviceName || '—')}<div class="muted" style="font-size:11px">${esc(x.Client || '')}</div></td>
+        <td>${it ? esc(it.Name) : '<span class="muted">空闲</span>'}</td>
+        <td>${pos ? fmtTicks(pos) : '—'}</td>
+        <td class="muted">${x.LastActivityDate ? new Date(x.LastActivityDate).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="5" class="muted">当前没有正在播放的会话</td></tr>';
+
     $('#view').innerHTML = `
       <div class="cards">
         <div class="card"><div class="k">媒体库</div><div class="v">${(st.Libraries || []).length}</div></div>
@@ -302,6 +317,14 @@
         <div class="card"><div class="k">片源</div><div class="v">${st.MediaSources || 0}</div></div>
         <div class="card"><div class="k">播放记录</div><div class="v">${st.Playstates || 0}</div></div>
         <div class="card"><div class="k">用户</div><div class="v">${st.Users || 0}</div></div>
+      </div>
+
+      <div class="panel">
+        <h3>正在播放（30 分钟内）</h3>
+        <table>
+          <thead><tr><th>用户</th><th>设备</th><th>条目</th><th>进度</th><th>最后活动</th></tr></thead>
+          <tbody>${sessionRows}</tbody>
+        </table>
       </div>
 
       <div class="panel">
@@ -938,27 +961,27 @@
       </div>`;
   }
 
-  // ---------- 会话 ----------
-  async function renderSessions() {
-    $('#crumb').textContent = '会话';
-    const list = await api('/Sessions');
-    const rows = (list || []).map((s) => {
-      const item = s.NowPlayingItem;
-      const pos = s.PlayState?.PositionTicks;
-      const state = item ? (s.PlayState?.IsPaused ? '已暂停' : '播放中') : '';
+  // ---------- 日志 ----------
+  async function renderLogs() {
+    $('#crumb').textContent = '日志';
+    const data = await api('/web/api/logs?limit=300');
+    const rows = (data.Entries || []).map((e) => {
+      const attrs = Object.entries(e.Attrs || {}).map(([k, v]) => `${k}=${v}`).join(' ');
       return `<tr>
-        <td>${esc(s.UserName || '—')}</td>
-        <td>${esc(s.DeviceName || '—')}<div class="muted" style="font-size:11px">${esc(s.Client || '')}</div></td>
-        <td>${item ? esc(item.Name) : '<span class="muted">空闲</span>'}${state ? `<div class="muted" style="font-size:11px">${state}</div>` : ''}</td>
-        <td>${pos ? fmtTicks(pos) : '—'}</td>
-        <td class="muted">${s.LastActivityDate ? new Date(s.LastActivityDate).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+        <td class="muted" style="white-space:nowrap">${e.Time ? new Date(e.Time).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
+        <td>${esc(e.Level || '')}</td>
+        <td>${esc(e.Message || '')}${attrs ? `<div class="muted" style="font-size:11px;word-break:break-all">${esc(attrs)}</div>` : ''}</td>
       </tr>`;
-    }).join('') || '<tr><td colspan="5" class="muted">当前没有会话</td></tr>';
+    }).join('') || '<tr><td colspan="3" class="muted">还没有日志</td></tr>';
 
     $('#view').innerHTML = `<div class="panel">
-      <h3>播放会话</h3>
+      <h3>运行日志（最近 300 条）</h3>
+      <div class="row" style="margin-bottom:10px">
+        <button data-action="refresh-logs">刷新</button>
+        <span class="muted">内存里只保留最近 1000 条；完整日志在 docker logs</span>
+      </div>
       <table>
-        <thead><tr><th>用户</th><th>设备</th><th>正在播放</th><th>进度</th><th>最后活动</th></tr></thead>
+        <thead><tr><th>时间</th><th>级别</th><th>内容</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
@@ -1336,6 +1359,10 @@
         await api('/web/api/settings', { method: 'PUT', body: JSON.stringify({ ClearKeys: true }) });
         toast('已清空 TMDB Key');
         await route();
+        break;
+      }
+      case 'refresh-logs': {
+        await renderLogs();
         break;
       }
       case 'tg-test': {

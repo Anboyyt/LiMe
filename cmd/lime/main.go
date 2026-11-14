@@ -18,6 +18,7 @@ import (
 	"lime/internal/api"
 	"lime/internal/config"
 	"lime/internal/library"
+	"lime/internal/logbuf"
 	"lime/internal/scrape"
 	"lime/internal/store"
 )
@@ -95,7 +96,8 @@ func inferLibraryKind(name string) string {
 func main() {
 	cfg := config.Load()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	textLog := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logger := slog.New(logbuf.NewHandler(textLog, logbuf.Default()))
 	slog.SetDefault(logger)
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
@@ -119,6 +121,19 @@ func main() {
 		logger.Error("migrate", "err", err)
 		os.Exit(1)
 	}
+	// 清理不发 Stopped 的客户端留下的僵尸会话。
+	if n, err := db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionTTL)); err != nil {
+		logger.Warn("purge stale playback sessions", "err", err)
+	} else if n > 0 {
+		logger.Info("stale playback sessions removed", "count", n)
+	}
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			_, _ = db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionTTL))
+		}
+	}()
 	if rebuilt, err := db.EnsureSearchIndex(); err != nil {
 		logger.Warn("search index unavailable, fallback to LIKE", "err", err)
 	} else if rebuilt {
