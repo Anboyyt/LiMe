@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lime/internal/config"
@@ -21,12 +22,13 @@ import (
 )
 
 type Prober struct {
-	enabled bool
-	bin     string
-	db      *store.DB
-	log     *slog.Logger
-	timeout time.Duration
-	queue   chan string
+	enabled    bool
+	segmentsOn atomic.Bool
+	bin        string
+	db         *store.DB
+	log        *slog.Logger
+	timeout    time.Duration
+	queue      chan probeJob
 
 	mu       sync.Mutex
 	inflight map[string]chan struct{}
@@ -34,16 +36,29 @@ type Prober struct {
 	warmupMu  sync.Mutex
 	warmupCfg WarmupConfig
 	warmupOn  bool
+
+	// segTriggers 记录最近一次「开始看某部剧→整剧补片段」的时间，避免每集都触发。
+	segTrigMu   sync.Mutex
+	segTriggers map[string]time.Time
+}
+
+// probeJob 让探测和片段回填共用同一个 worker 池。
+type probeJob struct {
+	key          string
+	sourceID     string
+	segmentsOnly bool
 }
 
 func New(cfg config.Config, db *store.DB, log *slog.Logger) *Prober {
 	p := &Prober{
-		db:       db,
-		log:      log,
-		timeout:  cfg.ProbeTimeout,
-		queue:    make(chan string, 256),
-		inflight: make(map[string]chan struct{}),
+		db:          db,
+		log:         log,
+		timeout:     cfg.ProbeTimeout,
+		queue:       make(chan probeJob, 256),
+		inflight:    make(map[string]chan struct{}),
+		segTriggers: make(map[string]time.Time),
 	}
+	p.segmentsOn.Store(cfg.SegmentExtract)
 	if !cfg.ProbeEnabled {
 		return p
 	}
@@ -103,7 +118,7 @@ func (p *Prober) Enqueue(src *store.MediaSource) <-chan struct{} {
 	p.mu.Unlock()
 
 	select {
-	case p.queue <- src.ID:
+	case p.queue <- probeJob{key: src.ID, sourceID: src.ID}:
 		return ch
 	default:
 		p.mu.Lock()
@@ -146,6 +161,10 @@ type WarmupConfig struct {
 	MaxRun time.Duration
 	// Batch 是每批送入队列的片源数量。
 	Batch int
+	// Segments 打开 / 关闭片头片尾回填。
+	Segments bool
+	// SegmentScope 是片段回填范围：favorites / watching / recent / all。
+	SegmentScope string
 }
 
 // ParseWindow 解析 "03:00-06:00" 形式的时间窗，返回当天的分钟数。
@@ -209,6 +228,14 @@ func (p *Prober) StartWarmup(cfg WarmupConfig) {
 	go p.runWarmup()
 }
 
+// SetSegmentsEnabled 运行中开关片头片尾提取。
+func (p *Prober) SetSegmentsEnabled(on bool) {
+	if p == nil {
+		return
+	}
+	p.segmentsOn.Store(on)
+}
+
 // SetWarmupConfig 运行中更新预热参数，下一轮调度生效。
 func (p *Prober) SetWarmupConfig(cfg WarmupConfig) {
 	if p == nil || !p.enabled {
@@ -264,7 +291,12 @@ func (p *Prober) runWarmup() {
 				p.log.Info("probe warmup run limit reached", "max_run", cfg.MaxRun.String())
 				break
 			}
-			if n := p.warmupOnce(cfg.Batch, cfg.Scope); n == 0 {
+			n := p.warmupOnce(cfg.Batch, cfg.Scope)
+			m := 0
+			if cfg.Segments {
+				m = p.warmupSegmentsOnce(cfg.Batch, cfg.SegmentScope)
+			}
+			if n == 0 && m == 0 {
 				break
 			}
 			time.Sleep(5 * time.Second)
@@ -295,6 +327,66 @@ func (p *Prober) WarmSeries(seriesID string, limit int) {
 			}
 		}
 		p.log.Info("series warm queued", "series", seriesID, "sources", len(srcs), "queued", n)
+	}()
+}
+
+// EnqueueSegments 把片源加入片段回填队列。和探测不同，这里允许 probe_status=done
+// 的片源，因为它们已经有完整轨道、只缺章节分析。
+func (p *Prober) EnqueueSegments(src *store.MediaSource) <-chan struct{} {
+	if p == nil || !p.enabled || !p.segmentsOn.Load() || src == nil || strings.TrimSpace(src.URL) == "" {
+		return nil
+	}
+	key := "seg:" + src.ID
+	p.mu.Lock()
+	if ch, ok := p.inflight[key]; ok {
+		p.mu.Unlock()
+		return ch
+	}
+	ch := make(chan struct{})
+	p.inflight[key] = ch
+	p.mu.Unlock()
+
+	select {
+	case p.queue <- probeJob{key: key, sourceID: src.ID, segmentsOnly: true}:
+		return ch
+	default:
+		p.mu.Lock()
+		delete(p.inflight, key)
+		p.mu.Unlock()
+		close(ch)
+		return nil
+	}
+}
+
+// WarmSeriesSegments 立即把某部剧里还没分析过片头片尾的集排进队列。
+// 同一部剧 12 小时内只触发一次，避免每集进度上报都重复查询。
+func (p *Prober) WarmSeriesSegments(seriesID string) {
+	if p == nil || !p.enabled || !p.segmentsOn.Load() || seriesID == "" {
+		return
+	}
+	p.segTrigMu.Lock()
+	if last, ok := p.segTriggers[seriesID]; ok && time.Since(last) < 12*time.Hour {
+		p.segTrigMu.Unlock()
+		return
+	}
+	p.segTriggers[seriesID] = time.Now()
+	p.segTrigMu.Unlock()
+
+	go func() {
+		srcs, err := p.db.SourcesForSeriesSegmentBackfill(seriesID, 200)
+		if err != nil {
+			p.log.Warn("series segment query failed", "series", seriesID, "err", err)
+			return
+		}
+		n := 0
+		for _, s := range srcs {
+			if p.EnqueueSegments(s) != nil {
+				n++
+			}
+		}
+		if n > 0 {
+			p.log.Info("series segment queued", "series", seriesID, "sources", len(srcs), "queued", n)
+		}
 	}()
 }
 
@@ -331,13 +423,100 @@ func (p *Prober) warmupOnce(limit int, scope string) int {
 	return len(chans)
 }
 
+// warmupSegmentsOnce 在预热窗口内补一批片头片尾。
+// QueueSegmentBackfill 手动把一批待分析条目排进队列（面板按钮/测试用）。
+func (p *Prober) QueueSegmentBackfill(limit int) int {
+	if p == nil || !p.enabled || !p.segmentsOn.Load() {
+		return 0
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	scope := p.warmupConfig().SegmentScope
+	if scope == "" {
+		scope = "watching"
+	}
+	since := int64(0)
+	if strings.EqualFold(scope, "recent") {
+		since = time.Now().Add(-7 * 24 * time.Hour).Unix()
+	}
+	srcs, err := p.db.SourcesForSegmentWarmup(since, limit, scope)
+	if err != nil {
+		p.log.Warn("segment backfill query failed", "err", err)
+		return 0
+	}
+	n := 0
+	for _, s := range srcs {
+		if p.EnqueueSegments(s) != nil {
+			n++
+		}
+	}
+	p.log.Info("segment backfill queued", "scope", scope, "queued", n)
+	return n
+}
+
+// QueueSeriesSegments 手动补齐某部剧（不受 12 小时自动触发去重影响）。
+func (p *Prober) QueueSeriesSegments(seriesID string, limit int) int {
+	if p == nil || !p.enabled || !p.segmentsOn.Load() || seriesID == "" {
+		return 0
+	}
+	srcs, err := p.db.SourcesForSeriesSegmentBackfill(seriesID, limit)
+	if err != nil {
+		p.log.Warn("series segment query failed", "series", seriesID, "err", err)
+		return 0
+	}
+	n := 0
+	for _, s := range srcs {
+		if p.EnqueueSegments(s) != nil {
+			n++
+		}
+	}
+	p.log.Info("series segment queued", "series", seriesID, "queued", n)
+	return n
+}
+
+func (p *Prober) warmupSegmentsOnce(limit int, scope string) int {
+	since := int64(0)
+	mode := strings.ToLower(scope)
+	switch mode {
+	case "all":
+	case "recent":
+		since = time.Now().Add(-7 * 24 * time.Hour).Unix()
+	case "watching", "favorites":
+	default:
+		mode = "watching"
+	}
+
+	srcs, err := p.db.SourcesForSegmentWarmup(since, limit, mode)
+	if err != nil {
+		p.log.Warn("segment warmup query failed", "err", err)
+		return 0
+	}
+	if len(srcs) == 0 {
+		return 0
+	}
+	chans := make([]<-chan struct{}, 0, len(srcs))
+	for _, s := range srcs {
+		if ch := p.EnqueueSegments(s); ch != nil {
+			chans = append(chans, ch)
+		}
+	}
+	WaitAll(chans, 10*time.Minute)
+	p.log.Info("segment warmup batch", "scope", mode, "queued", len(chans))
+	return len(chans)
+}
+
 func (p *Prober) worker() {
-	for id := range p.queue {
-		p.probeOne(id)
+	for job := range p.queue {
+		if job.segmentsOnly {
+			p.segmentOne(job.sourceID)
+		} else {
+			p.probeOne(job.sourceID)
+		}
 		p.mu.Lock()
-		if ch, ok := p.inflight[id]; ok {
+		if ch, ok := p.inflight[job.key]; ok {
 			close(ch)
-			delete(p.inflight, id)
+			delete(p.inflight, job.key)
 		}
 		p.mu.Unlock()
 	}
@@ -384,17 +563,190 @@ func (p *Prober) probeOne(id string) {
 			p.log.Warn("fill item runtime failed", "item", src.ItemID, "err", err)
 		}
 	}
+	// 章节和轨道是同一次 ffprobe 拿回来的：顺手把片头片尾落库，零额外流量。
+	if p.segmentsOn.Load() {
+		p.saveChapters(src, res.Chapters)
+	}
+
 	// 日志里不要出现 URL（可能带鉴权参数）。
 	p.log.Info("media probed", "item", src.ItemID, "streams", len(streams),
 		"duration_sec", int(ticks/10_000_000))
 }
 
+// segmentOne 只对已有轨道信息的片源补章节，不重复探测轨道。
+func (p *Prober) segmentOne(sourceID string) {
+	src, err := p.db.GetMediaSource(sourceID)
+	if err != nil || src == nil || strings.TrimSpace(src.URL) == "" {
+		return
+	}
+	item, err := p.db.GetItem(src.ItemID)
+	if err != nil || item == nil {
+		return
+	}
+	if item.Type != store.TypeEpisode && item.Type != store.TypeMovie {
+		return
+	}
+	if done, err := p.db.SegmentAnalysisDone(item.ID); err == nil && done {
+		return
+	}
+
+	res, err := p.runChapters(src.URL)
+	if err != nil {
+		_ = p.db.SetSegmentAnalysisFailure(item.ID, "chapter", firstLine(err.Error()))
+		p.log.Warn("segment chapter probe failed", "item", item.ID, "err", err)
+		return
+	}
+	if err := p.saveChaptersForItem(item, res.Chapters); err != nil {
+		p.log.Warn("save chapter segments failed", "item", item.ID, "err", err)
+	}
+}
+
+func (p *Prober) runChapters(rawURL string) (*ffprobeResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, p.bin,
+		"-v", "error",
+		"-print_format", "json",
+		"-show_format",
+		"-show_chapters",
+		"-probesize", "5000000",
+		"-analyzeduration", "5000000",
+		rawURL,
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("ffprobe timeout after %s", p.timeout)
+		}
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("ffprobe: %s", firstLine(string(exitErr.Stderr)))
+		}
+		return nil, err
+	}
+	var res ffprobeResult
+	if err := json.Unmarshal(out, &res); err != nil {
+		return nil, fmt.Errorf("decode ffprobe output: %w", err)
+	}
+	return &res, nil
+}
+
+// saveChapters 是探测完成后的顺手调用，条目类型/状态检查后落库。
+func (p *Prober) saveChapters(src *store.MediaSource, chapters []ffChapter) {
+	item, err := p.db.GetItem(src.ItemID)
+	if err != nil || item == nil {
+		return
+	}
+	if item.Type != store.TypeEpisode && item.Type != store.TypeMovie {
+		return
+	}
+	if done, err := p.db.SegmentAnalysisDone(item.ID); err == nil && done {
+		return
+	}
+	if err := p.saveChaptersForItem(item, chapters); err != nil {
+		p.log.Warn("save chapter segments failed", "item", item.ID, "err", err)
+	}
+}
+
+func (p *Prober) saveChaptersForItem(item *store.Item, chapters []ffChapter) error {
+	segs := chaptersToSegments(item.ID, chapters)
+	note := ""
+	if len(segs) == 0 {
+		note = "no named intro/outro chapters"
+	}
+	if err := p.db.ReplaceMediaSegments(item.ID, segs, "chapter", note); err != nil {
+		return err
+	}
+	if len(segs) > 0 {
+		p.log.Info("media segments extracted", "item", item.ID, "segments", len(segs), "method", "chapter")
+	}
+	return nil
+}
+
+// chaptersToSegments 只认有意义的章节名。普通 Chapter 01 / Scene 1 不做猜测，
+// 留给后续音频指纹分析。
+func chaptersToSegments(itemID string, chapters []ffChapter) []store.MediaSegment {
+	out := make([]store.MediaSegment, 0, len(chapters))
+	for _, c := range chapters {
+		title := strings.TrimSpace(c.Tags.Title)
+		if title == "" {
+			continue
+		}
+		typ, ok := classifyChapter(title)
+		if !ok {
+			continue
+		}
+		start := parseFloat(c.StartTime)
+		end := parseFloat(c.EndTime)
+		dur := end - start
+		if !segmentDurationOK(typ, dur) {
+			continue
+		}
+		out = append(out, store.MediaSegment{
+			ItemID:     itemID,
+			Type:       typ,
+			StartTicks: secondsToTicks(start),
+			EndTicks:   secondsToTicks(end),
+			Source:     "chapter",
+			Confidence: 1,
+		})
+	}
+	return out
+}
+
+var (
+	chapterRecap   = regexp.MustCompile(`(?i)\b(recap|previously\s+on)\b|前情|回顾`)
+	chapterPreview = regexp.MustCompile(`(?i)\b(preview|next\s+(episode|on))\b|下集|预告`)
+	chapterIntro   = regexp.MustCompile(`(?i)\b(intro|introduction|opening(\s+credits)?|op|title\s+sequence)\b|片头|主题曲|片头曲`)
+	chapterOutro   = regexp.MustCompile(`(?i)\b(end\s+credits|credits|ending|outro)\b|片尾|片尾曲`)
+)
+
+func classifyChapter(title string) (string, bool) {
+	switch {
+	case chapterRecap.MatchString(title):
+		return store.SegmentRecap, true
+	case chapterPreview.MatchString(title):
+		return store.SegmentPreview, true
+	case chapterIntro.MatchString(title):
+		return store.SegmentIntro, true
+	case chapterOutro.MatchString(title):
+		return store.SegmentOutro, true
+	}
+	return "", false
+}
+
+// 片头可以短到 5 秒（Netflix 的 title card 常只有 10 来秒），也可以长到
+// 冷开场后的 5 分钟以上；片尾在纪录片里能到 10 分钟以上。
+func segmentDurationOK(typ string, seconds float64) bool {
+	if seconds <= 0 {
+		return false
+	}
+	switch typ {
+	case store.SegmentIntro:
+		return seconds >= 5 && seconds <= 15*60
+	case store.SegmentOutro:
+		return seconds >= 5 && seconds <= 20*60
+	case store.SegmentRecap, store.SegmentPreview:
+		return seconds >= 5 && seconds <= 10*60
+	}
+	return false
+}
+
 type ffprobeResult struct {
-	Streams []ffStream `json:"streams"`
-	Format  struct {
+	Streams  []ffStream  `json:"streams"`
+	Chapters []ffChapter `json:"chapters"`
+	Format   struct {
 		Duration string `json:"duration"`
 		BitRate  string `json:"bit_rate"`
 	} `json:"format"`
+}
+
+type ffChapter struct {
+	StartTime string `json:"start_time"`
+	EndTime   string `json:"end_time"`
+	Tags      struct {
+		Title string `json:"title"`
+	} `json:"tags"`
 }
 
 type ffStream struct {
@@ -438,6 +790,7 @@ func (p *Prober) run(rawURL string) (*ffprobeResult, error) {
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
+		"-show_chapters",
 		"-probesize", "5000000",
 		"-analyzeduration", "5000000",
 		rawURL,

@@ -6,6 +6,16 @@ type QueryResult struct {
 	StartIndex       int            `json:"StartIndex"`
 }
 
+// MediaSegmentDto 对应 Jellyfin 10.10 的 MediaSegmentDto。
+// Type 取值：Intro / Outro / Recap / Preview / Commercial。
+type MediaSegmentDto struct {
+	Id         string `json:"Id"`
+	ItemId     string `json:"ItemId"`
+	Type       string `json:"Type"`
+	StartTicks int64  `json:"StartTicks"`
+	EndTicks   int64  `json:"EndTicks"`
+}
+
 type BaseItemDto struct {
 	Name                    string            `json:"Name"`
 	ServerId                string            `json:"ServerId"`

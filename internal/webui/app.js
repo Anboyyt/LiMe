@@ -1191,6 +1191,31 @@
         </div>
         <p class="muted" style="margin:8px 0 0">后台预探测片源并缓存轨道信息，之后起播不再等 ffprobe。全库提取建议放凌晨窗口慢慢跑，随时可关。</p>
       </div>
+      <div class="panel"><h3>片头片尾</h3>
+        <div class="kv">
+          <div><b>状态</b><span>${settings.SegmentExtract ? '已启用' : '已关闭'}</span></div>
+          <div><b>回填范围</b><span>${probeScopeLabel(settings.SegmentScope)}</span></div>
+          <div><b>自动触发</b><span>${settings.SegmentAutoAfter === '0' ? '关闭' : '单集观看 ' + esc(settings.SegmentAutoAfter) + ' 后补齐整剧'}</span></div>
+          <div><b>待分析</b><span>${settings.SegmentPending || 0} 个条目</span></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label class="check-field">
+            <input type="checkbox" id="segmentExtract" ${settings.SegmentExtract ? 'checked' : ''}>
+            <span>启用提取</span>
+          </label>
+          <select id="segmentScope">
+            <option value="watching" ${settings.SegmentScope === 'watching' ? 'selected' : ''}>收藏 + 在追（推荐）</option>
+            <option value="favorites" ${settings.SegmentScope === 'favorites' ? 'selected' : ''}>只回填收藏</option>
+            <option value="recent" ${settings.SegmentScope === 'recent' ? 'selected' : ''}>最近 7 天 + 观看进度</option>
+            <option value="all" ${settings.SegmentScope === 'all' ? 'selected' : ''}>全库</option>
+          </select>
+          <input id="segmentAutoAfter" placeholder="自动触发，如 5m、0=关闭" style="max-width:200px"
+            value="${esc(settings.SegmentAutoAfter || '5m')}">
+          <button class="primary" data-action="save-settings">保存</button>
+          <button data-action="scan-segments">立即提取一批</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">章节随预热探测顺手获取，零额外流量；没有标准章节的剧之后再接音频指纹。单集看到设定时长后自动补齐整部剧，避免冷开场/片头位置每集不同导致的漏检。</p>
+      </div>
       <div class="panel"><h3>背景图清晰度</h3>
         <div class="kv">
           <div><b>状态</b><span>${backdrops.Running
@@ -1343,6 +1368,12 @@
           body.ProbeWindow = ($('#probeWindow').value || '').trim();
           body.ProbeMaxRun = ($('#probeMaxRun').value || '').trim();
         }
+        const segmentExtractEl = $('#segmentExtract');
+        if (segmentExtractEl) {
+          body.SegmentExtract = segmentExtractEl.checked;
+          body.SegmentScope = $('#segmentScope').value;
+          body.SegmentAutoAfter = ($('#segmentAutoAfter').value || '0').trim();
+        }
         const backupAtEl = $('#backupDailyAt');
         if (backupAtEl) {
           body.BackupDailyAt = (backupAtEl.value || 'off').trim();
@@ -1373,6 +1404,11 @@
       }
       case 'refresh-logs': {
         await renderLogs();
+        break;
+      }
+      case 'scan-segments': {
+        const r = await api('/web/api/segments/scan?limit=50', { method: 'POST' });
+        toast(`已排队 ${r.Queued || 0} 个条目；完成后刷新页面看「待分析」数量`);
         break;
       }
       case 'export-logs': {

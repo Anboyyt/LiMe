@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"lime/internal/store"
 )
 
 const sampleJSON = `{
@@ -128,5 +130,53 @@ func TestWarmupWindowOpen(t *testing.T) {
 	}
 	if at(12, 0) {
 		t.Fatal("overnight window should be closed at noon")
+	}
+}
+
+func TestChaptersToSegments(t *testing.T) {
+	chapters := []ffChapter{
+		{StartTime: "0", EndTime: "14.5", Tags: struct {
+			Title string `json:"title"`
+		}{Title: "Scene 1"}},
+		{StartTime: "14.5", EndTime: "111.5", Tags: struct {
+			Title string `json:"title"`
+		}{Title: "Recap"}},
+		{StartTime: "439.5", EndTime: "451.5", Tags: struct {
+			Title string `json:"title"`
+		}{Title: "Intro"}},
+		{StartTime: "451.5", EndTime: "2161.45", Tags: struct {
+			Title string `json:"title"`
+		}{Title: "Scene 3"}},
+		{StartTime: "2161.45", EndTime: "2371.9", Tags: struct {
+			Title string `json:"title"`
+		}{Title: "Credits"}},
+		{StartTime: "2400", EndTime: "2402", Tags: struct {
+			Title string `json:"title"`
+		}{Title: "Opening Credits"}},
+	}
+	segs := chaptersToSegments("ep1", chapters)
+	if len(segs) != 3 {
+		t.Fatalf("segments = %d, want 3: %+v", len(segs), segs)
+	}
+	if segs[0].Type != store.SegmentRecap || segs[1].Type != store.SegmentIntro || segs[2].Type != store.SegmentOutro {
+		t.Fatalf("unexpected types: %+v", segs)
+	}
+	// 12 秒的 title card 必须保留；IntroSkipper 的 15 秒下限会把它丢掉。
+	if got := segs[1].EndTicks - segs[1].StartTicks; got != 12*10_000_000 {
+		t.Fatalf("intro duration ticks = %d", got)
+	}
+	// 2 秒的 Opening Credits 低于最短时长，应被过滤。
+	for _, s := range segs {
+		if s.StartTicks == 2400*10_000_000 {
+			t.Fatalf("too-short chapter kept: %+v", s)
+		}
+	}
+}
+
+func TestClassifyChapterGenericIgnored(t *testing.T) {
+	for _, name := range []string{"Chapter 01", "Scene 2", "Part 01", "第 01 章"} {
+		if _, ok := classifyChapter(name); ok {
+			t.Fatalf("%q should be ignored", name)
+		}
 	}
 }

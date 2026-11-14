@@ -75,6 +75,12 @@ type Config struct {
 	ProbeWindow string
 	// 每次激活后最长连续运行时长，0 表示跑到窗口结束
 	ProbeMaxRun time.Duration
+	// 片头片尾提取：章节随探测免费获取，回填补齐存量。
+	SegmentExtract bool
+	// 片段回填范围：favorites / watching / recent / all
+	SegmentScope string
+	// 单集累计播放多久后自动补整部剧的片段，0 表示关闭。
+	SegmentAutoAfter time.Duration
 	// 背景图原图回填的并发数
 	BackdropWorkers int
 
@@ -139,6 +145,9 @@ func Load() Config {
 		ProbeScope:        getenv("LIME_PROBE_SCOPE", "favorites"),
 		ProbeWindow:       getenv("LIME_PROBE_WINDOW", "03:00-06:00"),
 		ProbeMaxRun:       getduration("LIME_PROBE_MAX_RUN", 2*time.Hour),
+		SegmentExtract:    getbool("LIME_SEGMENT_EXTRACT", true),
+		SegmentScope:      getenv("LIME_SEGMENT_SCOPE", "watching"),
+		SegmentAutoAfter:  getduration("LIME_SEGMENT_AUTO_AFTER", 5*time.Minute),
 		BackdropWorkers:   getint("LIME_BACKDROP_WORKERS", 5),
 		BackupDailyAt:     getenv("LIME_BACKUP_DAILY_AT", "04:30"),
 		BackupKeep:        getint("LIME_BACKUP_KEEP", 3),

@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"net/http"
+	"strings"
 
 	"lime/internal/dto"
 	"lime/internal/store"
@@ -181,15 +182,66 @@ func (h *Handler) emptyQuery(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// mediaSegments 是 Jellyfin 10.9 的片头/片尾片段接口，LiMe 不做探测。
+// mediaSegments 返回条目的片头/片尾片段。
+// Jellyfin 10.10 的 GET /MediaSegments/{itemId} 返回 QueryResult<MediaSegmentDto>。
 func (h *Handler) mediaSegments(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireUser(w, r); !ok {
 		return
 	}
+	itemID := r.PathValue("itemId")
+	types := parseSegmentTypes(r)
+	segs, err := h.db.MediaSegmentsForItem(itemID, types)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "load media segments failed")
+		return
+	}
+	items := make([]dto.MediaSegmentDto, 0, len(segs))
+	for _, s := range segs {
+		items = append(items, dto.MediaSegmentDto{
+			Id:         s.ID,
+			ItemId:     s.ItemID,
+			Type:       s.Type,
+			StartTicks: s.StartTicks,
+			EndTicks:   s.EndTicks,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"Items":            []any{},
-		"TotalRecordCount": 0,
+		"Items":            items,
+		"TotalRecordCount": len(items),
 	})
+}
+
+// webSegmentsScan 手动触发片头片尾提取：带 seriesId 补整部剧，否则按设置范围补一批。
+func (h *Handler) webSegmentsScan(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	limit := atoiDefault(r.URL.Query().Get("limit"), 50)
+	var n int
+	if seriesID := strings.TrimSpace(r.URL.Query().Get("seriesId")); seriesID != "" {
+		n = h.prober.QueueSeriesSegments(seriesID, limit)
+	} else {
+		n = h.prober.QueueSegmentBackfill(limit)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"Queued": n})
+}
+
+// parseSegmentTypes 兼容两种写法：?includeSegmentTypes=Intro&includeSegmentTypes=Outro
+// 和 ?includeSegmentTypes=Intro,Outro。
+func parseSegmentTypes(r *http.Request) []string {
+	var out []string
+	for _, v := range r.URL.Query()["includeSegmentTypes"] {
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 // emptyItemList 用于 LocalTrailers / SpecialFeatures 这类可选列表。

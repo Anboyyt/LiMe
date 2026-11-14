@@ -54,6 +54,10 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		pendingTotal, pendingFav, pendingWatching := h.probeCountsSnapshot()
+		segmentPending := 0
+		if n, err := h.db.SegmentPendingCount(); err == nil {
+			segmentPending = n
+		}
 		tg := h.tgConfig()
 		scrapeTimeout := 6 * 3600
 		if h.scraper != nil {
@@ -77,6 +81,10 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			"ProbePendingTotal":     pendingTotal,
 			"ProbePendingFavorites": pendingFav,
 			"ProbePendingWatching":  pendingWatching,
+			"SegmentExtract":        h.segmentExtractEnabled(),
+			"SegmentScope":          h.segmentScopeValue(),
+			"SegmentAutoAfter":      shortDuration(h.segmentAutoAfter()),
+			"SegmentPending":        segmentPending,
 			"BackupDailyAt":         backupAt,
 			"BackupKeep":            backupKeep,
 			"TGEnabled":             tg.Enabled,
@@ -102,6 +110,9 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			ProbeScope           *string `json:"ProbeScope"`
 			ProbeWindow          *string `json:"ProbeWindow"`
 			ProbeMaxRun          *string `json:"ProbeMaxRun"`
+			SegmentExtract       *bool   `json:"SegmentExtract"`
+			SegmentScope         *string `json:"SegmentScope"`
+			SegmentAutoAfter     *string `json:"SegmentAutoAfter"`
 			BackupDailyAt        *string `json:"BackupDailyAt"`
 			BackupKeep           *int    `json:"BackupKeep"`
 			TGBotToken           *string `json:"TGBotToken"`
@@ -244,8 +255,51 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			probeChanged = true
 		}
-		if probeChanged {
+		segmentChanged := false
+		if p.SegmentExtract != nil {
+			if err := h.db.SetSetting("segment_extract", strconv.FormatBool(*p.SegmentExtract)); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			segmentChanged = true
+		}
+		if p.SegmentScope != nil {
+			scope := strings.ToLower(strings.TrimSpace(*p.SegmentScope))
+			switch scope {
+			case "favorites", "watching", "recent", "all":
+			default:
+				writeError(w, http.StatusBadRequest, "片段范围只能是 favorites/watching/recent/all")
+				return
+			}
+			if err := h.db.SetSetting("segment_scope", scope); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			segmentChanged = true
+		}
+		if p.SegmentAutoAfter != nil {
+			v := strings.TrimSpace(*p.SegmentAutoAfter)
+			if v == "" || strings.EqualFold(v, "off") || v == "0" {
+				v = "0"
+			} else {
+				d, err := time.ParseDuration(v)
+				if err != nil || d < 0 || d > 6*time.Hour {
+					writeError(w, http.StatusBadRequest, "自动触发时长格式应为 5m、1h，或 0 表示关闭")
+					return
+				}
+				v = d.String()
+			}
+			if err := h.db.SetSetting("segment_auto_after", v); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			segmentChanged = true
+		}
+		if probeChanged || segmentChanged {
 			h.prober.SetWarmupConfig(h.warmupConfig())
+		}
+		if segmentChanged {
+			h.prober.SetSegmentsEnabled(h.segmentExtractEnabled())
 		}
 
 		if p.BackupDailyAt != nil {
@@ -399,12 +453,14 @@ func (h *Handler) tmdbKeys() []string {
 // warmupConfig 合并环境变量与面板设置（面板优先）。
 func (h *Handler) warmupConfig() probe.WarmupConfig {
 	c := probe.WarmupConfig{
-		Enabled:  h.cfg.ProbeWarmup,
-		Scope:    h.cfg.ProbeScope,
-		Batch:    h.cfg.ProbeWarmupLimit,
-		MaxRun:   h.cfg.ProbeMaxRun,
-		StartMin: -1,
-		EndMin:   -1,
+		Enabled:      h.cfg.ProbeWarmup,
+		Scope:        h.cfg.ProbeScope,
+		Batch:        h.cfg.ProbeWarmupLimit,
+		MaxRun:       h.cfg.ProbeMaxRun,
+		StartMin:     -1,
+		EndMin:       -1,
+		Segments:     h.segmentExtractEnabled(),
+		SegmentScope: h.segmentScopeValue(),
 	}
 	window := h.cfg.ProbeWindow
 	if v, err := h.db.GetSetting("probe_warmup"); err == nil && v != "" {
@@ -427,6 +483,36 @@ func (h *Handler) warmupConfig() probe.WarmupConfig {
 		}
 	}
 	return c
+}
+
+// segmentExtractEnabled 合并环境变量与面板设置（面板优先）。
+func (h *Handler) segmentExtractEnabled() bool {
+	if v, err := h.db.GetSetting("segment_extract"); err == nil && v != "" {
+		return v == "true" || v == "1"
+	}
+	return h.cfg.SegmentExtract
+}
+
+func (h *Handler) segmentScopeValue() string {
+	if v, err := h.db.GetSetting("segment_scope"); err == nil && v != "" {
+		switch strings.ToLower(v) {
+		case "favorites", "watching", "recent", "all":
+			return strings.ToLower(v)
+		}
+	}
+	return h.cfg.SegmentScope
+}
+
+func (h *Handler) segmentAutoAfter() time.Duration {
+	if v, err := h.db.GetSetting("segment_auto_after"); err == nil && v != "" {
+		if strings.EqualFold(v, "off") || v == "0" {
+			return 0
+		}
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return h.cfg.SegmentAutoAfter
 }
 
 func shortDuration(d time.Duration) string {

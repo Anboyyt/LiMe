@@ -114,6 +114,7 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	h.notifier = notify.New(h.tgConfig(), log)
 	// 面板里保存的预热设置优先于环境变量。
 	h.prober.StartWarmup(h.warmupConfig())
+	h.prober.SetSegmentsEnabled(h.segmentExtractEnabled())
 	go h.refreshProbeCounts()
 
 	appFS, err := webui.AppFS()

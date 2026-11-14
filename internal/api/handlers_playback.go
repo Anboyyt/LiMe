@@ -362,6 +362,15 @@ func (h *Handler) saveProgress(w http.ResponseWriter, r *http.Request, event pla
 		h.prober.WarmSeries(it.SeriesID, 30)
 	}
 
+	// 单集累计看到一定时长后，自动把整部剧的片头片尾补齐。
+	// 同一部剧 12 小时内只触发一次，进度心跳不会反复排队。
+	if it.Type == store.TypeEpisode && it.SeriesID != "" {
+		autoAfter := h.segmentAutoAfter()
+		if autoAfter > 0 && position >= int64(autoAfter.Seconds()*10_000_000) {
+			h.prober.WarmSeriesSegments(it.SeriesID)
+		}
+	}
+
 	// 播放开始/暂停/继续/停止写一条历史，保留一周。
 	h.recordPlaybackHistory(user, a, deviceID, it, event, position, body.IsPaused, pausedBefore)
 
