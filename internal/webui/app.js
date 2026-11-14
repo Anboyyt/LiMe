@@ -15,11 +15,15 @@
   };
 
   // ---------- 主题 ----------
+  // 图标用内联 SVG，避免部分安卓机型缺少 ☀/☾ 字形显示成方块。
+  const ICON_SUN = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+  const ICON_MOON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem('lime.theme', theme);
     const btn = $('#themeBtn');
-    if (btn) btn.textContent = theme === 'light' ? '☾' : '☀';
+    if (btn) btn.innerHTML = theme === 'light' ? ICON_MOON : ICON_SUN;
   }
 
   function initTheme() {
@@ -173,10 +177,15 @@
 
   // ---------- 启动 ----------
   async function enterApp() {
-    $('#login').classList.add('hidden');
-    $('#app').classList.remove('hidden');
     // 校验 token 并刷新用户信息
     const me = await api('/Users/Me');
+    // 运维面板只对管理员开放，普通用户直接回媒体库。
+    if (!(me.Policy && me.Policy.IsAdministrator)) {
+      location.replace('/');
+      return;
+    }
+    $('#login').classList.add('hidden');
+    $('#app').classList.remove('hidden');
     state.user = me;
     localStorage.setItem('lime.user', JSON.stringify(me));
     $('#userName').textContent = me.Name;
@@ -978,6 +987,7 @@
       <h3>运行日志（最近 300 条）</h3>
       <div class="row" style="margin-bottom:10px">
         <button data-action="refresh-logs">刷新</button>
+        <button data-action="export-logs">导出日志</button>
         <span class="muted">内存里只保留最近 1000 条；完整日志在 docker logs</span>
       </div>
       <table>
@@ -1363,6 +1373,21 @@
       }
       case 'refresh-logs': {
         await renderLogs();
+        break;
+      }
+      case 'export-logs': {
+        const res = await fetch('/web/api/logs/export', {
+          headers: state.token ? { 'X-Emby-Token': state.token } : {},
+        });
+        if (!res.ok) { toast('导出失败：HTTP ' + res.status); break; }
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'lime-logs-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-') + '.txt';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
         break;
       }
       case 'tg-test': {
