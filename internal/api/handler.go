@@ -82,10 +82,10 @@ func (h *Handler) probeCountsSnapshot() (total, favorites, watching int) {
 	return c[0], c[1], c[2]
 }
 
-func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Scanner, scraper *scrape.Scraper, realtime realtimeMonitor) (http.Handler, error) {
+func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Scanner, scraper *scrape.Scraper, realtime realtimeMonitor) (http.Handler, *Handler, error) {
 	serverID, err := db.ServerID()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.MaxIdleConnsPerHost = 8
@@ -119,9 +119,18 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 
 	appFS, err := webui.AppFS()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return h.routes(appFS), nil
+	return h.routes(appFS), h, nil
+}
+
+// QueueIngestProbe 实时监控发现新条目后立即排队探测/片段分析，
+// 不再等夜间预热窗口。由 cmd/lime 的 onIngest 回调调用。
+func (h *Handler) QueueIngestProbe(ids []string) {
+	if h == nil || h.prober == nil {
+		return
+	}
+	h.prober.WarmIngestedItems(ids)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

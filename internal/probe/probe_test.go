@@ -2,8 +2,12 @@ package probe
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"math"
 	"math/rand"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -204,5 +208,60 @@ func TestFindRepeatSynthetic(t *testing.T) {
 	}
 	if math.Abs(sb.start-100) > 3 || math.Abs(sb.end-200) > 3 {
 		t.Fatalf("b span = %.1f-%.1f, want 100-200", sb.start, sb.end)
+	}
+}
+
+// 新入库条目要立即进入探测队列；已探测过的片源只补片段。
+func TestWarmIngestedItemsQueuesSources(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "lime.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	lib, err := db.UpsertLibrary("t", "/t", "mixed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertItem(&store.Item{
+		ID: "m-new", LibraryID: lib.ID, ParentID: lib.ID, Type: store.TypeMovie, Name: "新片",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertItem(&store.Item{
+		ID: "m-done", LibraryID: lib.ID, ParentID: lib.ID, Type: store.TypeMovie, Name: "老片",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, src := range []*store.MediaSource{
+		{ID: "s-new", ItemID: "m-new", URL: "http://x/new", ProbeStatus: "none"},
+		{ID: "s-done", ItemID: "m-done", URL: "http://x/done", ProbeStatus: "done"},
+	} {
+		if err := db.UpsertMediaSource(src); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := &Prober{
+		db:       db,
+		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		enabled:  true,
+		queue:    make(chan probeJob, 8),
+		inflight: make(map[string]chan struct{}),
+	}
+	p.segmentsOn.Store(true)
+
+	if n := p.WarmIngestedItems([]string{"m-new", "m-done"}); n != 2 {
+		t.Fatalf("queued = %d, want 2", n)
+	}
+	got := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		j := <-p.queue
+		got[j.sourceID+"/"+strconv.FormatBool(j.segmentsOnly)] = true
+	}
+	if !got["s-new/false"] || !got["s-done/true"] {
+		t.Fatalf("jobs = %v, want s-new probe + s-done segments", got)
 	}
 }

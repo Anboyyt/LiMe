@@ -52,7 +52,7 @@ func newTestEnvWithRealtime(t *testing.T, mutate func(*config.Config), realtime 
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	h, err := New(cfg, db, log, library.New(db, log), nil, realtime)
+	h, _, err := New(cfg, db, log, library.New(db, log), nil, realtime)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}

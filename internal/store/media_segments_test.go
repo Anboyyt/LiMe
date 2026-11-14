@@ -96,3 +96,33 @@ func TestSegmentBackfillOrder(t *testing.T) {
 		}
 	}
 }
+
+// 实时入库触发只应该拿到指定条目的主片源，不把整库带进来。
+func TestPrimarySourcesForItems(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	if err := db.UpsertMediaSource(&MediaSource{
+		ID: "src-e1-a", ItemID: "e1", URL: "http://example/e1-a", StrmPath: "/e1-a.strm", SortRank: 0, Size: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertMediaSource(&MediaSource{
+		ID: "src-e1-b", ItemID: "e1", URL: "http://example/e1-b", StrmPath: "/e1-b.strm", SortRank: 1, Size: 200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertMediaSource(&MediaSource{
+		ID: "src-e2", ItemID: "e2", URL: "http://example/e2", StrmPath: "/e2.strm", SortRank: 0, Size: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	srcs, err := db.PrimarySourcesForItems([]string{"e1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(srcs) != 1 || srcs[0].ID != "src-e1-a" {
+		t.Fatalf("sources = %+v, want only src-e1-a", srcs)
+	}
+}

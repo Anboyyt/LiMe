@@ -269,10 +269,15 @@ func (h *Handler) webSegmentsScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := atoiDefault(r.URL.Query().Get("limit"), 50)
+	v := r.URL.Query()
 	var n int
-	if seriesID := strings.TrimSpace(r.URL.Query().Get("seriesId")); seriesID != "" {
-		n = h.prober.QueueSeriesSegments(seriesID, limit)
-	} else {
+	switch {
+	case len(splitCSV(v.Get("itemIds"))) > 0:
+		// 定点补齐：只扫指定条目，用于实时监控漏掉或手动补扫。
+		n = h.prober.WarmIngestedItems(splitCSV(v.Get("itemIds")))
+	case strings.TrimSpace(v.Get("seriesId")) != "":
+		n = h.prober.QueueSeriesSegments(strings.TrimSpace(v.Get("seriesId")), limit)
+	default:
 		n = h.prober.QueueSegmentBackfill(limit)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"Queued": n})

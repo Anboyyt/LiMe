@@ -241,18 +241,24 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// handler 在 monitor 之后创建，用指针让 onIngest 回调能拿到 prober。
+	var apiHandler *api.Handler
 	monitor := library.NewMonitor(db, scanner, logger, cfg.RealtimeMonitor, func(ids []string) {
-		if !scraper.Enabled() {
-			return
+		if scraper.Enabled() {
+			go func() {
+				if _, err := scraper.ScrapeItems(ids); err != nil {
+					logger.Debug("realtime scrape skipped", "err", err)
+				}
+			}()
 		}
-		go func() {
-			if _, err := scraper.ScrapeItems(ids); err != nil {
-				logger.Debug("realtime scrape skipped", "err", err)
-			}
-		}()
+		// 新入库/变更的条目立即探测，片头片尾在同一次 ffprobe 里顺带提取；
+		// 否则只能等夜间预热窗口或开始播放后 10 分钟才触发。
+		if apiHandler != nil {
+			go apiHandler.QueueIngestProbe(ids)
+		}
 	})
 
-	handler, err := api.New(cfg, db, logger, scanner, scraper, monitor)
+	handler, apiHandler, err := api.New(cfg, db, logger, scanner, scraper, monitor)
 	if err != nil {
 		logger.Error("init api", "err", err)
 		os.Exit(1)

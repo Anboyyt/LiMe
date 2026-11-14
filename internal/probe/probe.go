@@ -416,6 +416,36 @@ func (p *Prober) WarmSeriesSegments(seriesID, itemID string, level int) {
 	}()
 }
 
+// WarmIngestedItems 实时监控发现新增/变更条目后立即排队，不等夜间预热窗口。
+// 未探测过的片源走完整探测（章节在同一次 ffprobe 里顺带取），
+// 已探测过的只补片段分析。
+func (p *Prober) WarmIngestedItems(itemIDs []string) int {
+	if p == nil || !p.enabled || len(itemIDs) == 0 {
+		return 0
+	}
+	srcs, err := p.db.PrimarySourcesForItems(itemIDs)
+	if err != nil {
+		p.log.Warn("ingest source query failed", "items", len(itemIDs), "err", err)
+		return 0
+	}
+	queued := 0
+	for _, s := range srcs {
+		var ch <-chan struct{}
+		if s.ProbeStatus != "done" {
+			ch = p.Enqueue(s)
+		} else if p.segmentsOn.Load() {
+			ch = p.EnqueueSegments(s)
+		}
+		if ch != nil {
+			queued++
+		}
+	}
+	if queued > 0 {
+		p.log.Info("ingest probe queued", "items", len(itemIDs), "sources", len(srcs), "queued", queued)
+	}
+	return queued
+}
+
 func (p *Prober) warmupOnce(limit int, scope string) int {
 	since := int64(0)
 	mode := strings.ToLower(scope)

@@ -210,6 +210,25 @@ func (d *DB) SourcesForSegmentWarmup(since int64, limit int, mode string) ([]*Me
 	return d.querySegmentSources(q, args...)
 }
 
+// PrimarySourcesForItems 返回指定条目的主片源（每集只取一个）。
+// 实时监控发现新入库单集后用它立即排队，不依赖夜间预热窗口。
+func (d *DB) PrimarySourcesForItems(itemIDs []string) ([]*MediaSource, error) {
+	if len(itemIDs) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(itemIDs))
+	for _, id := range itemIDs {
+		args = append(args, id)
+	}
+	q := segmentSourceSelect + ` WHERE ms.url <> ''
+  AND i.type IN ('Episode', 'Movie')
+  AND ms.item_id IN (` + placeholders(len(itemIDs)) + `)
+  AND ms.id = (SELECT ms2.id FROM media_sources ms2
+               WHERE ms2.item_id = ms.item_id AND ms2.url <> ''
+               ORDER BY ms2.sort_rank, ms2.size DESC, ms2.id LIMIT 1)`
+	return d.querySegmentSources(q, args...)
+}
+
 // SourcesForSeriesSegmentBackfill 返回某部剧里还没做片段分析的集（主片源）。
 func (d *DB) SourcesForSeriesSegmentBackfill(seriesID string, limit int) ([]*MediaSource, error) {
 	if seriesID == "" {
