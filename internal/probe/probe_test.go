@@ -2,6 +2,8 @@ package probe
 
 import (
 	"encoding/json"
+	"math"
+	"math/rand"
 	"testing"
 	"time"
 
@@ -178,5 +180,29 @@ func TestClassifyChapterGenericIgnored(t *testing.T) {
 		if _, ok := classifyChapter(name); ok {
 			t.Fatalf("%q should be ignored", name)
 		}
+	}
+}
+
+func TestFindRepeatSynthetic(t *testing.T) {
+	// 600 个 0.5s 帧；把 a 的 100..300 帧复制到 b 的 200..400。
+	base := make([]float64, 600)
+	rng := rand.New(rand.NewSource(1))
+	for i := range base {
+		base[i] = rng.NormFloat64()
+	}
+	a := make([]float64, 600)
+	copy(a, base)
+	b := make([]float64, 600)
+	copy(b[200:], base[100:300])
+
+	sa, sb, ok := findRepeat(a, b)
+	if !ok {
+		t.Fatal("repeat not found")
+	}
+	if math.Abs(sa.start-50) > 3 || math.Abs(sa.end-150) > 3 {
+		t.Fatalf("a span = %.1f-%.1f, want 50-150", sa.start, sa.end)
+	}
+	if math.Abs(sb.start-100) > 3 || math.Abs(sb.end-200) > 3 {
+		t.Fatalf("b span = %.1f-%.1f, want 100-200", sb.start, sb.end)
 	}
 }

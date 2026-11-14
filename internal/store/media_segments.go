@@ -303,3 +303,48 @@ ON CONFLICT(item_id) DO UPDATE SET status = 'done', method = 'manual',
 	}
 	return tx.Commit()
 }
+
+// SeasonEpisodeSource 是某季一集的主片源，音频指纹分析用。
+type SeasonEpisodeSource struct {
+	ItemID       string
+	IndexNumber  int
+	RunTimeTicks int64
+	URL          string
+}
+
+// SeasonSources 返回某部剧某一季每个条目（单集）的主片源，按集号排序。
+func (d *DB) SeasonSources(seriesID string, season int) ([]SeasonEpisodeSource, error) {
+	rows, err := d.Query(`
+SELECT e.id, e.index_number, e.run_time_ticks, ms.url
+FROM items e
+JOIN media_sources ms ON ms.item_id = e.id
+WHERE e.type = 'Episode' AND e.series_id = ? AND e.parent_index_number = ?
+  AND ms.url <> ''
+  AND ms.id = (SELECT ms2.id FROM media_sources ms2
+               WHERE ms2.item_id = e.id AND ms2.url <> ''
+               ORDER BY ms2.sort_rank, ms2.size DESC, ms2.id LIMIT 1)
+ORDER BY e.index_number`, seriesID, season)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]SeasonEpisodeSource, 0, 16)
+	for rows.Next() {
+		var s SeasonEpisodeSource
+		if err := rows.Scan(&s.ItemID, &s.IndexNumber, &s.RunTimeTicks, &s.URL); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// SeasonHasSegments 判断某一季是否已经有任何片段（章节/手动/指纹）。
+func (d *DB) SeasonHasSegments(seriesID string, season int) (bool, error) {
+	var n int
+	err := d.QueryRow(`
+SELECT COUNT(*) FROM media_segments ms
+JOIN items e ON e.id = ms.item_id
+WHERE e.series_id = ? AND e.parent_index_number = ? LIMIT 1`, seriesID, season).Scan(&n)
+	return n > 0, err
+}

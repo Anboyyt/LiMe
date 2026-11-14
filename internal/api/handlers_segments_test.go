@@ -137,3 +137,56 @@ func TestManualSegmentsEndpoint(t *testing.T) {
 		t.Fatalf("non-admin status = %d, want 403", rr.Code)
 	}
 }
+
+func TestEmbyChaptersFromSegments(t *testing.T) {
+	env := newTestEnv(t)
+	hash, _ := store.HashPassword("pw")
+	admin, err := env.db.CreateUser("chadmin", hash, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := env.db.CreateToken(admin.ID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lib, err := env.db.CreateLibrary("测试", []string{"/strm/test"}, "mixed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	it := &store.Item{ID: "ep-ch", LibraryID: lib.ID, ParentID: "s1", Type: store.TypeEpisode, Name: "E1"}
+	if err := env.db.UpsertItem(it); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.db.ReplaceMediaSegments("ep-ch", []store.MediaSegment{
+		{ItemID: "ep-ch", Type: store.SegmentIntro, StartTicks: 780_000000, EndTicks: 1680_000000},
+		{ItemID: "ep-ch", Type: store.SegmentOutro, StartTicks: 13240_000000, EndTicks: 14210_000000},
+	}, "manual", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/Items/ep-ch?Fields=Chapters", nil)
+	req.Header.Set("X-Emby-Token", tok)
+	rr := httptest.NewRecorder()
+	env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Chapters []struct {
+			StartPositionTicks int64
+			MarkerType         string
+		}
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Chapters) != 3 {
+		t.Fatalf("chapters = %d, want 3: %s", len(out.Chapters), rr.Body.String())
+	}
+	if out.Chapters[0].MarkerType != "IntroStart" || out.Chapters[1].MarkerType != "IntroEnd" || out.Chapters[2].MarkerType != "CreditsStart" {
+		t.Fatalf("unexpected markers: %+v", out.Chapters)
+	}
+	if out.Chapters[0].StartPositionTicks != 780_000000 || out.Chapters[2].StartPositionTicks != 13240_000000 {
+		t.Fatalf("ticks: %+v", out.Chapters)
+	}
+}

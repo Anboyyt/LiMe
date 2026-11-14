@@ -6,6 +6,14 @@ type QueryResult struct {
 	StartIndex       int            `json:"StartIndex"`
 }
 
+// ChapterInfoDto 对应 Emby 的章节信息。SenPlayer 等 Emby 客户端靠
+// MarkerType（IntroStart / IntroEnd / CreditsStart）显示跳过按钮。
+type ChapterInfoDto struct {
+	StartPositionTicks int64  `json:"StartPositionTicks"`
+	Name               string `json:"Name,omitempty"`
+	MarkerType         string `json:"MarkerType,omitempty"`
+}
+
 // MediaSegmentDto 对应 Jellyfin 10.10 的 MediaSegmentDto。
 // Type 取值：Intro / Outro / Recap / Preview / Commercial。
 type MediaSegmentDto struct {
@@ -48,7 +56,9 @@ type BaseItemDto struct {
 	ChildCount         *int `json:"ChildCount,omitempty"`
 	RecursiveItemCount *int `json:"RecursiveItemCount,omitempty"`
 	// MediaSourceCount 是片源数量；部分客户端用它判断条目是否可播放。
-	MediaSourceCount  int              `json:"MediaSourceCount,omitempty"`
+	MediaSourceCount int `json:"MediaSourceCount,omitempty"`
+	// Chapters 是 Emby 的章节标记；SenPlayer 从 IntroStart/IntroEnd/CreditsStart 画跳过按钮。
+	Chapters          []ChapterInfoDto `json:"Chapters,omitempty"`
 	ParentId          string           `json:"ParentId,omitempty"`
 	SeriesId          string           `json:"SeriesId,omitempty"`
 	SeasonId          string           `json:"SeasonId,omitempty"`

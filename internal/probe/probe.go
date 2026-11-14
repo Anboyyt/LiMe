@@ -25,6 +25,7 @@ type Prober struct {
 	enabled    bool
 	segmentsOn atomic.Bool
 	bin        string
+	ffmpegBin  string
 	db         *store.DB
 	log        *slog.Logger
 	timeout    time.Duration
@@ -40,6 +41,8 @@ type Prober struct {
 	// segTriggers 记录最近一次「开始看某部剧→整剧补片段」的时间，避免每集都触发。
 	segTrigMu   sync.Mutex
 	segTriggers map[string]time.Time
+
+	fpRunning atomic.Bool
 }
 
 // probeJob 让探测和片段回填共用同一个 worker 池。
@@ -72,6 +75,11 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger) *Prober {
 	}
 	p.enabled = true
 	p.bin = bin
+	if fb, err := exec.LookPath("ffmpeg"); err == nil {
+		p.ffmpegBin = fb
+	} else {
+		log.Warn("ffmpeg not found; audio fingerprint disabled")
+	}
 
 	workers := cfg.ProbeWorkers
 	if workers <= 0 {
@@ -382,13 +390,28 @@ func (p *Prober) WarmSeriesSegments(seriesID, itemID string, level int) {
 			return
 		}
 		n := 0
+		chans := make([]<-chan struct{}, 0, len(srcs))
 		for _, s := range srcs {
-			if p.EnqueueSegments(s) != nil {
+			if ch := p.EnqueueSegments(s); ch != nil {
+				chans = append(chans, ch)
 				n++
 			}
 		}
 		if n > 0 {
 			p.log.Info("series segment queued", "series", seriesID, "sources", len(srcs), "queued", n)
+		}
+		// 章节跑完还没有任何片段，说明这季没有可用的章节名，
+		// 再用音频指纹补。已经能从章节拿到片段的季不重复烧带宽。
+		WaitAll(chans, 3*time.Minute)
+		it, err := p.db.GetItem(itemID)
+		if err != nil || it == nil || it.ParentIndexNumber <= 0 {
+			return
+		}
+		if has, _ := p.db.SeasonHasSegments(seriesID, it.ParentIndexNumber); has {
+			return
+		}
+		if p.StartSeasonFingerprint(seriesID, it.ParentIndexNumber) {
+			p.log.Info("fingerprint season started", "series", seriesID, "season", it.ParentIndexNumber)
 		}
 	}()
 }

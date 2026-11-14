@@ -357,3 +357,21 @@ func (h *Handler) themeMedia(w http.ResponseWriter, r *http.Request) {
 		"SoundtrackSongsResult": empty,
 	})
 }
+
+// webFingerprintSeason 手动触发某一季的音频指纹分析（异步，几分钟）。
+func (h *Handler) webFingerprintSeason(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+	seriesID := strings.TrimSpace(r.URL.Query().Get("seriesId"))
+	season := atoiDefault(r.URL.Query().Get("season"), 0)
+	if seriesID == "" || season <= 0 {
+		writeError(w, http.StatusBadRequest, "seriesId and season are required")
+		return
+	}
+	started := h.prober.StartSeasonFingerprint(seriesID, season)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"Started": started,
+		"Running": h.prober.FingerprintRunning(),
+	})
+}

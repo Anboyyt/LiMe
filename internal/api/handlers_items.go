@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -207,7 +208,41 @@ func (h *Handler) itemToDto(it *store.Item, ps *store.Playstate, fields ...itemF
 		v := it.CommunityRating
 		d.CommunityRating = &v
 	}
+	if f.has("Chapters") {
+		d.Chapters = h.chaptersForItem(it)
+	}
 	return d
+}
+
+// chaptersForItem 把 media_segments 转成 Emby 的章节标记。
+// SenPlayer 只认这个：IntroStart / IntroEnd / CreditsStart。
+func (h *Handler) chaptersForItem(it *store.Item) []dto.ChapterInfoDto {
+	if it.Type != store.TypeEpisode && it.Type != store.TypeMovie {
+		return nil
+	}
+	segs, err := h.db.MediaSegmentsForItem(it.ID, nil)
+	if err != nil || len(segs) == 0 {
+		return nil
+	}
+	out := make([]dto.ChapterInfoDto, 0, len(segs)*2)
+	for _, s := range segs {
+		switch s.Type {
+		case store.SegmentIntro:
+			out = append(out,
+				dto.ChapterInfoDto{StartPositionTicks: s.StartTicks, Name: "Intro", MarkerType: "IntroStart"},
+				dto.ChapterInfoDto{StartPositionTicks: s.EndTicks, Name: "Intro End", MarkerType: "IntroEnd"},
+			)
+		case store.SegmentOutro:
+			out = append(out, dto.ChapterInfoDto{
+				StartPositionTicks: s.StartTicks, Name: "Credits", MarkerType: "CreditsStart",
+			})
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartPositionTicks < out[j].StartPositionTicks })
+	return out
 }
 
 // maxListStreamSources 限制列表响应里带轨道的片源数量。
@@ -609,6 +644,8 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d := h.itemsToDto(user, []*store.Item{it}, parseItemFields(r))[0]
+	// 单集详情总是带 Emby 章节标记：SenPlayer 不传 Fields=Chapters 也要能拿到。
+	d.Chapters = h.chaptersForItem(it)
 
 	sources, err := h.db.MediaSourcesByItem(id)
 	if err == nil {
