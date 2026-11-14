@@ -122,7 +122,7 @@ func main() {
 		os.Exit(1)
 	}
 	// 清理不发 Stopped 的客户端留下的僵尸会话。
-	if n, err := db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionTTL)); err != nil {
+	if n, err := db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionRetention)); err != nil {
 		logger.Warn("purge stale playback sessions", "err", err)
 	} else if n > 0 {
 		logger.Info("stale playback sessions removed", "count", n)
@@ -131,7 +131,7 @@ func main() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
-			_, _ = db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionTTL))
+			_, _ = db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionRetention))
 		}
 	}()
 	if rebuilt, err := db.EnsureSearchIndex(); err != nil {

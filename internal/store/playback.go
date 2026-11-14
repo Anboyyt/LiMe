@@ -5,9 +5,15 @@ import (
 	"time"
 )
 
-// PlaybackSessionTTL 是会话被视为「仍在播放」的最长静默时间。
-// 部分客户端不发 /Sessions/Playing/Stopped，只能靠 TTL 兜底。
-const PlaybackSessionTTL = 30 * time.Minute
+const (
+	// PlaybackSessionTTL 是会话被视为「仍在播放」的最长静默时间。
+	// 部分客户端不发 /Sessions/Playing/Stopped，只能靠 TTL 兜底。
+	PlaybackSessionTTL = 30 * time.Minute
+	// PlaybackSessionRetention 是数据库里保留会话记录的时间。
+	// 暂停超过 TTL 的会话只是不显示，但记录要留久一点，
+	// 这样恢复播放时还能判断「暂停 → 继续」并补历史/通知。
+	PlaybackSessionRetention = 24 * time.Hour
+)
 
 type PlaybackSession struct {
 	ID            string

@@ -77,7 +77,15 @@ func TestPlaybackSessionTTL(t *testing.T) {
 		t.Fatalf("sessions = %+v, want only fresh", list)
 	}
 
-	n, err := db.PurgeStalePlaybackSessions(time.Now().Add(-PlaybackSessionTTL))
+	// 暂停超过 TTL 只是不显示，24 小时内不删除，恢复播放还能判断暂停状态。
+	if n, err := db.PurgeStalePlaybackSessions(time.Now().Add(-PlaybackSessionRetention)); err != nil || n != 0 {
+		t.Fatalf("purged within retention = %d, %v; want 0", n, err)
+	}
+	if _, err := db.Exec(`UPDATE playback_sessions SET updated_at = ? WHERE id = 'stale'`,
+		time.Now().Add(-PlaybackSessionRetention-time.Minute).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	n, err := db.PurgeStalePlaybackSessions(time.Now().Add(-PlaybackSessionRetention))
 	if err != nil || n != 1 {
 		t.Fatalf("purged = %d, %v; want 1", n, err)
 	}
