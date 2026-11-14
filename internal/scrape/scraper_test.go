@@ -26,3 +26,19 @@ func TestPaceIsGlobal(t *testing.T) {
 		t.Fatalf("elapsed = %v, want >= %v", elapsed, want*8/10)
 	}
 }
+
+func TestYearFromDate(t *testing.T) {
+	cases := map[string]int{
+		"2020-12-11": 2020,
+		"1999-01-01": 1999,
+		"":           0,
+		"20":         0,
+		"abcd-01-01": 0,
+		"1700-01-01": 0,
+	}
+	for in, want := range cases {
+		if got := yearFromDate(in); got != want {
+			t.Fatalf("yearFromDate(%q) = %d, want %d", in, got, want)
+		}
+	}
+}

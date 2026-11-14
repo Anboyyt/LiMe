@@ -362,3 +362,47 @@ func TestEpisodeByNumber(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
+
+// 刮削写回的年份以 TMDB 日期为准，且重扫时不能被目录名年份覆盖。
+func TestScrapeProductionYearFromTMDB(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	if err := db.UpdateItemMetadata("m1", MetadataUpdate{
+		PremiereDate:   "2020-12-11",
+		ProductionYear: 2020,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	it, err := db.GetItem("m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.ProductionYear != 2020 {
+		t.Fatalf("year = %d, want 2020", it.ProductionYear)
+	}
+
+	// 模拟重扫：目录名年份是 2021，不能覆盖 TMDB 的 2020。
+	if err := db.UpsertItem(&Item{
+		ID: "m1", LibraryID: "lib", ParentID: "lib", Type: TypeMovie,
+		Name: "电影", ProductionYear: 2021,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	it, err = db.GetItem("m1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if it.ProductionYear != 2020 {
+		t.Fatalf("after rescan year = %d, want 2020", it.ProductionYear)
+	}
+
+	// 后续刮削没带年份时保持原值。
+	if err := db.UpdateItemMetadata("m1", MetadataUpdate{Overview: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	it, _ = db.GetItem("m1")
+	if it.ProductionYear != 2020 {
+		t.Fatalf("after metadata update year = %d, want 2020", it.ProductionYear)
+	}
+}

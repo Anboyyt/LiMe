@@ -120,6 +120,75 @@ func TestSortByProductionYear(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(items) != 2 || items[0].ID != "m1" || items[1].ID != "m2" {
-		t.Fatalf("order = %v, want m1 (2020), m2 (1999)", items)
+		t.Fatalf("order = %v, want m1 (2020), m2 (1999)", itemIDs(items))
+	}
+}
+
+// 同一年内必须严格按开播/上映日期排，不能退化成索引扫描顺序。
+func TestSortByProductionYearWithinYearByPremiereDate(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	for _, m := range []struct {
+		id   string
+		name string
+		date string
+	}{
+		{"m1", "一月", "2024-01-05"},
+		{"m2", "腊月", "2024-12-20"},
+		{"m3", "六月", "2024-06-15"},
+	} {
+		if err := db.UpsertItem(&Item{
+			ID: m.id, LibraryID: "lib", ParentID: "lib", Type: TypeMovie,
+			Name: m.name, SortName: m.name, ProductionYear: 2024, PremiereDate: m.date,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, _, err := db.QueryItems(ItemQuery{
+		Types:      []string{TypeMovie},
+		SortBy:     []string{"ProductionYear"},
+		Descending: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemIDs(items); len(got) != 3 || got[0] != "m2" || got[1] != "m3" || got[2] != "m1" {
+		t.Fatalf("order = %v, want m2 (12-20), m3 (06-15), m1 (01-05)", got)
+	}
+}
+
+// 客户端直接发 SortBy=PremiereDate 时不能退化成按名称排。
+func TestSortByPremiereDate(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	for _, m := range []struct {
+		id   string
+		name string
+		date string
+	}{
+		{"m1", "老片", "1999-01-01"},
+		{"m2", "新片", "2025-08-01"},
+	} {
+		if err := db.UpsertItem(&Item{
+			ID: m.id, LibraryID: "lib", ParentID: "lib", Type: TypeMovie,
+			Name: m.name, SortName: m.name, PremiereDate: m.date,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	items, _, err := db.QueryItems(ItemQuery{
+		Types:      []string{TypeMovie},
+		SortBy:     []string{"PremiereDate"},
+		Descending: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := itemIDs(items); len(got) != 2 || got[0] != "m2" || got[1] != "m1" {
+		t.Fatalf("order = %v, want m2 (2025), m1 (1999)", got)
 	}
 }

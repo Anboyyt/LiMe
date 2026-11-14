@@ -1156,6 +1156,19 @@ func minutesToTicks(minutes int) int64 {
 	return int64(minutes) * 60 * 10_000_000
 }
 
+// yearFromDate 从 TMDB 的 YYYY-MM-DD 日期取年份。
+// 日期为空或格式不对时返回 0，调用方保持目录名年份不变。
+func yearFromDate(date string) int {
+	if len(date) < 4 {
+		return 0
+	}
+	year, err := strconv.Atoi(date[:4])
+	if err != nil || year < 1800 || year > 2200 {
+		return 0
+	}
+	return year
+}
+
 // downloadLogo 挑一张 ClearLogo 并下载。第二个返回值表示「已尝试」：
 // TMDB 没有 logo 也算尝试成功，下载失败则留待下次重试。
 func (s *Scraper) downloadLogo(ctx context.Context, logos []tmdb.Image, itemID string) (string, bool) {
@@ -1204,6 +1217,7 @@ func (s *Scraper) scrapeMovie(ctx context.Context, it *store.Item) error {
 		Overview:        m.Overview,
 		OriginalTitle:   m.OriginalTitle,
 		PremiereDate:    m.ReleaseDate,
+		ProductionYear:  yearFromDate(m.ReleaseDate),
 		CommunityRating: m.VoteAverage,
 		RunTimeTicks:    minutesToTicks(m.Runtime),
 		ImagePath:       poster,
@@ -1268,6 +1282,7 @@ func (s *Scraper) scrapeSeries(ctx context.Context, it *store.Item) error {
 		Overview:        tv.Overview,
 		OriginalTitle:   tv.OriginalName,
 		PremiereDate:    tv.FirstAirDate,
+		ProductionYear:  yearFromDate(tv.FirstAirDate),
 		CommunityRating: tv.VoteAverage,
 		ImagePath:       poster,
 		BackdropPath:    backdrop,

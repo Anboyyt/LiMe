@@ -88,7 +88,11 @@ ON CONFLICT(id) DO UPDATE SET
   pinyin = CASE WHEN excluded.pinyin <> '' THEN excluded.pinyin ELSE items.pinyin END,
   pinyin_abbr = CASE WHEN excluded.pinyin_abbr <> '' THEN excluded.pinyin_abbr ELSE items.pinyin_abbr END,
   overview = CASE WHEN excluded.overview <> '' THEN excluded.overview ELSE items.overview END,
-  production_year = CASE WHEN excluded.production_year > 0
+  -- 刮削/本地 NFO 写过的年份以 TMDB 日期为准，重扫时不能被目录名年份覆盖
+  production_year = CASE WHEN items.scraped_at > 0 AND items.premiere_date <> ''
+                              AND items.production_year > 0
+                         THEN items.production_year
+                         WHEN excluded.production_year > 0
                          THEN excluded.production_year ELSE items.production_year END,
   index_number = excluded.index_number,
   parent_index_number = excluded.parent_index_number,
@@ -145,9 +149,11 @@ func (d *DB) SetItemImage(id, imageType, rel string) error {
 
 // MetadataUpdate 是刮削写回条目的字段。空值表示不覆盖已有内容。
 type MetadataUpdate struct {
-	Overview        string
-	OriginalTitle   string
-	PremiereDate    string
+	Overview      string
+	OriginalTitle string
+	PremiereDate  string
+	// ProductionYear 由 TMDB 首播/上映日期推出；0 表示不覆盖已有年份。
+	ProductionYear  int
 	CommunityRating float64
 	RunTimeTicks    int64
 	ImagePath       string
@@ -173,6 +179,7 @@ UPDATE items SET
   overview         = CASE WHEN ? <> '' THEN ? ELSE overview END,
   original_title   = CASE WHEN ? <> '' THEN ? ELSE original_title END,
   premiere_date    = CASE WHEN ? <> '' THEN ? ELSE premiere_date END,
+  production_year  = CASE WHEN ? > 0 THEN ? ELSE production_year END,
   community_rating = CASE WHEN ? > 0 THEN ? ELSE community_rating END,
   run_time_ticks   = CASE WHEN ? > 0 THEN ? ELSE run_time_ticks END,
   image_path       = CASE WHEN ? <> '' THEN ? ELSE image_path END,
@@ -191,6 +198,7 @@ WHERE id = ?`,
 		m.Overview, m.Overview,
 		m.OriginalTitle, m.OriginalTitle,
 		m.PremiereDate, m.PremiereDate,
+		m.ProductionYear, m.ProductionYear,
 		m.CommunityRating, m.CommunityRating,
 		m.RunTimeTicks, m.RunTimeTicks,
 		m.ImagePath, m.ImagePath,
@@ -891,7 +899,14 @@ func (d *DB) buildItemWhere(q ItemQuery) ([]string, []any) {
 	}
 
 	if len(q.Types) > 0 {
-		where = append(where, "type IN ("+placeholders(len(q.Types))+")")
+		// 单个 type 用 = 而不是 IN：SQLite 遇到 IN(...) 时不会用
+		// (type, production_year, premiere_date) 索引满足 ORDER BY，
+		// 会退化成临时 B-Tree 排序（大库上几百毫秒）。
+		if len(q.Types) == 1 {
+			where = append(where, "type = ?")
+		} else {
+			where = append(where, "type IN ("+placeholders(len(q.Types))+")")
+		}
 		for _, t := range q.Types {
 			args = append(args, t)
 		}
@@ -999,12 +1014,18 @@ var sortColumns = map[string]string{
 	"SortName":          sortKeyExpr,
 	"Name":              "name",
 	"DateCreated":       "created_at",
-	"ProductionYear":    "production_year",
+	"PremiereDate":      "premiere_date",
 	"CommunityRating":   "community_rating",
 	"IndexNumber":       "index_number",
 	"ParentIndexNumber": "parent_index_number",
 	"Random":            "RANDOM()",
 }
+
+// 「年份」排序：先按年份，同一年内再严格按开播/上映日期。
+// 只按 production_year 排时，同一年条目的顺序由索引扫描顺序决定，
+// 客户端看到的就不是「从新到旧」。日期为空（未刮削/NFO 没写）的条目
+// 降序时排在同年最后，升序时排在最前。
+// 直接用 premiere_date 列，和迁移 0029 的复合索引保持一致，避免索引失效。
 
 // lastContentAddedOrder 「最近添加内容」排序：剧集取最新一集的入库时间，
 // 其他类型取自身入库时间。
@@ -1057,6 +1078,12 @@ func buildOrderBy(q ItemQuery) string {
 		if s == "DateLastContentAdded" || s == "DateLastMediaAdded" {
 			// Emby 与 Jellyfin 两种叫法都接受
 			parts = append(parts, lastContentAddedOrder+" "+dir)
+			continue
+		}
+		if s == "ProductionYear" {
+			// 年份相同时按首播日期排；两个字段都要带方向，不能写成
+			// "production_year, premiere_date DESC"（那只对后一列生效）。
+			parts = append(parts, "production_year "+dir, "premiere_date "+dir)
 			continue
 		}
 		col, ok := sortColumns[s]
