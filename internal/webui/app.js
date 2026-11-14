@@ -1210,11 +1210,11 @@
             <option value="all" ${settings.SegmentScope === 'all' ? 'selected' : ''}>全库</option>
           </select>
           <input id="segmentAutoAfter" placeholder="自动触发，如 5m、0=关闭" style="max-width:200px"
-            value="${esc(settings.SegmentAutoAfter || '5m')}">
+            value="${esc(settings.SegmentAutoAfter || '10m')}">
           <button class="primary" data-action="save-settings">保存</button>
           <button data-action="scan-segments">立即提取一批</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">章节随预热探测顺手获取，零额外流量；没有标准章节的剧之后再接音频指纹。单集看到设定时长后自动补齐整部剧，避免冷开场/片头位置每集不同导致的漏检。</p>
+        <p class="muted" style="margin:8px 0 0">章节随预热探测顺手获取，零额外流量；没有标准章节的剧之后再接音频指纹。回填顺序：没看过的集 → 在看 → 已完成。单集看到设定时长后自动补齐整部剧，20 分钟时再补一次，捡起第一轮没排到的集。</p>
       </div>
       <div class="panel"><h3>背景图清晰度</h3>
         <div class="kv">

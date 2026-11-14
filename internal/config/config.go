@@ -147,7 +147,7 @@ func Load() Config {
 		ProbeMaxRun:       getduration("LIME_PROBE_MAX_RUN", 2*time.Hour),
 		SegmentExtract:    getbool("LIME_SEGMENT_EXTRACT", true),
 		SegmentScope:      getenv("LIME_SEGMENT_SCOPE", "watching"),
-		SegmentAutoAfter:  getduration("LIME_SEGMENT_AUTO_AFTER", 5*time.Minute),
+		SegmentAutoAfter:  getduration("LIME_SEGMENT_AUTO_AFTER", 10*time.Minute),
 		BackdropWorkers:   getint("LIME_BACKDROP_WORKERS", 5),
 		BackupDailyAt:     getenv("LIME_BACKUP_DAILY_AT", "04:30"),
 		BackupKeep:        getint("LIME_BACKUP_KEEP", 3),

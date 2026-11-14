@@ -360,16 +360,19 @@ func (p *Prober) EnqueueSegments(src *store.MediaSource) <-chan struct{} {
 
 // WarmSeriesSegments 立即把某部剧里还没分析过片头片尾的集排进队列。
 // 同一部剧 12 小时内只触发一次，避免每集进度上报都重复查询。
-func (p *Prober) WarmSeriesSegments(seriesID string) {
+// level 区分「看到 10 分钟」和「看到 20 分钟」两次触发，让后一次能补前一次
+// 没排到的集；同一集的同一档位 12 小时内只触发一次。
+func (p *Prober) WarmSeriesSegments(seriesID, itemID string, level int) {
 	if p == nil || !p.enabled || !p.segmentsOn.Load() || seriesID == "" {
 		return
 	}
+	key := seriesID + "|" + itemID + "|" + strconv.Itoa(level)
 	p.segTrigMu.Lock()
-	if last, ok := p.segTriggers[seriesID]; ok && time.Since(last) < 12*time.Hour {
+	if last, ok := p.segTriggers[key]; ok && time.Since(last) < 12*time.Hour {
 		p.segTrigMu.Unlock()
 		return
 	}
-	p.segTriggers[seriesID] = time.Now()
+	p.segTriggers[key] = time.Now()
 	p.segTrigMu.Unlock()
 
 	go func() {

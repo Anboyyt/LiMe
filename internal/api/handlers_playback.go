@@ -362,12 +362,17 @@ func (h *Handler) saveProgress(w http.ResponseWriter, r *http.Request, event pla
 		h.prober.WarmSeries(it.SeriesID, 30)
 	}
 
-	// 单集累计看到一定时长后，自动把整部剧的片头片尾补齐。
-	// 同一部剧 12 小时内只触发一次，进度心跳不会反复排队。
+	// 单集看到设定时长后补整部剧：第一档（默认 10 分钟）先补没看过的集，
+	// 第二档（20 分钟）再补一次，捡起第一轮没排到的集。都按剧去重。
 	if it.Type == store.TypeEpisode && it.SeriesID != "" {
-		autoAfter := h.segmentAutoAfter()
-		if autoAfter > 0 && position >= int64(autoAfter.Seconds()*10_000_000) {
-			h.prober.WarmSeriesSegments(it.SeriesID)
+		if autoAfter := h.segmentAutoAfter(); autoAfter > 0 {
+			ticks := int64(autoAfter.Seconds() * 10_000_000)
+			if position >= ticks {
+				h.prober.WarmSeriesSegments(it.SeriesID, it.ID, 1)
+			}
+			if position >= 2*ticks && 2*autoAfter <= 6*time.Hour {
+				h.prober.WarmSeriesSegments(it.SeriesID, it.ID, 2)
+			}
 		}
 	}
 

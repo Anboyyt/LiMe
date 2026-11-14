@@ -51,3 +51,48 @@ func TestReplaceMediaSegmentsKeepsManual(t *testing.T) {
 		t.Fatalf("intro segments = %d, want 2", len(onlyIntro))
 	}
 }
+
+// 回填顺序：没看过 → 在看 → 已完成。
+func TestSegmentBackfillOrder(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+	if err := db.UpsertItem(&Item{
+		ID: "e3", LibraryID: "lib", ParentID: "se1", Type: TypeEpisode,
+		Name: "第 3 集", SeriesID: "s1", SeasonID: "se1",
+		IndexNumber: 3, ParentIndexNumber: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"e1", "e2", "e3"} {
+		if err := db.UpsertMediaSource(&MediaSource{
+			ID: "src-" + id, ItemID: id, URL: "http://example/" + id, ProbeStatus: "done",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// e1 已看完，e3 看到一半，e2 没看过。
+	if err := db.UpsertPlaystate("u1", "e1", 1000, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertPlaystate("u1", "e3", 500, false); err != nil {
+		t.Fatal(err)
+	}
+
+	srcs, err := db.SourcesForSeriesSegmentBackfill("s1", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(srcs))
+	for _, s := range srcs {
+		got = append(got, s.ItemID)
+	}
+	want := []string{"e2", "e3", "e1"}
+	if len(got) != len(want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+}

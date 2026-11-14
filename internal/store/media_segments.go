@@ -182,7 +182,21 @@ SELECT ms.id, ms.item_id, ms.strm_path, ms.url, ms.cloud, ms.drive_id, ms.cloud_
        ms.size, ms.container, ms.file_name, ms.version_name, ms.sort_rank,
        ms.duration_ticks, ms.probe_status, ms.strm_mtime, ms.strm_size, ms.updated_at
 FROM media_sources ms
-JOIN items i ON i.id = ms.item_id`
+JOIN items i ON i.id = ms.item_id` + segmentWatchJoin
+
+// 回填优先级：没看过（0）→ 在看（1）→ 已完成（2）。
+// 一部剧里先把还没看的集补上，看完的放最后。
+const segmentWatchJoin = `
+LEFT JOIN (
+    SELECT item_id, MAX(played) AS played, MAX(position_ticks) AS position
+    FROM playstates GROUP BY item_id
+) ps ON ps.item_id = i.id`
+
+const segmentWatchOrder = `CASE
+    WHEN ps.item_id IS NULL OR (ps.played = 0 AND ps.position = 0) THEN 0
+    WHEN ps.played = 1 THEN 2
+    ELSE 1
+  END`
 
 // SourcesForSegmentWarmup 返回需要补片头片尾的片源（只取每个条目的主片源）。
 func (d *DB) SourcesForSegmentWarmup(since int64, limit int, mode string) ([]*MediaSource, error) {
@@ -191,7 +205,7 @@ func (d *DB) SourcesForSegmentWarmup(since int64, limit int, mode string) ([]*Me
 	}
 	args := make([]any, 0, 8)
 	where := d.segmentScopeWhere(mode, since, &args)
-	q := segmentSourceSelect + ` WHERE ` + where + ` ORDER BY i.created_at DESC LIMIT ?`
+	q := segmentSourceSelect + ` WHERE ` + where + ` ORDER BY ` + segmentWatchOrder + `, i.created_at DESC LIMIT ?`
 	args = append(args, limit)
 	return d.querySegmentSources(q, args...)
 }
@@ -212,7 +226,7 @@ func (d *DB) SourcesForSeriesSegmentBackfill(seriesID string, limit int) ([]*Med
   AND NOT EXISTS (SELECT 1 FROM segment_analysis sa
                   WHERE sa.item_id = i.id
                     AND (sa.status = 'done' OR (sa.status = 'failed' AND sa.updated_at > ?)))
-ORDER BY i.parent_index_number, i.index_number LIMIT ?`
+ORDER BY ` + segmentWatchOrder + `, i.parent_index_number, i.index_number LIMIT ?`
 	return d.querySegmentSources(q, seriesID, time.Now().Add(-24*time.Hour).Unix(), limit)
 }
 
