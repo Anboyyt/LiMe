@@ -34,6 +34,7 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /web/api/logs", h.webLogs)
 	mux.HandleFunc("GET /web/api/logs/export", h.webLogsExport)
 	mux.HandleFunc("POST /web/api/segments/scan", h.webSegmentsScan)
+	mux.HandleFunc("POST /web/api/segments", h.webSetSegments)
 	mux.HandleFunc("GET /web/api/libraries", h.webLibraries)
 	mux.HandleFunc("POST /web/api/libraries", h.webLibraries)
 	mux.HandleFunc("GET /web/api/browse", h.webBrowseDirs)

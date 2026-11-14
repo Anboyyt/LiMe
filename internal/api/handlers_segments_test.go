@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"lime/internal/store"
@@ -66,5 +67,73 @@ func TestMediaSegmentsEndpoint(t *testing.T) {
 	empty := get("/MediaSegments/missing")
 	if len(empty) != 0 {
 		t.Fatalf("missing item should return empty: %+v", empty)
+	}
+}
+
+func TestManualSegmentsEndpoint(t *testing.T) {
+	env := newTestEnv(t)
+	hash, _ := store.HashPassword("pw")
+	admin, err := env.db.CreateUser("segadmin", hash, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := env.db.CreateToken(admin.ID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	post := func(body string) int {
+		req := httptest.NewRequest(http.MethodPost, "/web/api/segments", strings.NewReader(body))
+		req.Header.Set("X-Emby-Token", tok)
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		env.handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	if code := post(`{"ItemId":"ep9","Segments":[
+		{"Type":"Intro","StartTicks":780000000,"EndTicks":1680000000},
+		{"Type":"Outro","StartTicks":13240000000,"EndTicks":14210000000}]}`); code != http.StatusOK {
+		t.Fatalf("post status = %d", code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/MediaSegments/ep9", nil)
+	req.Header.Set("X-Emby-Token", tok)
+	rr := httptest.NewRecorder()
+	env.handler.ServeHTTP(rr, req)
+	var out struct {
+		Items []map[string]any
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Items) != 2 || out.Items[0]["Type"] != "Intro" {
+		t.Fatalf("segments = %+v", out.Items)
+	}
+
+	// 再次标记应当整组替换，而不是追加。
+	if code := post(`{"ItemId":"ep9","Segments":[
+		{"Type":"Intro","StartTicks":100000000,"EndTicks":200000000}]}`); code != http.StatusOK {
+		t.Fatalf("replace status = %d", code)
+	}
+	req = httptest.NewRequest(http.MethodGet, "/MediaSegments/ep9", nil)
+	req.Header.Set("X-Emby-Token", tok)
+	rr = httptest.NewRecorder()
+	env.handler.ServeHTTP(rr, req)
+	_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	if len(out.Items) != 1 {
+		t.Fatalf("replace left %d segments", len(out.Items))
+	}
+
+	// 非管理员不能写。
+	hash2, _ := store.HashPassword("pw")
+	normal, _ := env.db.CreateUser("segnormal", hash2, false)
+	tok2, _ := env.db.CreateToken(normal.ID, "test")
+	req = httptest.NewRequest(http.MethodPost, "/web/api/segments",
+		strings.NewReader(`{"ItemId":"ep9","Segments":[]}`))
+	req.Header.Set("X-Emby-Token", tok2)
+	rr = httptest.NewRecorder()
+	env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("non-admin status = %d, want 403", rr.Code)
 	}
 }

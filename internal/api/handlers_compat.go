@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -209,6 +210,53 @@ func (h *Handler) mediaSegments(w http.ResponseWriter, r *http.Request) {
 		"Items":            items,
 		"TotalRecordCount": len(items),
 	})
+}
+
+// webSetSegments 手动标记某个条目的片头片尾。手动标记优先于自动章节/指纹。
+func (h *Handler) webSetSegments(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+	var p struct {
+		ItemId   string                `json:"ItemId"`
+		Segments []dto.MediaSegmentDto `json:"Segments"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	itemID := strings.TrimSpace(p.ItemId)
+	if itemID == "" {
+		writeError(w, http.StatusBadRequest, "ItemId is required")
+		return
+	}
+	segs := make([]store.MediaSegment, 0, len(p.Segments))
+	for _, s := range p.Segments {
+		typ := s.Type
+		switch typ {
+		case store.SegmentIntro, store.SegmentOutro, store.SegmentRecap,
+			store.SegmentPreview, store.SegmentCommercial:
+		default:
+			writeError(w, http.StatusBadRequest, "invalid segment type: "+typ)
+			return
+		}
+		if s.StartTicks < 0 || s.EndTicks <= s.StartTicks ||
+			s.EndTicks-s.StartTicks > 6*3600*10_000_000 {
+			writeError(w, http.StatusBadRequest, "invalid segment ticks")
+			return
+		}
+		segs = append(segs, store.MediaSegment{
+			ItemID:     itemID,
+			Type:       typ,
+			StartTicks: s.StartTicks,
+			EndTicks:   s.EndTicks,
+		})
+	}
+	if err := h.db.SetManualSegments(itemID, segs); err != nil {
+		writeError(w, http.StatusInternalServerError, "save segments failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"Items": len(segs)})
 }
 
 // webSegmentsScan 手动触发片头片尾提取：带 seriesId 补整部剧，否则按设置范围补一批。

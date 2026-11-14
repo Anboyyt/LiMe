@@ -266,3 +266,40 @@ func (d *DB) querySegmentSources(q string, args ...any) ([]*MediaSource, error) 
 	}
 	return out, rows.Err()
 }
+
+// SetManualSegments 用用户手动标记替换条目的全部片段。
+// 手动标记优先于自动扫描：同时写 segment_analysis，避免预热再把自动结果加回来。
+func (d *DB) SetManualSegments(itemID string, segs []MediaSegment) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(`DELETE FROM media_segments WHERE item_id = ?`, itemID); err != nil {
+		return err
+	}
+	now := time.Now().Unix()
+	for i := range segs {
+		s := segs[i]
+		if s.Type == "" || s.StartTicks < 0 || s.EndTicks <= s.StartTicks {
+			continue
+		}
+		if _, err := tx.Exec(`
+INSERT INTO media_segments (id, item_id, type, start_ticks, end_ticks, source, confidence, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 'manual', 1, ?, ?)`,
+			segmentID(itemID, s.Type, s.StartTicks)+"-manual", itemID, s.Type,
+			s.StartTicks, s.EndTicks, now, now); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`
+INSERT INTO segment_analysis (item_id, status, method, note, updated_at)
+VALUES (?, 'done', 'manual', 'user marked', ?)
+ON CONFLICT(item_id) DO UPDATE SET status = 'done', method = 'manual',
+  note = 'user marked', updated_at = excluded.updated_at`,
+		itemID, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
