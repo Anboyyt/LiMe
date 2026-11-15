@@ -1,28 +1,46 @@
 # LiMe
 
-一个用 Go 写的轻量媒体服务器，**兼容 Jellyfin / Emby 客户端**，专为「网盘 STRM + 302 直连」场景设计。
+**轻量 Jellyfin 兼容媒体服务器 · 只适配 PanSave**
 
-服务端不接触视频字节、不转码、不缓存 URL —— 播放时只回一个 `302`，让客户端直连云盘 CDN。
+兼容 Jellyfin 客户端、爆米花、SenPlayer、VidHub —— **SenPlayer 体验最佳**。
+
+服务端代客户端跟一跳 PanSave 的 302；**外网直接访问 LiMe 就能播放**，
+视频流不再绕经 PanSave 反向代理。
 
 ```
 客户端 → LiMe → 302 → 115/123 CDN → 播放
 ```
 
-LiMe 在服务端替客户端跟一跳 PanSave 的 302，外网可以直接访问 LiMe，
-播放流量不必绕经 PanSave 反代。
+开启 `LIME_RESOLVE_REDIRECT` 后，LiMe 在服务端就把 PanSave 那一跳跟掉，
+直接把最终 CDN 地址交给客户端 —— PanSave 的反代端口完全不用暴露到公网。
+
+> 服务端不接触视频字节、不转码、不缓存 URL。播放大库时 LiMe 几乎不占上传带宽。
 
 ## 特性
 
-- **Jellyfin 兼容**：官方 Android / Android TV / Infuse / VidHub 等客户端可直接连接
+- **Jellyfin / Emby 兼容**：同时接受 `/emby/...` 前缀，PanSave 的 Emby 校验可直接通过
 - **302 直连**：服务端只发重定向，不吃带宽、不做转码
-- **STRM 索引**：扫描 `.strm` 文件，自动识别电影 / 剧集 / 季 / 单集
-- **TMDB 刮削**：海报、背景、Logo、简介、演员、评分，支持中文
+- **STRM 索引**：扫描 `.strm`，自动识别电影 / 剧集 / 季 / 单集，同一部片多版本归并
+- **TMDB 刮削**：按目录里的 `{tmdb-ID}` 精确刮削，海报、背景、Logo、简介、演员、评分
 - **本地元数据**：识别同目录 `.nfo` 和 `poster.jpg` / `fanart.jpg`，本地优先
-- **实时监控**：新 `.strm` 落盘后自动入库并精准刮削
-- **多用户**：独立播放进度、收藏、已看状态，支持家长分级
-- **相似推荐**：详情页按类型 / 演员 / 评分 / 年份打分，电影推电影、剧集推剧集
+- **实时监控**：新 `.strm` 落盘后自动入库并精准刮削，删除/改名同步清理
+- **片头片尾**：章节 + 音频指纹两种来源，返回 `MediaSegments`，支持手动标记
+- **多用户**：独立播放进度、收藏、已看状态，支持按库授权
+- **相似推荐**：按类型 / 演员 / 评分 / 年份打分，电影推电影、剧集推剧集
+- **本地播放器**：可唤起 PotPlayer / VLC / MPV / IINA / Infuse
 - **自带 Web UI**：`/` 原生媒体界面，`/web/` 运维面板，无前端框架
-- **单二进制**：Go 静态编译，SQLite 存储，无外部依赖
+- **单二进制**：Go 静态编译，SQLite 存储，无外部数据库依赖
+
+## 客户端兼容
+
+| 客户端 | 状态 |
+|---|---|
+| **SenPlayer** | ✅ 最佳（针对性适配过） |
+| VidHub | ✅ |
+| 爆米花（Filmly） | ✅ |
+| Infuse | ✅ |
+| Jellyfin 官方 Android / Android TV | ⚠️ 基础可用（片头跳过按钮需服务端 ≥ 10.10，暂不显示） |
+| jellyfin-web | ❌ 浏览器播不了 mkv / H.265（服务端不转码） |
 
 ## 快速开始
 
@@ -43,6 +61,8 @@ services:
       # 名称|容器内路径|类型，多个库用分号分隔
       LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
       LIME_LIBRARY_ROOTS: "/media"
+      # 公网直连建议开启：服务端跟掉 PanSave 一跳，直接 302 到 CDN
+      LIME_RESOLVE_REDIRECT: "true"
     volumes:
       - ./data:/data
       - /path/to/your/strm:/media:ro
@@ -65,28 +85,35 @@ docker run -d --name lime \
   -e LIME_LIBRARIES="电影|/strm/电影|movies;剧集|/strm/剧集|tvshows" \
   -e LIME_ADMIN_USER=admin \
   -e LIME_ADMIN_PASSWORD=change-me \
+  -e LIME_RESOLVE_REDIRECT=true \
   lixxh/lime:latest
 ```
 
-启动后打开 `http://<服务器IP>:886` 登录，运维面板在 `/web/`。
+启动后打开 `http://<服务器IP>:886` 登录，运维面板在 `/web/`（仅管理员可进）。
 
 ## 常用环境变量
 
 | 变量 | 说明 | 默认 |
 |---|---|---|
 | `LIME_ADMIN_USER` | 初始管理员 | `admin` |
-| `LIME_ADMIN_PASSWORD` | 初始密码（仅首次生效） | `change-me` |
-| `LIME_LIBRARIES` | 媒体库定义 | — |
-| `LIME_LIBRARY_ROOTS` | 面板新建库允许的根路径 | — |
-| `LIME_SCAN_ON_START` | 启动时全量扫描 | `false` |
-| `LIME_SCAN_DAILY_AT` | 每日增量扫描时间 `HH:MM` | `03:30` |
+| `LIME_ADMIN_PASSWORD` | 初始密码（仅首次生效） | `password` |
+| `LIME_LIBRARIES` | 媒体库定义：`名称\|容器内路径\|类型` | 自动探测 `/strm` |
+| `LIME_LIBRARY_ROOTS` | 面板新建库允许的根路径 | `/strm` |
+| `LIME_SCAN_ON_START` | 启动时全量扫描 | `true` |
+| `LIME_SCAN_DAILY_AT` | 每日增量扫描时间 `HH:MM`，留空关闭 | 空（面板默认 03:30） |
 | `LIME_REALTIME_MONITOR` | 实时监控媒体目录 | `true` |
-| `LIME_TMDB_API_KEY` | TMDB Key，留空关闭刮削 | 空 |
-| `LIME_TMDB_PROXY` | TMDB 代理（国内需要） | 空 |
-| `LIME_REWRITE_ENABLED` | 外网访问时改写 302 地址 | `false` |
+| `LIME_REALTIME_RECONCILE` | 启动时磁盘与数据库对账 | `true` |
+| `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，直接给 CDN 地址 | `false` |
+| `LIME_INTERNAL_URL` | PanSave 反代用的内网上游地址 | 空 |
+| `LIME_REWRITE_ENABLED` | 改写 STRM 里的 302 地址 | `false` |
 | `LIME_REWRITE_FROM` / `LOCAL` / `PUBLIC` | 地址改写规则 | — |
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点强制校验 token | `false` |
-| `LIME_PROBE_ENABLED` | ffprobe 探测媒体信息 | `true` |
+| `LIME_TMDB_API_KEY` | TMDB Key，留空关闭刮削 | 空 |
+| `LIME_TMDB_PROXY` | TMDB 代理（国内需要，写宿主机 IP） | 空 |
+| `LIME_SCRAPE_TIMEOUT` | 单次刮削上限，到点正常暂停 | `6h` |
+| `LIME_SEGMENT_EXTRACT` | 是否提取片头片尾 | `true` |
+| `LIME_SEGMENT_SCOPE` | 存量回填范围：`favorites`/`watching`/`recent`/`all` | `watching` |
+| `LIME_SEGMENT_AUTO_AFTER` | 观看多久后补齐整剧；`0` 关闭 | `10m` |
 
 完整列表见 GitHub 仓库 README。
 
@@ -94,10 +121,12 @@ docker run -d --name lime \
 
 - 平台：`linux/amd64`、`linux/arm64`
 - 标签：`latest`、`1.0`、`1.0.x`、`edge`（`main` 分支自动构建）
-- 基础镜像：`alpine` + `ffmpeg`（用于 ffprobe）
+- 基础镜像：`alpine` + `ffmpeg`（用于 ffprobe 探测和音频指纹）
 
 ## 链接
 
 - GitHub：https://github.com/Anboyyt/LiMe
+- Telegram 频道：https://t.me/Lime_see
+- Telegram 群组：https://t.me/Lime_seee
 - 许可证：MIT
 - 注意：本项目按 Jellyfin 公开 API 契约独立实现，与 Jellyfin 项目无隶属关系
