@@ -1,0 +1,54 @@
+name: dockerhub-overview
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/dockerhub-overview.md"
+      - ".github/workflows/dockerhub-overview.yml"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync overview to Docker Hub
+        env:
+          DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          REPO: lime
+          SHORT_DESC: "Jellyfin 兼容的轻量媒体服务器，网盘 STRM + 302 直连，不转码"
+        run: |
+          set -euo pipefail
+          if [ -z "${DH_USER}" ] || [ -z "${DH_TOKEN}" ]; then
+            echo "DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 未配置，跳过"
+            exit 0
+          fi
+
+          JWT=$(curl -fsS -X POST "https://hub.docker.com/v2/users/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" \
+            | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
+          export JWT
+
+          python3 - "$SHORT_DESC" <<'PY'
+          import json, os, sys, urllib.request
+          text = open("docs/dockerhub-overview.md", encoding="utf-8").read()
+          body = json.dumps({"description": sys.argv[1], "full_description": text}).encode()
+          req = urllib.request.Request(
+              f"https://hub.docker.com/v2/repositories/{os.environ['DH_USER']}/{os.environ['REPO']}/",
+              data=body, method="PATCH",
+              headers={"Authorization": f"JWT {os.environ['JWT']}", "Content-Type": "application/json"})
+          with urllib.request.urlopen(req) as r:
+              print("PATCH ->", r.status)
+          PY
+
+      - name: Verify
+        run: |
+          curl -fsS "https://hub.docker.com/v2/repositories/${USERNAME}/${REPO}/" \
+            | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("description",""));print("full_description bytes:",len(d.get("full_description") or ""))'
+        env:
+          USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          REPO: lime

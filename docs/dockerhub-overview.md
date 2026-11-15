@@ -130,3 +130,5 @@ docker run -d --name lime \
 - Telegram 群组：https://t.me/Lime_seee
 - 许可证：MIT
 - 注意：本项目按 Jellyfin 公开 API 契约独立实现，与 Jellyfin 项目无隶属关系
+
+> 本页由 GitHub Actions 在 `docs/dockerhub-overview.md` 变更时自动同步到 Docker Hub。
