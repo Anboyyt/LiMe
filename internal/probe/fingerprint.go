@@ -523,17 +523,19 @@ func longestRun(a, b []float64, lag int) (fpSpan, fpSpan) {
 	// 起点处这 4 秒对不上就往后挪，终点处对不上就往前挪。
 	// 否则片尾会从正片最后几秒就开始跳。
 	const fw = 8 // 4 秒
+	// 阈值要明显高于噪声：lag 有半秒偏差时，错位的 4 秒窗相关度
+	// 还能到 0.5 左右，边界会被留在正片里。
 	ok := func(k int) bool {
 		return k >= 0 && k+fw <= n &&
-			pearson(a[i0+k:i0+k+fw], b[j0+k:j0+k+fw]) >= 0.5
+			pearson(a[i0+k:i0+k+fw], b[j0+k:j0+k+fw]) >= 0.7
 	}
-	for moved := 0; moved < 16 && bestEnd-bestStart > 12; moved++ {
+	for moved := 0; moved < 32 && bestEnd-bestStart > 12; moved++ {
 		if ok(bestStart) {
 			break
 		}
 		bestStart++
 	}
-	for moved := 0; moved < 16 && bestEnd-bestStart > 12; moved++ {
+	for moved := 0; moved < 32 && bestEnd-bestStart > 12; moved++ {
 		if ok(bestEnd - fw) {
 			break
 		}
