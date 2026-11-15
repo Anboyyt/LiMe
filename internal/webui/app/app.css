@@ -75,6 +75,7 @@ body {
   overflow-x: hidden;
 }
 a { color: inherit; text-decoration: none; }
+button, a { -webkit-tap-highlight-color: transparent; }
 img { display: block; }
 .hidden { display: none !important; }
 .muted { color: var(--muted); }
@@ -145,6 +146,8 @@ input {
   color: var(--text);
   font-size: 14px;
   outline: none;
+  -webkit-appearance: none;
+  appearance: none;
   transition: border-color .15s, box-shadow .15s;
 }
 input:focus {
@@ -245,7 +248,10 @@ input:focus {
 .topbar nav a:hover { color: var(--text); background: var(--chip-bg); }
 .topbar nav a.active { color: var(--text); background: rgba(0, 164, 220, .16); }
 .spacer { flex: 1; }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
 .topbar #search { max-width: 280px; padding: 9px 14px; border-radius: 999px; }
+/* 移动端底部导航：桌面隐藏 */
+.mobile-nav { display: none; }
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -736,47 +742,218 @@ input:focus {
 
 .empty { padding: 70px 20px; text-align: center; color: var(--muted); }
 
-@media (max-width: 720px) {
-  .topbar { flex-wrap: wrap; padding: 10px 16px; gap: 8px; }
-  .topbar #search { max-width: none; flex: 1 1 100%; order: 5; }
-  .hero { padding: 70px 18px 32px; min-height: 58vh; }
-  .rail-head { padding: 0 16px; }
-  .rail-scroll { padding: 6px 16px 14px; }
-  .library-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px 10px; padding: 0 16px; }
-  .library-kind { display: none; }
-  .page { padding: 20px 16px 60px; }
-  .detail-hero { padding: 70px 18px 24px; }
-  .back-btn { top: 16px; left: 16px; }
-  .detail-inner { flex-direction: column; align-items: flex-start; gap: 16px; }
-  .detail-poster { width: 120px; }
-  .episode .thumb { width: 88px; height: 50px; }
-  .section { padding: 20px 16px; }
-  .card { flex-basis: 140px; }
-}
-
 /* ---------- 手机适配（媒体界面） ---------- */
 @media (max-width: 720px) {
-  .topbar { padding: 10px 12px; gap: 8px; }
-  .topbar .brand { font-size: 19px; }
+  html { scroll-padding-top: 16px; }
+
+  /* 顶栏拆成「品牌 + 操作」和「搜索」两行，避免窄屏挤成三行。
+     首页/收藏改由底部导航承载，拇指更容易够到。 */
+  .topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand actions"
+      "search search";
+    align-items: center;
+    gap: 8px 10px;
+    padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
+  }
+  .topbar .brand { grid-area: brand; font-size: 18px; gap: 7px; min-width: 0; }
+  .topbar .brand img { width: 26px; height: 26px; border-radius: 8px; }
+  .topbar .brand #brandVer { display: none; }
+  .topbar nav,
+  .topbar .spacer,
   .topbar #userName { display: none; }
-  .topbar nav { flex: 1 1 auto; overflow-x: auto; scrollbar-width: none; }
-  .topbar nav::-webkit-scrollbar { display: none; }
-  .topbar #search { order: 5; flex: 1 1 100%; max-width: none; padding: 9px 12px; }
-  .grid { grid-template-columns: repeat(auto-fill, minmax(126px, 1fr)); gap: 12px 10px; }
+  .topbar-actions { grid-area: actions; gap: 6px; }
+  .topbar .icon-btn { width: 38px; height: 38px; padding: 0; flex: none; }
+  .topbar #search {
+    grid-area: search;
+    width: 100%;
+    max-width: none;
+    padding: 11px 14px;
+    border-radius: 12px;
+    font-size: 16px; /* iOS 小于 16px 会自动放大页面 */
+  }
+
+  /* 底部导航 */
+  .mobile-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    padding: 6px max(12px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+    background: var(--glass-bg-strong);
+    border-top: 1px solid var(--line);
+    -webkit-backdrop-filter: var(--glass-blur);
+    backdrop-filter: var(--glass-blur);
+  }
+  .mobile-nav a,
+  .mobile-nav button {
+    flex: 1;
+    min-height: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 3px 0;
+    border: 0;
+    border-radius: 10px;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    font-size: 11px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-nav .active { color: var(--accent); background: var(--primary-bg); }
+  .mobile-nav svg { width: 21px; height: 21px; }
+  .mobile-nav button:active { color: var(--text); }
+
+  /* 给底部导航留出空间，最后一排卡片不会被挡住 */
+  #view { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+
+  .hero {
+    min-height: 52vh;
+    min-height: 52svh;
+    padding: 76px 16px 26px;
+    background-position: center top;
+  }
+  .hero::before,
+  .detail-hero::before {
+    background:
+      linear-gradient(0deg, var(--bg) 0%, color-mix(in srgb, var(--bg) 82%, transparent) 40%, transparent 78%);
+  }
+  .hero-title { font-size: clamp(22px, 7vw, 30px); }
+  .hero-overview { font-size: 13px; line-height: 1.55; -webkit-line-clamp: 2; }
+  .hero-actions { gap: 8px; }
+  .hero-actions .btn { flex: 1 1 120px; text-align: center; }
+
+  .rail { margin: 20px 0; }
+  .rail-head { padding: 0 16px; margin-bottom: 10px; }
+  .rail-head h2 { font-size: 18px; }
+  .rail-scroll {
+    gap: 10px;
+    padding: 5px 16px 14px;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .rail-scroll::-webkit-scrollbar { display: none; }
+  .card { flex: 0 0 136px; }
   .card-title { font-size: 13px; }
-  .hero { min-height: 48vh; padding: 64px 16px 24px; }
-  .hero-title { font-size: 24px; }
-  .hero-overview { font-size: 13px; -webkit-line-clamp: 2; }
-  .detail-inner { gap: 12px; }
-  .detail-poster { width: 104px; }
-  .detail-info h1 { font-size: 21px; }
+  .card-meta { font-size: 11px; }
+
+  .library-shelf { margin: 18px 0 6px; }
+  .library-grid {
+    grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+    gap: 12px 10px;
+    padding: 0 16px;
+  }
+  .library-kind { display: none; }
+  .library-name { font-size: 13px; }
+
+  .page { padding: 18px 16px 24px; }
+  .page-head { gap: 8px; margin-bottom: 16px; }
+  .page-head h1 { font-size: 22px; }
+  .page-head .btn { padding: 8px 14px; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 12px 10px; }
+
+  .filters { gap: 8px; margin-bottom: 16px; }
   .filters select,
-  .filters input[type="number"] { flex: 1 1 40%; min-width: 0; }
-  .player { padding: 8px; }
-  .player-box { width: 100%; }
-  .player video { max-height: 62vh; }
-  .player-controls { gap: 8px; }
+  .filters input,
+  .filters input[type="number"],
+  .filters .btn {
+    flex: 1 1 calc(50% - 8px);
+    width: auto;
+    min-width: 0;
+    font-size: 16px; /* 防止 iOS 聚焦时放大 */
+  }
+
+  .detail-hero {
+    min-height: 0;
+    padding: 62px 16px 24px;
+    background-position: center top;
+  }
+  .back-btn { top: 12px; left: 12px; min-width: 40px; min-height: 40px; padding: 0 12px; }
+  .detail-inner { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .detail-poster { width: 108px; border-radius: 12px; }
+  .detail-info { width: 100%; }
+  .detail-info h1 { font-size: 22px; }
+  .detail-logo { max-width: 70%; max-height: 64px; margin-bottom: 8px; }
+  .title-year { font-size: 13px; margin-bottom: 8px; }
+  .meta-row { gap: 6px; margin-bottom: 10px; }
+  .genre-row { gap: 6px; }
+  .overview { font-size: 13px; line-height: 1.6; margin-bottom: 16px; }
+  .cast-row { font-size: 12.5px; gap: 8px; margin-bottom: 16px; }
+  .hero-actions { width: 100%; gap: 8px; }
+  .hero-actions .btn { flex: 1 1 auto; padding: 10px 12px; text-align: center; }
+
+  .section { padding: 20px 16px; }
+  .section h2 { font-size: 18px; margin-bottom: 12px; }
+  .episode { gap: 10px; padding: 10px 8px; }
+  .episode .thumb { width: 96px; height: 54px; }
+  .episode .num { display: none; }
+  .episode .name { font-size: 14px; }
+  .episode .go { display: none; }
+
+  .source-toolbar { gap: 8px; }
+  .source-row { gap: 8px; padding: 10px 12px; }
   .source-row .path { min-width: 100%; }
+  .source-row .btn { flex: 1 1 auto; padding: 9px 12px; text-align: center; }
+
+  .player {
+    padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom));
+  }
+  .player-box { width: 100%; }
+  .player-head { gap: 10px; }
+  .player-head #playerTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .player video { max-height: 58vh; max-height: 58svh; border-radius: 8px; }
+  .player-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .player-controls label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    min-width: 0;
+  }
+  .player-controls select {
+    flex: 1;
+    min-width: 0;
+    margin-left: 0;
+    padding: 8px;
+    font-size: 16px;
+  }
+  #playerHint { grid-column: 1 / -1; font-size: 12px; }
+
+  .toast {
+    left: 16px;
+    right: 16px;
+    bottom: calc(78px + env(safe-area-inset-bottom));
+    padding: 11px 14px;
+  }
+}
+
+/* 超窄屏（iPhone SE 等）再收紧一档 */
+@media (max-width: 380px) {
+  .card { flex: 0 0 124px; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .topbar .brand { font-size: 17px; }
+  .topbar .icon-btn { width: 36px; height: 36px; }
+  .hero-title { font-size: 22px; }
+}
+
+/* 登录页 / 输入框移动端 */
+@media (max-width: 720px) {
+  .login { min-height: 100dvh; padding: 20px max(16px, env(safe-area-inset-right)) 20px max(16px, env(safe-area-inset-left)); }
+  .login-card { width: 100%; max-width: 360px; padding: 28px 22px; }
+  input { font-size: 16px; }
 }
 
 /* 触屏设备不显示 hover 位移和播放提示 */

@@ -175,6 +175,15 @@
     const links = [`<a href="#/" class="${hash === '#/' ? 'active' : ''}">首页</a>`];
     links.push(`<a href="#/favorites" class="${hash === '#/favorites' ? 'active' : ''}">收藏</a>`);
     $('#nav').innerHTML = links.join('');
+
+    // 移动端底部导航的选中态。
+    document.querySelectorAll('[data-mnav]').forEach((el) => {
+      const key = el.dataset.mnav;
+      const active = key === 'home' ? hash === '#/' || hash === '#'
+        : key === 'favorites' ? hash === '#/favorites'
+        : key === 'search' ? hash.startsWith('#/search') : false;
+      el.classList.toggle('active', active);
+    });
   }
 
   // ---------- 图片 ----------
@@ -201,8 +210,18 @@
     return `/Items/${encodeURIComponent(lib.Id)}/Images/Primary?tag=${encodeURIComponent(tag)}&still=1&maxWidth=640`;
   }
 
+  // 单集自己的 Primary 是 16:9 截图，放进 2:3 卡片会被裁得乱七八糟。
+  // 有剧集海报时一律用剧集海报（包含「继续观看」里的单集）。
+  function seriesPosterUrl(it) {
+    if (it.Type !== 'Episode' || !it.SeriesPrimaryImageTag) return '';
+    const id = it.SeriesPrimaryImageItemId || it.SeriesId;
+    if (!id) return '';
+    return `/Items/${encodeURIComponent(id)}/Images/Primary?tag=` +
+      `${encodeURIComponent(it.SeriesPrimaryImageTag)}&maxWidth=600`;
+  }
+
   function posterHTML(it) {
-    const url = imageUrl(it);
+    const url = seriesPosterUrl(it) || imageUrl(it);
     const playable = it.Type === 'Movie' || it.Type === 'Episode';
     const hint = playable ? '<div class="play-hint"><span>▶</span></div>' : '';
     if (url) {
@@ -212,16 +231,24 @@
     return `<div class="poster"><div class="placeholder">${esc((it.Name || '?').slice(0, 1))}</div>${hint}</div>`;
   }
 
-  function card(it) {
+  function card(it, opts = {}) {
     const ud = it.UserData || {};
     const pct = ud.PlayedPercentage || 0;
     const meta = cardMeta(it);
+    // 续播里的单集显示剧名，再配合 SxxExx，比只显示「第 N 集」更好认。
+    const title = opts.seriesTitle && it.Type === 'Episode'
+      ? (it.SeriesName || it.Name)
+      : it.Name;
     return `<a class="card" href="#/item/${encodeURIComponent(it.Id)}">
       ${posterHTML(it)}
-      <div class="card-title">${esc(it.Name)}</div>
+      <div class="card-title">${esc(title)}</div>
       <div class="card-meta">${meta || ''}</div>
       <div class="progress${pct ? '' : ' no-progress'}"><i style="width:${pct}%"></i></div>
     </a>`;
+  }
+
+  function resumeCard(it) {
+    return card(it, { seriesTitle: true });
   }
 
   // 卡片第二行：年份单独一行；剧集补集号、未看集数和已看状态。
@@ -341,7 +368,7 @@
     html += libraryShelf(state.views);
 
     const resumeItems = resume.Items || [];
-    if (resumeItems.length) html += rail('继续观看', resumeItems);
+    if (resumeItems.length) html += rail('继续观看', resumeItems, resumeCard);
     const latestItems = latest.Items || [];
     if (latestItems.length) html += rail('最近添加', latestItems);
 
@@ -354,10 +381,10 @@
     window.scrollTo({ top: 0 });
   }
 
-  function rail(title, items) {
+  function rail(title, items, cardFn = card) {
     return `<section class="rail">
       <div class="rail-head"><h2>${esc(title)}</h2><span class="rail-count">${items.length}</span></div>
-      <div class="rail-scroll">${items.map(card).join('')}</div>
+      <div class="rail-scroll">${items.map(cardFn).join('')}</div>
     </section>`;
   }
 
@@ -1169,6 +1196,13 @@
     if (e.key !== 'Enter') return;
     const term = e.target.value.trim();
     if (term) location.hash = '#/search/' + encodeURIComponent(term);
+  });
+  // 手机底部导航的「搜索」：回到顶部并聚焦搜索框，键盘可以直接打字。
+  $('#mobileSearchBtn').addEventListener('click', () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    const input = $('#search');
+    input.focus();
+    input.select();
   });
 
   (async () => {

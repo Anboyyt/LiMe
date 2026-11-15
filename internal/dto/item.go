@@ -58,20 +58,24 @@ type BaseItemDto struct {
 	// MediaSourceCount 是片源数量；部分客户端用它判断条目是否可播放。
 	MediaSourceCount int `json:"MediaSourceCount,omitempty"`
 	// Chapters 是 Emby 的章节标记；SenPlayer 从 IntroStart/IntroEnd/CreditsStart 画跳过按钮。
-	Chapters          []ChapterInfoDto `json:"Chapters,omitempty"`
-	ParentId          string           `json:"ParentId,omitempty"`
-	SeriesId          string           `json:"SeriesId,omitempty"`
-	SeasonId          string           `json:"SeasonId,omitempty"`
-	SeriesName        string           `json:"SeriesName,omitempty"`
-	SeasonName        string           `json:"SeasonName,omitempty"`
-	IndexNumber       *int             `json:"IndexNumber,omitempty"`
-	ParentIndexNumber *int             `json:"ParentIndexNumber,omitempty"`
-	CollectionType    string           `json:"CollectionType,omitempty"`
-	Overview          string           `json:"Overview,omitempty"`
-	OfficialRating    string           `json:"OfficialRating,omitempty"`
-	CommunityRating   *float64         `json:"CommunityRating,omitempty"`
-	UserData          *UserItemDataDto `json:"UserData"`
-	MediaSources      []MediaSourceDto `json:"MediaSources,omitempty"`
+	Chapters   []ChapterInfoDto `json:"Chapters,omitempty"`
+	ParentId   string           `json:"ParentId,omitempty"`
+	SeriesId   string           `json:"SeriesId,omitempty"`
+	SeasonId   string           `json:"SeasonId,omitempty"`
+	SeriesName string           `json:"SeriesName,omitempty"`
+	SeasonName string           `json:"SeasonName,omitempty"`
+	// 剧集卡片在 Web UI 里统一用剧集海报（2:3），单集自己的 Primary 是 16:9 截图。
+	// 这两个字段是 Jellyfin 的标准字段，客户端也可以直接拿它拼图片地址。
+	SeriesPrimaryImageTag    string           `json:"SeriesPrimaryImageTag,omitempty"`
+	SeriesPrimaryImageItemId string           `json:"SeriesPrimaryImageItemId,omitempty"`
+	IndexNumber              *int             `json:"IndexNumber,omitempty"`
+	ParentIndexNumber        *int             `json:"ParentIndexNumber,omitempty"`
+	CollectionType           string           `json:"CollectionType,omitempty"`
+	Overview                 string           `json:"Overview,omitempty"`
+	OfficialRating           string           `json:"OfficialRating,omitempty"`
+	CommunityRating          *float64         `json:"CommunityRating,omitempty"`
+	UserData                 *UserItemDataDto `json:"UserData"`
+	MediaSources             []MediaSourceDto `json:"MediaSources,omitempty"`
 }
 
 type PersonDto struct {

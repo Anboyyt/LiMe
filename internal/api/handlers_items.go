@@ -413,13 +413,12 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 		h.log.Warn("load child counts", "err", err)
 	}
 
-	var parentNames map[string]string
+	var parentItems map[string]*store.Item
 	if len(episodeParentIDs) > 0 {
-		parentNames = make(map[string]string, len(episodeParentIDs))
-		if parents, err := h.db.ItemsByIDs(episodeParentIDs); err == nil {
-			for id, p := range parents {
-				parentNames[id] = p.Name
-			}
+		var err error
+		parentItems, err = h.db.ItemsByIDs(episodeParentIDs)
+		if err != nil {
+			h.log.Warn("load episode parents", "err", err)
 		}
 	}
 
@@ -457,8 +456,16 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 				d.ChildCount = &n
 			}
 		case store.TypeEpisode:
-			d.SeriesName = parentNames[it.SeriesID]
-			d.SeasonName = parentNames[it.SeasonID]
+			if p := parentItems[it.SeriesID]; p != nil {
+				d.SeriesName = p.Name
+				if tag := imageTag(p.ImagePath); tag != "" {
+					d.SeriesPrimaryImageTag = tag
+					d.SeriesPrimaryImageItemId = p.ID
+				}
+			}
+			if p := parentItems[it.SeasonID]; p != nil {
+				d.SeasonName = p.Name
+			}
 			if srcs := sourcesByItem[it.ID]; len(srcs) > 0 {
 				d.MediaSourceCount = len(srcs)
 				d.MediaSources = h.listMediaSources(it, srcs, streamsBy)
