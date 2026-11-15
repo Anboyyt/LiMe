@@ -942,12 +942,15 @@ func (d *DB) buildItemWhere(q ItemQuery) ([]string, []any) {
 		args = append(args, q.UserID)
 	}
 	if len(q.Persons) > 0 {
-		// 名字大小写不敏感：客户端拿到的 Person 名字可能和库里存储的格式有差异。
-		where = append(where,
-			`EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(people) THEN people ELSE '[]' END) p
-			 WHERE LOWER(json_extract(p.value, '$.Name')) IN (`+placeholders(len(q.Persons))+`))`)
-		for _, name := range q.Persons {
-			args = append(args, strings.ToLower(strings.TrimSpace(name)))
+		// 走 item_persons 关联表；名字大小写不敏感。
+		names := lowerPersonNames(q.Persons)
+		if len(names) == 0 {
+			where = append(where, "1 = 0")
+		} else {
+			where = append(where,
+				`EXISTS (SELECT 1 FROM item_persons ip WHERE ip.item_id = items.id
+				 AND ip.name_lower IN (`+placeholders(len(names))+`))`)
+			args = append(args, names...)
 		}
 	}
 	if term := strings.TrimSpace(q.SearchTerm); term != "" {

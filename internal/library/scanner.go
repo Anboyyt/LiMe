@@ -142,6 +142,23 @@ type entry struct {
 }
 
 // applier 既可以是 *store.DB，也可以是 *store.Batch。
+// applyCache 在一次扫描内缓存已经写过的剧集/季。
+// 每个单集文件都 upsert 一次 Series + Season 会在 100 万条目时多出约 200 万次写，
+// 而且 item_persons 触发器会被重复触发。
+type applyCache struct {
+	series  map[string]bool
+	seasons map[string]bool
+	local   map[string]bool
+}
+
+func newApplyCache() *applyCache {
+	return &applyCache{
+		series:  make(map[string]bool),
+		seasons: make(map[string]bool),
+		local:   make(map[string]bool),
+	}
+}
+
 type applier interface {
 	UpsertItem(*store.Item) error
 	UpsertMediaSource(*store.MediaSource) error
@@ -353,6 +370,7 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 		close(results)
 	}()
 
+	cache := newApplyCache()
 	sawEpisode := false
 	sawMovie := false
 	count := 0
@@ -390,9 +408,9 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 		var applyErr error
 		var changedID string
 		if batch != nil {
-			changedID, applyErr = s.apply(batch, lib, e)
+			changedID, applyErr = s.apply(batch, lib, e, cache)
 		} else {
-			changedID, applyErr = s.apply(s.db, lib, e) // 事务不可用时逐条写，保证不丢数据
+			changedID, applyErr = s.apply(s.db, lib, e, cache) // 事务不可用时逐条写，保证不丢数据
 		}
 		if applyErr != nil {
 			s.log.Warn("apply item", "path", e.Path, "err", applyErr)
@@ -699,7 +717,7 @@ func metaScore(m strm.Metadata) int {
 	return s
 }
 
-func (s *Scanner) apply(w applier, lib *store.Library, e entry) (string, error) {
+func (s *Scanner) apply(w applier, lib *store.Library, e entry, cache *applyCache) (string, error) {
 	meta := e.Meta
 
 	var item *store.Item
@@ -736,26 +754,42 @@ func (s *Scanner) apply(w applier, lib *store.Library, e entry) (string, error) 
 			CreatedAt:      createdAt,
 		}
 		applySeriesLocalMeta(series, e.Show)
-		if err := w.UpsertItem(series); err != nil {
-			return "", err
+		needSeries := cache == nil || !cache.series[seriesID] ||
+			(e.Show != nil && !cache.local[seriesID])
+		if needSeries {
+			if err := w.UpsertItem(series); err != nil {
+				return "", err
+			}
+			if cache != nil {
+				cache.series[seriesID] = true
+				if e.Show != nil {
+					cache.local[seriesID] = true
+				}
+			}
 		}
 
 		seasonID := itemID(seriesID, "season", strconv.Itoa(meta.Season))
-		if err := w.UpsertItem(&store.Item{
-			ID:             seasonID,
-			LibraryID:      lib.ID,
-			ParentID:       seriesID,
-			Type:           store.TypeSeason,
-			Name:           fmt.Sprintf("第 %d 季", meta.Season),
-			SortName:       fmt.Sprintf("Season %02d", meta.Season),
-			SortKey:        fmt.Sprintf("Season %02d", meta.Season),
-			IndexNumber:    meta.Season,
-			SeriesID:       seriesID,
-			ProductionYear: meta.Year,
-			TmdbID:         meta.TmdbID,
-			CreatedAt:      createdAt,
-		}); err != nil {
-			return "", err
+		needSeason := cache == nil || !cache.seasons[seasonID]
+		if needSeason {
+			if err := w.UpsertItem(&store.Item{
+				ID:             seasonID,
+				LibraryID:      lib.ID,
+				ParentID:       seriesID,
+				Type:           store.TypeSeason,
+				Name:           fmt.Sprintf("第 %d 季", meta.Season),
+				SortName:       fmt.Sprintf("Season %02d", meta.Season),
+				SortKey:        fmt.Sprintf("Season %02d", meta.Season),
+				IndexNumber:    meta.Season,
+				SeriesID:       seriesID,
+				ProductionYear: meta.Year,
+				TmdbID:         meta.TmdbID,
+				CreatedAt:      createdAt,
+			}); err != nil {
+				return "", err
+			}
+			if cache != nil {
+				cache.seasons[seasonID] = true
+			}
 		}
 
 		episodeID := itemID(seriesID, "episode", strconv.Itoa(meta.Season), strconv.Itoa(meta.Episode))
@@ -1130,7 +1164,7 @@ func (s *Scanner) RefreshItem(itemID string) (int, error) {
 		if err != nil {
 			continue
 		}
-		if _, err := s.apply(s.db, lib, e); err != nil {
+		if _, err := s.apply(s.db, lib, e, nil); err != nil {
 			s.log.Warn("refresh item source", "path", src.StrmPath, "err", err)
 			continue
 		}
@@ -1301,7 +1335,7 @@ func (s *Scanner) refreshOneFile(libs []*store.Library, path string) (string, er
 	if err != nil {
 		return "", err
 	}
-	return s.apply(s.db, lib, e)
+	return s.apply(s.db, lib, e, nil)
 }
 
 func libraryForFile(libs []*store.Library, path string) *store.Library {

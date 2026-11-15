@@ -145,6 +145,9 @@ func main() {
 	} else if rebuilt {
 		logger.Info("search index built")
 	}
+	if err := db.EnsureItemPersonsIndex(); err != nil {
+		logger.Warn("item persons index unavailable", "err", err)
+	}
 	// 老库升级后的补数据任务放后台：100 万条目时拼音/评分/persons 可能要几分钟，
 	// 不能卡住 HTTP 启动。
 	go func() {
@@ -160,10 +163,13 @@ func main() {
 		n, err := db.BackfillPersonsFromItems()
 		if err != nil {
 			logger.Warn("backfill persons", "err", err)
-			return
-		}
-		if n > 0 {
+		} else if n > 0 {
 			logger.Info("persons index built", "persons", n, "dur", time.Since(start).String())
+		}
+		if n, err := db.BackfillItemPersons(); err != nil {
+			logger.Warn("backfill item persons", "err", err)
+		} else if n > 0 {
+			logger.Info("item persons index built", "rows", n, "dur", time.Since(start).String())
 		}
 		_ = db.Optimize()
 	}()
