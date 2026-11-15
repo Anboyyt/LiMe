@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  contents: read
   statuses: write
 
 jobs:
@@ -45,21 +46,7 @@ jobs:
             JWT=$(echo "${BODY}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
             export JWT
 
-            python3 - "$SHORT_DESC" <<'PY'
-import json, os, sys, urllib.error, urllib.request
-text = open("docs/dockerhub-overview.md", encoding="utf-8").read()
-body = json.dumps({"description": sys.argv[1], "full_description": text}).encode()
-req = urllib.request.Request(
-    f"https://hub.docker.com/v2/repositories/{os.environ['DH_USER']}/{os.environ['REPO']}/",
-    data=body, method="PATCH",
-    headers={"Authorization": f"JWT {os.environ['JWT']}", "Content-Type": "application/json"})
-try:
-    with urllib.request.urlopen(req) as r:
-        print("PATCH ->", r.status)
-except urllib.error.HTTPError as e:
-    print("PATCH failed", e.code, e.read().decode("utf-8", "replace")[:500])
-    sys.exit(1)
-PY
+            python3 tools/dockerhub_sync.py "$SHORT_DESC"
           } >/tmp/sync.log 2>&1
           code=$?
           cat /tmp/sync.log

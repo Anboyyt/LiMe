@@ -7,6 +7,9 @@ on:
     paths-ignore:
       - "**.md"
       - "LICENSE"
+      - "docs/**"
+      - "tools/dockerhub_sync.py"
+      - ".github/workflows/dockerhub-overview.yml"
   workflow_dispatch:
 
 env:
