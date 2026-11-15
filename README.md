@@ -217,11 +217,16 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
   自动补齐整部剧；10 / 20 分钟各检查一次。
   同一部剧 12 小时内只预热一次
 - 新集章节为空时，自动补跑本季音频指纹
+- 季中换 OP/ED：新片段只要有两集共享即可识别；只有单伙伴时，
+  匹配长度 ≥60 秒且相关度足够高也接受
+- 已经识别出片尾的集，后续还会补上缺的片头，不会因为「已有片段」整集跳过
+- 手动标记过空结果的条目不会再自动分析，可用下面的 reset 接口重跑
 - 手动触发（管理员）：
   - `POST /web/api/segments/scan?seriesId=&limit=` 按剧补齐
   - `POST /web/api/segments/scan?itemIds=a,b` 定点补条目
   - `POST /web/api/segments/fingerprint?seriesId=&season=` 跑本季指纹
   - `POST /web/api/segments` 手动写入片段（`ItemId` + `Segments[]`，会标记为手动来源）
+  - `POST /web/api/segments/reset?itemId=` 清掉片段和分析状态后重新排队
 
 > 官方客户端播放器里的「跳过片头」按钮依赖服务端版本号 ≥ 10.10，
 > LiMe 目前仍报 10.9.11，按钮暂不显示；接口和原生 Web UI 的数据都正常。
@@ -575,10 +580,13 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.26**。
+当前版本 **v1.0.29**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.29 | 片头片尾 lag 搜索改 0.5 秒步长，修复半秒偏差导致整段识别不到 |
+| v1.0.28 | 匹配窗从 3 秒放宽到 8 秒，避免片尾被截短后过不了长度门槛 |
+| v1.0.27 | 季中换 OP/ED 支持单伙伴长匹配；只补缺失类型；解除 30 分钟去重误锁；章节名支持 OP2/ED2/NCOP/NCED；新增重分析接口 |
 | v1.0.26 | 新集章节为空时自动补跑本季音频指纹 |
 | v1.0.25 | 新入库条目立即探测并提取片头片尾，不等整轮扫描 |
 | v1.0.24 | 年份排序以 TMDB 首播/上映日期为准 |
@@ -673,6 +681,7 @@ GET|POST /web/api/images/backdrops      背景图回填
 GET  /web/api/playback-history          播放历史（保留 7 天）
 POST /web/api/segments/scan             批量补齐片头片尾
 POST /web/api/segments                  手动写入片头片尾
+POST /web/api/segments/reset            清除片段与分析状态，重新分析
 POST /web/api/segments/fingerprint      跑指定季的音频指纹
 GET  /web/api/play-target               获取播放器协议链接
 GET  /web/api/playlist.m3u              导出 m3u
