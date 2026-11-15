@@ -39,6 +39,10 @@ type Handler struct {
 	notifyMu   sync.Mutex
 	notifySeen map[string]time.Time
 
+	// 播放卡顿监控：按 PlaySessionId 记录上次进度和告警时间。
+	stallMu    sync.Mutex
+	stallWatch map[string]*stallState
+
 	serverID  string
 	startedAt time.Time
 

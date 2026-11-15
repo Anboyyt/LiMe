@@ -307,6 +307,27 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 > 「复制直链」拿到的 302 地址交给 VLC / PotPlayer / 官方客户端用。
 > 页面上的「浏览器播放」只对 mp4/webm 这类容器有意义。
 
+## 播放通知与卡顿监控
+
+Telegram 播放通知（开始 / 暂停 / 继续 / 停止 / 卡顿）支持配图：
+优先用 **16:9 背景图**，没有背景图时退回竖版海报；图片在后台缩放到最长边
+1280 再上传，不阻塞客户端的进度上报。
+
+卡顿判定只看客户端自己的进度心跳：服务端只发 302 看不到 CDN 字节，
+但真正卡住时上报位置会停住。未暂停且位置超过 `LIME_STALL_ALERT_AFTER`
+（默认 2 分钟）没有前进就推一条告警，包含用户、设备、片名、进度和当前片源；
+暂停、拖动、正常前进都会重置计时，同一会话默认 10 分钟内不重复告警。
+
+每次卡顿会落到 `playback_stalls` 表（用户、设备、条目、片源、位置、时长），
+方便后面按片子/片源统计。管理员接口：
+
+```
+GET /web/api/stalls?days=7&limit=200
+```
+
+> 只覆盖「位置完全不动」的硬卡顿；网络抖动导致进度变慢但仍在前进的情况
+> 目前不告警，避免误报。
+
 ## 本地播放器唤起
 
 媒体界面和运维面板的播放按钮可以直接拉起本机播放器，不用先复制直链：
@@ -361,7 +382,9 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 | `LIME_TG_CHAT_ID` | 接收通知的 Chat ID，群组为负数 | 空 |
 | `LIME_TG_PROXY` | 访问 `api.telegram.org` 的 HTTP 代理 | 空 |
 | `LIME_TG_NOTIFY` | 通知总开关；留空时 token + chat id 都齐就自动开启 | 自动 |
-| `LIME_TG_EVENTS` | 推送事件，逗号分隔：`start,pause,resume,stop` | 全部 |
+| `LIME_TG_EVENTS` | 推送事件，逗号分隔：`start,pause,resume,stop,stall` | 全部 |
+| `LIME_STALL_ALERT_AFTER` | 未暂停时进度多久不前进就发卡顿告警；`0` 关闭 | `2m` |
+| `LIME_STALL_ALERT_COOLDOWN` | 同一播放会话两次卡顿告警的最小间隔 | `10m` |
 
 > `LIME_REWRITE_LOCAL` / `LIME_REWRITE_PUBLIC` 可以只写 `host:port`，也可以带 scheme
 > （如 `https://pan.example.com`）。客户端来自私有网段时用 LOCAL，公网时用 PUBLIC。
@@ -580,10 +603,11 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.32**。
+当前版本 **v1.0.33**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.33 | Telegram 播放通知带 16:9 背景图（退回竖版海报）；新增播放卡顿监控、落库与告警 |
 | v1.0.32 | 匹配段中心重新校准 lag，修正粗匹配半秒偏差导致的片尾起点偏早 |
 | v1.0.31 | 边界回收阈值提到 0.7、最多回收 16 秒，修正片尾仍偏早 |
 | v1.0.30 | 片头片尾边界用 4 秒窗收紧，避免片尾在正片结束前就跳 |
@@ -682,6 +706,7 @@ GET  /web/api/scrape/failures           刮削失败列表（?format=csv 导出�
 GET|POST /web/api/images/posters        海报回填
 GET|POST /web/api/images/backdrops      背景图回填
 GET  /web/api/playback-history          播放历史（保留 7 天）
+GET  /web/api/stalls                    播放卡顿记录（?days=&limit=）
 POST /web/api/segments/scan             批量补齐片头片尾
 POST /web/api/segments                  手动写入片头片尾
 POST /web/api/segments/reset            清除片段与分析状态，重新分析

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,7 +19,7 @@ import (
 )
 
 // Events 是支持的通知事件名。空字符串表示全部开启。
-var Events = []string{"start", "pause", "resume", "stop"}
+var Events = []string{"start", "pause", "resume", "stop", "stall"}
 
 // Config 是 Telegram 通知的运行时配置。
 type Config struct {
@@ -81,11 +82,18 @@ func EventsString(events map[string]bool) string {
 
 // Telegram 是带发送队列的 Telegram Bot 客户端。
 // 发送失败只记日志，不影响播放接口。
+// Message 是一条待发送的通知。Photo 非空时走 sendPhoto（图片 + 说明文字）。
+type Message struct {
+	Text      string
+	Photo     []byte
+	PhotoName string
+}
+
 type Telegram struct {
 	mu      sync.RWMutex
 	cfg     Config
 	client  *http.Client
-	queue   chan string
+	queue   chan Message
 	apiBase string
 	log     *slog.Logger
 }
@@ -96,7 +104,7 @@ func New(cfg Config, log *slog.Logger) *Telegram {
 		log = slog.Default()
 	}
 	t := &Telegram{
-		queue:   make(chan string, 128),
+		queue:   make(chan Message, 128),
 		apiBase: "https://api.telegram.org",
 		log:     log,
 	}
@@ -155,11 +163,20 @@ func (t *Telegram) EventEnabled(event string) bool {
 
 // Notify 异步入队一条 HTML 消息。队列满时直接丢弃，避免阻塞播放上报。
 func (t *Telegram) Notify(event, text string) {
+	t.NotifyMessage(event, Message{Text: text})
+}
+
+// NotifyPhoto 异步入队一条带图片的通知；图片为空时退回纯文本。
+func (t *Telegram) NotifyPhoto(event, text string, photo []byte, name string) {
+	t.NotifyMessage(event, Message{Text: text, Photo: photo, PhotoName: name})
+}
+
+func (t *Telegram) NotifyMessage(event string, m Message) {
 	if !t.EventEnabled(event) {
 		return
 	}
 	select {
-	case t.queue <- text:
+	case t.queue <- m:
 	default:
 		t.log.Warn("telegram queue full, drop message", "event", event)
 	}
@@ -174,9 +191,19 @@ func (t *Telegram) SendNow(ctx context.Context, text string) error {
 }
 
 func (t *Telegram) run() {
-	for text := range t.queue {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		err := t.send(ctx, text)
+	for m := range t.queue {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		var err error
+		if len(m.Photo) > 0 {
+			err = t.sendPhoto(ctx, m.Text, m.Photo, m.PhotoName)
+			if err != nil {
+				// 图片失败不能把通知本身丢掉，退回纯文本再发一次。
+				t.log.Warn("telegram photo failed, fallback to text", "err", err)
+				err = t.send(ctx, m.Text)
+			}
+		} else {
+			err = t.send(ctx, m.Text)
+		}
 		cancel()
 		if err != nil {
 			t.log.Warn("telegram send failed", "err", err)
@@ -209,13 +236,52 @@ func (t *Telegram) send(ctx context.Context, text string) error {
 
 	// 注意：URL 里带 token，任何错误都不能把完整 URL 带进日志。
 	endpoint := base + "/bot" + cfg.Token + "/sendMessage"
+	return t.post(ctx, client, endpoint, "application/json", payload)
+}
+
+// sendPhoto 用 multipart 上传图片并附带说明文字。Telegram 的 caption
+// 上限 1024 字，播放通知远低于这个长度。
+func (t *Telegram) sendPhoto(ctx context.Context, caption string, photo []byte, name string) error {
+	t.mu.RLock()
+	cfg := t.cfg
+	client := t.client
+	base := t.apiBase
+	t.mu.RUnlock()
+
+	if cfg.Token == "" || cfg.ChatID == "" {
+		return errors.New("telegram 未配置")
+	}
+	if name == "" {
+		name = "cover.jpg"
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	_ = w.WriteField("chat_id", cfg.ChatID)
+	_ = w.WriteField("caption", caption)
+	_ = w.WriteField("parse_mode", "HTML")
+	part, err := w.CreateFormFile("photo", name)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(photo); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+
+	endpoint := base + "/bot" + cfg.Token + "/sendPhoto"
+	return t.post(ctx, client, endpoint, w.FormDataContentType(), buf.Bytes())
+}
+
+func (t *Telegram) post(ctx context.Context, client *http.Client, endpoint, contentType string, payload []byte) error {
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 		if err != nil {
 			return err
 		}
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 
 		resp, err := client.Do(req)
 		if err != nil {

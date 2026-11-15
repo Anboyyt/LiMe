@@ -16,8 +16,8 @@ func TestParseEvents(t *testing.T) {
 		raw  string
 		want map[string]bool
 	}{
-		{"", map[string]bool{"start": true, "pause": true, "resume": true, "stop": true}},
-		{"all", map[string]bool{"start": true, "pause": true, "resume": true, "stop": true}},
+		{"", map[string]bool{"start": true, "pause": true, "resume": true, "stop": true, "stall": true}},
+		{"all", map[string]bool{"start": true, "pause": true, "resume": true, "stop": true, "stall": true}},
 		{"none", map[string]bool{}},
 		{"start,stop", map[string]bool{"start": true, "stop": true}},
 		{" start , PAUSE ", map[string]bool{"start": true, "pause": true}},
@@ -99,6 +99,43 @@ func TestSendNow(t *testing.T) {
 	}
 	if gotChat != "-100" || gotText != "<b>测试</b>" {
 		t.Fatalf("payload chat=%q text=%q", gotChat, gotText)
+	}
+}
+
+func TestSendPhoto(t *testing.T) {
+	var gotPath, gotCaption, gotChat, gotFile string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		if err := r.ParseMultipartForm(4 << 20); err != nil {
+			t.Errorf("multipart: %v", err)
+		}
+		gotCaption = r.FormValue("caption")
+		gotChat = r.FormValue("chat_id")
+		f, _, err := r.FormFile("photo")
+		if err == nil {
+			b, _ := io.ReadAll(f)
+			gotFile = string(b)
+			f.Close()
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	tg := New(Config{Token: "123:abc", ChatID: "-100", Enabled: true, Events: ParseEvents("all")}, slog.Default())
+	tg.mu.Lock()
+	tg.apiBase = srv.URL
+	tg.client = srv.Client()
+	tg.mu.Unlock()
+
+	if err := tg.sendPhoto(context.Background(), "<b>播放</b>", []byte("JPEG"), "cover.jpg"); err != nil {
+		t.Fatalf("sendPhoto: %v", err)
+	}
+	if gotPath != "/bot123:abc/sendPhoto" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotChat != "-100" || gotCaption != "<b>播放</b>" || gotFile != "JPEG" {
+		t.Fatalf("chat=%q caption=%q file=%q", gotChat, gotCaption, gotFile)
 	}
 }
 

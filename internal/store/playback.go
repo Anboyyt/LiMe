@@ -353,3 +353,85 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+// PlaybackStall 是一条播放卡顿记录。
+type PlaybackStall struct {
+	ID            string `json:"Id"`
+	UserID        string `json:"UserId"`
+	UserName      string `json:"UserName"`
+	DeviceID      string `json:"DeviceId"`
+	DeviceName    string `json:"DeviceName"`
+	Client        string `json:"Client"`
+	SessionID     string `json:"SessionId"`
+	ItemID        string `json:"ItemId"`
+	ItemName      string `json:"ItemName"`
+	ItemType      string `json:"ItemType"`
+	SourceID      string `json:"SourceId"`
+	PositionTicks int64  `json:"PositionTicks"`
+	StalledSec    int64  `json:"StalledSec"`
+	CreatedAt     int64  `json:"CreatedAt"`
+	RecoveredAt   int64  `json:"RecoveredAt"`
+}
+
+// InsertPlaybackStall 记录一次卡顿。
+func (d *DB) InsertPlaybackStall(s *PlaybackStall) error {
+	if s.ID == "" {
+		s.ID = MustRandomHex(16)
+	}
+	if s.CreatedAt == 0 {
+		s.CreatedAt = time.Now().Unix()
+	}
+	_, err := d.Exec(`
+INSERT INTO playback_stalls (id, user_id, user_name, device_id, device_name, client,
+  session_id, item_id, item_name, item_type, source_id, position_ticks,
+  stalled_sec, created_at, recovered_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		s.ID, s.UserID, s.UserName, s.DeviceID, s.DeviceName, s.Client,
+		s.SessionID, s.ItemID, s.ItemName, s.ItemType, s.SourceID, s.PositionTicks,
+		s.StalledSec, s.CreatedAt, s.RecoveredAt)
+	return err
+}
+
+// RecoverPlaybackStall 把同一会话未恢复的卡顿记录标记为已恢复。
+func (d *DB) RecoverPlaybackStall(sessionID string, stalledSec int64, at int64) error {
+	if sessionID == "" {
+		return nil
+	}
+	if at == 0 {
+		at = time.Now().Unix()
+	}
+	_, err := d.Exec(`
+UPDATE playback_stalls
+SET recovered_at = ?, stalled_sec = CASE WHEN ? > 0 THEN ? ELSE stalled_sec END
+WHERE session_id = ? AND recovered_at = 0`,
+		at, stalledSec, stalledSec, sessionID)
+	return err
+}
+
+// ListPlaybackStalls 返回 since 之后的卡顿记录，新的在前。
+func (d *DB) ListPlaybackStalls(since int64, limit int) ([]*PlaybackStall, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	rows, err := d.Query(`
+SELECT id, user_id, user_name, device_id, device_name, client, session_id,
+       item_id, item_name, item_type, source_id, position_ticks, stalled_sec,
+       created_at, recovered_at
+FROM playback_stalls WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?`, since, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]*PlaybackStall, 0, limit)
+	for rows.Next() {
+		var s PlaybackStall
+		if err := rows.Scan(&s.ID, &s.UserID, &s.UserName, &s.DeviceID, &s.DeviceName,
+			&s.Client, &s.SessionID, &s.ItemID, &s.ItemName, &s.ItemType, &s.SourceID,
+			&s.PositionTicks, &s.StalledSec, &s.CreatedAt, &s.RecoveredAt); err != nil {
+			return nil, err
+		}
+		out = append(out, &s)
+	}
+	return out, rows.Err()
+}

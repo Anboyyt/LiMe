@@ -290,6 +290,7 @@ func (h *Handler) saveProgress(w http.ResponseWriter, r *http.Request, event pla
 	if sessionID == "" {
 		sessionID = body.SessionId
 	}
+	hadSession := sessionID != ""
 	if sessionID == "" {
 		sessionID = store.MustRandomHex(16)
 	}
@@ -318,6 +319,14 @@ func (h *Handler) saveProgress(w http.ResponseWriter, r *http.Request, event pla
 				position = ps.PositionTicks
 			}
 		}
+	}
+
+	// 播放卡顿监控：未暂停但进度长时间不前进就告警。
+	// 客户端没带 PlaySessionId 时无法稳定跟踪，跳过以免误报。
+	if event == playbackStop {
+		h.stopStall(sessionID)
+	} else if hadSession {
+		h.trackStall(user, a, sessionID, it, body.MediaSourceId, position, body.IsPaused)
 	}
 
 	// 进度心跳也参与「已播」判定：很多客户端不发 Stopped，

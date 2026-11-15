@@ -1,12 +1,20 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"html"
+	"image"
+	"image/jpeg"
+	"math"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	xdraw "golang.org/x/image/draw"
 
 	"lime/internal/notify"
 	"lime/internal/store"
@@ -68,7 +76,12 @@ func (h *Handler) notifyPlayback(user *store.User, a authInfo, sessionID string,
 	if !h.allowNotify(sessionID, name) {
 		return
 	}
-	h.notifier.Notify(name, h.formatPlaybackMessage(name, user, a, it, position))
+	// 图片解码/缩放放到后台，不拖慢客户端的进度上报。
+	go func() {
+		msg := h.formatPlaybackMessage(name, user, a, it, position)
+		photo, photoName := h.playbackPhoto(it)
+		h.notifier.NotifyPhoto(name, msg, photo, photoName)
+	}()
 }
 
 // allowNotify 同一播放会话的同一事件 45 秒内只推一次；
@@ -142,6 +155,96 @@ func (h *Handler) formatPlaybackMessage(event string, user *store.User, a authIn
 	b.WriteString("🕐 ")
 	b.WriteString(time.Now().Format("01-02 15:04"))
 	return b.String()
+}
+
+// playbackPhoto 返回通知配图：优先 16:9 背景图，没有背景图再用竖版海报。
+// 剧集先取所属剧的背景图，单集的剧照只在没有背景图时兜底。
+func (h *Handler) playbackPhoto(it *store.Item) ([]byte, string) {
+	if it == nil {
+		return nil, ""
+	}
+	var series *store.Item
+	if it.Type == store.TypeEpisode && it.SeriesID != "" {
+		if s, err := h.db.GetItem(it.SeriesID); err == nil {
+			series = s
+		}
+	}
+	rels := make([]string, 0, 4)
+	seen := make(map[string]bool, 4)
+	add := func(rel string) {
+		if rel == "" || seen[rel] {
+			return
+		}
+		seen[rel] = true
+		rels = append(rels, rel)
+	}
+	if series != nil {
+		add(series.BackdropPath)
+	}
+	add(it.BackdropPath)
+	add(it.ImagePath)
+	if series != nil {
+		add(series.ImagePath)
+	}
+
+	for _, rel := range rels {
+		full, ok := h.resolveItemImagePath(rel)
+		if !ok {
+			continue
+		}
+		if data, name, err := telegramPhoto(full); err == nil {
+			return data, name
+		}
+	}
+	return nil, ""
+}
+
+// telegramPhoto 把本地图片压成适合 Telegram 的 JPEG：
+// 最长边 1280，避免把几 MB 的原图直接上传。
+func telegramPhoto(full string) ([]byte, string, error) {
+	f, err := os.Open(full)
+	if err != nil {
+		return nil, "", err
+	}
+	img, _, decErr := image.Decode(f)
+	_ = f.Close()
+	if decErr != nil {
+		// 解不了的格式（如 webp）直接发原文件，交给 Telegram 判断。
+		ext := strings.ToLower(filepath.Ext(full))
+		if ext == ".jpg" || ext == ".jpeg" || ext == ".png" {
+			data, rerr := os.ReadFile(full)
+			if rerr == nil && len(data) > 0 && len(data) <= 5<<20 {
+				return data, "cover" + ext, nil
+			}
+		}
+		return nil, "", decErr
+	}
+
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= 0 || h <= 0 {
+		return nil, "", fmt.Errorf("empty image")
+	}
+	const maxSide = 1280
+	scale := 1.0
+	if w > maxSide || h > maxSide {
+		scale = math.Min(float64(maxSide)/float64(w), float64(maxSide)/float64(h))
+	}
+	nw, nh := int(float64(w)*scale), int(float64(h)*scale)
+	if nw < 1 {
+		nw = 1
+	}
+	if nh < 1 {
+		nh = 1
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
+	xdraw.CatmullRom.Scale(dst, dst.Bounds(), img, b, xdraw.Over, nil)
+
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 85}); err != nil {
+		return nil, "", err
+	}
+	return buf.Bytes(), "cover.jpg", nil
 }
 
 // playbackTitleLine 电影显示「🎬 名称 (年份)」，剧集显示「📺 剧名 S01E02 · 集名」。

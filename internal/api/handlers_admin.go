@@ -16,14 +16,14 @@ type webStats struct {
 	// Version 是伪装给 Jellyfin 客户端的协议版本，客户端会做兼容校验。
 	Version string `json:"Version"`
 	// ProductVersion 是 LiMe 自身的发布版本，仅用于展示。
-	ProductVersion string `json:"ProductVersion"`
-	ServerID       string `json:"ServerId"`
-	StartedAt     int64          `json:"StartedAt"`
-	UptimeSec     int64          `json:"UptimeSec"`
-	Scan          library.Status `json:"Scan"`
-	Scrape        scrape.Status  `json:"Scrape"`
-	ScrapeEnabled bool           `json:"ScrapeEnabled"`
-	Stats         *store.Stats   `json:"Stats"`
+	ProductVersion string         `json:"ProductVersion"`
+	ServerID       string         `json:"ServerId"`
+	StartedAt      int64          `json:"StartedAt"`
+	UptimeSec      int64          `json:"UptimeSec"`
+	Scan           library.Status `json:"Scan"`
+	Scrape         scrape.Status  `json:"Scrape"`
+	ScrapeEnabled  bool           `json:"ScrapeEnabled"`
+	Stats          *store.Stats   `json:"Stats"`
 }
 
 func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
@@ -48,12 +48,12 @@ func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
 		Version:        h.cfg.Version,
 		ProductVersion: version.Version,
 		ServerID:       h.serverID,
-		StartedAt:     h.startedAt.Unix(),
-		UptimeSec:     int64(time.Since(h.startedAt).Seconds()),
-		Scan:          h.scanner.Status(),
-		Scrape:        scrapeStatus,
-		ScrapeEnabled: h.scraper != nil && h.scraper.Enabled(),
-		Stats:         stats,
+		StartedAt:      h.startedAt.Unix(),
+		UptimeSec:      int64(time.Since(h.startedAt).Seconds()),
+		Scan:           h.scanner.Status(),
+		Scrape:         scrapeStatus,
+		ScrapeEnabled:  h.scraper != nil && h.scraper.Enabled(),
+		Stats:          stats,
 	})
 }
 

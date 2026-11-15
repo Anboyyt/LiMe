@@ -65,6 +65,7 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /web/api/scrape", h.webScrape)
 	mux.HandleFunc("POST /web/api/scrape", h.webScrape)
 	mux.HandleFunc("GET /web/api/playback-history", h.webPlaybackHistory)
+	mux.HandleFunc("GET /web/api/stalls", h.webStalls)
 	mux.HandleFunc("POST /web/api/notify/test", h.webNotifyTest)
 	// Jellyfin 客户端的 WebSocket（官方客户端也会连），保持握手可用
 	mux.HandleFunc("GET /socket", h.socket)

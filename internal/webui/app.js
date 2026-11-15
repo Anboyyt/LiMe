@@ -1301,10 +1301,11 @@
           <label class="check-field"><input type="checkbox" class="tg-event" value="pause" ${tgChecked('pause')}><span>暂停</span></label>
           <label class="check-field"><input type="checkbox" class="tg-event" value="resume" ${tgChecked('resume')}><span>继续</span></label>
           <label class="check-field"><input type="checkbox" class="tg-event" value="stop" ${tgChecked('stop')}><span>停止</span></label>
+          <label class="check-field"><input type="checkbox" class="tg-event" value="stall" ${tgChecked('stall')}><span>卡顿</span></label>
           <button class="primary" data-action="save-settings">保存</button>
           <button data-action="tg-test">发送测试消息</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">把播放、暂停、继续、停止推送到 Telegram；消息包含用户、设备、片名和进度。Token 找 @BotFather 要，Chat ID 找 @userinfobot。NAS 直连 api.telegram.org 不通时填代理。</p>
+        <p class="muted" style="margin:8px 0 0">把播放、暂停、继续、停止和卡顿告警推送到 Telegram；消息包含用户、设备、片名、进度和 16:9 背景图（没有则用竖版海报）。Token 找 @BotFather 要，Chat ID 找 @userinfobot。NAS 直连 api.telegram.org 不通时填代理。</p>
       </div>
       <div class="panel"><h3>消息预览</h3>
         <pre style="white-space:pre-wrap;line-height:1.7;margin:0">▶️ 开始播放
@@ -1330,7 +1331,7 @@
   function tgEventsLabel(raw) {
     if (!raw || raw === 'all') return '全部事件';
     if (raw === 'none') return '未选择';
-    const labels = { start: '开始', pause: '暂停', resume: '继续', stop: '停止' };
+    const labels = { start: '开始', pause: '暂停', resume: '继续', stop: '停止', stall: '卡顿' };
     return raw.split(',').filter(Boolean).map((e) => labels[e] || esc(e)).join('、');
   }
 
