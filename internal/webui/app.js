@@ -1308,13 +1308,88 @@
         </div>
         <p class="muted" style="margin:8px 0 0">把播放、暂停、继续、停止、卡顿和磁盘/DB 健康告警推送到 Telegram；消息包含用户、设备、片名、进度和 16:9 背景图（没有则用竖版海报）。Token 找 @BotFather 要，Chat ID 找 @userinfobot。NAS 直连 api.telegram.org 不通时填代理。</p>
       </div>
+      <div class="panel"><h3>Telegram 入库通知</h3>
+        <div class="kv">
+          <div><b>状态</b><span>${settings.IngestTGEnabled
+            ? (settings.IngestTGReady ? '已启用' : '已启用，但 Bot 配置不完整')
+            : '已关闭'}</span></div>
+          <div><b>Bot 来源</b><span>${settings.IngestTGMode === 'custom' ? '独立 Bot' : '复用播放通知 Bot'}</span></div>
+          <div><b>Chat ID</b><span>${esc(settings.IngestTGChatID || '未配置')}</span></div>
+          <div><b>待通知</b><span>${settings.IngestTGPending || 0} 条</span></div>
+          <div><b>合并延迟</b><span>${esc(settings.IngestTGDelay || '3m')}</span></div>
+          <div><b>批量阈值</b><span>${settings.IngestTGBulkLimit || 200} 条</span></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label class="check-field">
+            <input type="checkbox" id="ingestTGEnabled" ${settings.IngestTGEnabled ? 'checked' : ''}>
+            <span>启用入库通知</span>
+          </label>
+          <label class="check-field">
+            <span>Bot</span>
+            <select id="ingestTGMode" style="margin-left:6px">
+              <option value="playback" ${settings.IngestTGMode !== 'custom' ? 'selected' : ''}>复用播放通知 Bot</option>
+              <option value="custom" ${settings.IngestTGMode === 'custom' ? 'selected' : ''}>使用独立 Bot</option>
+            </select>
+          </label>
+        </div>
+        <div class="row" id="ingestCustomRow" style="margin-top:12px;display:${settings.IngestTGMode === 'custom' ? 'flex' : 'none'}">
+          <input id="ingestTGToken" type="password" placeholder="独立 Bot Token（留空不改）" autocomplete="off" style="max-width:340px">
+          <input id="ingestTGChatId" placeholder="Chat ID，群组为负数" style="max-width:220px"
+            value="${esc(settings.IngestTGChatID || '')}">
+          <input id="ingestTGProxy" placeholder="代理，如 http://192.168.5.133:7890" style="max-width:300px"
+            value="${esc(settings.IngestTGProxy || '')}">
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label class="check-field">
+            <span>合并延迟</span>
+            <input id="ingestTGDelay" style="max-width:100px;margin-left:6px"
+              value="${esc(settings.IngestTGDelay || '3m')}">
+          </label>
+          <label class="check-field">
+            <span>最长等待</span>
+            <input id="ingestTGMaxWait" style="max-width:100px;margin-left:6px"
+              value="${esc(settings.IngestTGMaxWait || '30m')}">
+          </label>
+          <label class="check-field">
+            <span>批量阈值</span>
+            <input id="ingestTGBulkLimit" type="number" min="1" max="5000" style="max-width:100px;margin-left:6px"
+              value="${settings.IngestTGBulkLimit || 200}">
+          </label>
+          <button class="primary" data-action="save-settings">保存</button>
+          <button data-action="ingest-tg-test">发送测试消息</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">新入库条目刮削完成后推送，剧集同季多集合并成一条，电影每部单独一条；图片优先 16:9 背景图，没有则用竖版海报。Bot 可以和播放通知共用，也可以单独配置。</p>
+      </div>
       <div class="panel"><h3>消息预览</h3>
         <pre style="white-space:pre-wrap;line-height:1.7;margin:0">▶️ 开始播放
 👤 Lime · 客厅电视 (Android TV)
 📺 三体 S01E03 · 第 3 集
 ⏱ 12:34 / 45:30 (27%)
 🕐 11-10 21:34</pre>
+        <pre style="white-space:pre-wrap;line-height:1.7;margin:14px 0 0">✅ 入库通知：女神配对计划 (2025) S02 E11
+🌟 主演：梁敏巧 / 叶蒨文 / 关嘉敏 / 罗毓仪 / 李芷晴 等
+🆔 影号：TMDB-293060
+📋 规则：115
+☁️ 来源：115网盘
+🧱 分类：综艺 / 华语综艺
+🎞️ 版本：1080p WEB-DL SDR 25fps
+🧾 文件：1个
+💾 大小：1.26G
+📺 平台：MyTVSuper
+👥 组名：ADWeb
+🧮 本季：S02 共10集
+⏱️ 时间：2026-11-15 22:35:32</pre>
       </div>`;
+    const modeEl = $('#ingestTGMode');
+    if (modeEl) modeEl.addEventListener('change', toggleIngestCustom);
+    toggleIngestCustom();
+  }
+
+  function toggleIngestCustom() {
+    const mode = $('#ingestTGMode');
+    const row = $('#ingestCustomRow');
+    if (!mode || !row) return;
+    row.style.display = mode.value === 'custom' ? 'flex' : 'none';
   }
 
   function probeScopeLabel(scope) {
@@ -1391,6 +1466,18 @@
           const events = Array.from(document.querySelectorAll('.tg-event:checked')).map((el) => el.value);
           body.TGEvents = events.length === 4 ? 'all' : (events.length === 0 ? 'none' : events.join(','));
         }
+        const ingestEnabledEl = $('#ingestTGEnabled');
+        if (ingestEnabledEl) {
+          body.IngestTGEnabled = ingestEnabledEl.checked;
+          body.IngestTGMode = $('#ingestTGMode').value;
+          const ingestToken = ($('#ingestTGToken').value || '').trim();
+          if (ingestToken) body.IngestTGBotToken = ingestToken;
+          body.IngestTGChatID = ($('#ingestTGChatId').value || '').trim();
+          body.IngestTGProxy = ($('#ingestTGProxy').value || '').trim();
+          body.IngestTGDelay = ($('#ingestTGDelay').value || '3m').trim();
+          body.IngestTGMaxWait = ($('#ingestTGMaxWait').value || '30m').trim();
+          body.IngestTGBulkLimit = parseInt($('#ingestTGBulkLimit').value || '200', 10);
+        }
         if (key) body.ApiKey = key;
         await api('/web/api/settings', { method: 'PUT', body: JSON.stringify(body) });
         toast('配置已保存');
@@ -1432,6 +1519,15 @@
         try {
           await api('/web/api/notify/test', { method: 'POST' });
           toast('测试消息已发送，去 Telegram 看看');
+        } catch (e) {
+          toast('发送失败：' + (e.message || e));
+        }
+        break;
+      }
+      case 'ingest-tg-test': {
+        try {
+          await api('/web/api/notify/ingest-test', { method: 'POST' });
+          toast('入库通知测试消息已发送，去 Telegram 看看');
         } catch (e) {
           toast('发送失败：' + (e.message || e));
         }

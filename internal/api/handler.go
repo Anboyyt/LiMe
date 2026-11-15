@@ -35,6 +35,8 @@ type Handler struct {
 	prober   *probe.Prober
 	sessions *sessionHub
 	notifier *notify.Telegram
+	// ingestNotifier 独立于播放通知：可以复用同一个 Bot，也可以单独配置。
+	ingestNotifier *notify.Telegram
 
 	// 播放通知去重：同一会话同一事件短时间内只推一次。
 	notifyMu   sync.Mutex
@@ -125,6 +127,8 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	}
 	// 面板里保存的 Telegram 设置优先于环境变量；worker 常驻，改配置即时生效。
 	h.notifier = notify.New(h.tgConfig(), log)
+	h.ingestNotifier = notify.New(h.ingestTGConfig(), log)
+	go h.runIngestNotifier()
 	// 面板里保存的预热设置优先于环境变量。
 	h.prober.StartWarmup(h.warmupConfig())
 	go h.runHealthMonitor()

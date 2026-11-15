@@ -74,6 +74,7 @@
 | 本地元数据 | 识别同目录 `.nfo` 与 `poster.jpg` / `fanart.jpg`，本地优先 |
 | 实时监控 | 新 `.strm` 落盘即增量解析并精准刮削，删除/改名同步清理 |
 | 片头片尾 | 章节 + 音频指纹两种来源，返回 `MediaSegments`，支持手动标记 |
+| 入库通知 | 刮削完成后推送 Telegram，同剧同季多集合并，电影逐部通知；可选独立 Bot |
 | 多用户 | 独立进度、收藏、已看状态，支持按库授权与查看权限 |
 | 相似推荐 | 按类型 / 演员 / 评分 / 年份打分，电影只推电影、剧集只推剧集 |
 | 本地播放器 | 唤起 PotPlayer / VLC / MPV / IINA / Infuse，也可导出 m3u |
@@ -327,6 +328,19 @@ GET /web/api/stalls?days=7&limit=200
 
 > 只覆盖「位置完全不动」的硬卡顿；网络抖动导致进度变慢但仍在前进的情况
 > 目前不告警，避免误报。
+
+## 入库通知
+
+新 `.strm` 写入后不会立刻发消息，而是等刮削补上海报 / 演员 / TMDB 后再推送：
+
+- 同一部剧同一季的多集合并成一条，例如 `S02 E01-E10`
+- 电影逐部单独通知，方便确认哪一部已经整理入库
+- 优先用 16:9 背景图，没有则退回竖版海报
+- 大量入库（默认超过 200 条）只发一条汇总，避免初始扫描刷屏
+- 通知失败不会丢：发送成功后才标记 `notified_at`，下次继续重试
+- Bot 可以复用播放通知，也可以单独配置 Token / Chat ID / 代理
+
+面板路径：`/web/` → 通知 → Telegram 入库通知。
 
 ## 本地播放器唤起
 
@@ -603,10 +617,11 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.41**。
+当前版本 **v1.0.42**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.42 | 新增 Telegram 入库通知：刮削完成后推送、同剧同季多集合并、电影逐部通知、16:9 海报降级、独立/共用 Bot、批量抑制与失败重试 |
 | v1.0.41 | Web UI：继续观看中的单集统一用剧集海报；新增 `SeriesPrimaryImageTag`；手机端重做顶栏/底部导航、详情页、筛选、播放器与安全区适配 |
 | v1.0.40 | 类型筛选/相似推荐改走 `item_genres`；筛选缓存过期后先返回旧值再后台刷新；新增磁盘/DB 延迟指标与 TG 健康告警；Random 排序改用随机窗口 |
 | v1.0.39 | 快扫快照改用 64 位路径哈希 + 流式修剪，整库路径 map 内存约降到 1/3–1/4 |
@@ -721,7 +736,8 @@ POST /web/api/segments/reset            清除片段与分析状态，重新分�
 POST /web/api/segments/fingerprint      跑指定季的音频指纹
 GET  /web/api/play-target               获取播放器协议链接
 GET  /web/api/playlist.m3u              导出 m3u
-POST /web/api/notify/test               发送 Telegram 测试消息
+POST /web/api/notify/test               发送播放通知测试消息
+POST /web/api/notify/ingest-test        发送入库通知测试消息
 POST /web/api/backup                    立即备份数据库
 ```
 

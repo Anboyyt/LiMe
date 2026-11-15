@@ -30,6 +30,17 @@ func TestParse(t *testing.T) {
 			},
 		},
 		{
+			name:  "平台 + 组名",
+			input: "女神配对计划.2025.S02E11.1080p.WEB-DL.SDR.25fps.MyTVSuper.H.264.AAC2.0-ADWeb.mp4",
+			want: Metadata{
+				Title: "女神配对计划", Year: 2025, Season: 2, Episode: 11, IsEpisode: true,
+				Resolution: "1080p", Width: 1920, Height: 1080,
+				VideoCodec: "h264", AudioCodec: "aac", Channels: 2,
+				FrameRate: 25, VideoRange: "SDR", Source: "WEB-DL", Platform: "MyTVSuper",
+				ReleaseGroup: "ADWeb", Container: "mp4",
+			},
+		},
+		{
 			name:  "电影 + 5.1",
 			input: "沙丘2.2024.2160p.WEB-DL.H265.DDP5.1.mkv",
 			want: Metadata{
@@ -139,6 +150,7 @@ func TestParse(t *testing.T) {
 			checkInt(t, "BitDepth", got.BitDepth, tc.want.BitDepth)
 			checkStr(t, "VideoRange", got.VideoRange, tc.want.VideoRange)
 			checkStr(t, "Source", got.Source, tc.want.Source)
+			checkStr(t, "Platform", got.Platform, tc.want.Platform)
 			checkStr(t, "Container", got.Container, tc.want.Container)
 			if tc.want.FrameRate > 0 && got.FrameRate != tc.want.FrameRate {
 				t.Errorf("FrameRate = %v, want %v", got.FrameRate, tc.want.FrameRate)

@@ -18,6 +18,7 @@ import (
 
 type testEnv struct {
 	handler http.Handler
+	api     *Handler
 	db      *store.DB
 	cfg     config.Config
 }
@@ -52,11 +53,11 @@ func newTestEnvWithRealtime(t *testing.T, mutate func(*config.Config), realtime 
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	h, _, err := New(cfg, db, log, library.New(db, log), nil, realtime)
+	h, apiHandler, err := New(cfg, db, log, library.New(db, log), nil, realtime)
 	if err != nil {
 		t.Fatalf("new handler: %v", err)
 	}
-	return &testEnv{handler: h, db: db, cfg: cfg}
+	return &testEnv{handler: h, api: apiHandler, db: db, cfg: cfg}
 }
 
 func newTestHandler(t *testing.T) http.Handler {

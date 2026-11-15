@@ -91,8 +91,9 @@ WHERE drive_id = ? AND cloud_file_id = ? AND cloud_file_id <> '' AND id <> ?`,
 INSERT INTO media_sources (
   id, item_id, strm_path, url, cloud, drive_id, cloud_file_id, sha1_etag,
   size, container, file_name, version_name, sort_rank,
-  duration_ticks, probe_status, strm_mtime, strm_size, updated_at
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  duration_ticks, probe_status, strm_mtime, strm_size,
+  ingested_at, notified_at, updated_at
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
   item_id = excluded.item_id,
   strm_path = excluded.strm_path,
@@ -112,10 +113,12 @@ ON CONFLICT(id) DO UPDATE SET
                       THEN media_sources.probe_status ELSE excluded.probe_status END,
   strm_mtime = excluded.strm_mtime,
   strm_size = excluded.strm_size,
+  -- ingested_at / notified_at 保留原值：重扫旧文件不能再次触发入库通知
   updated_at = excluded.updated_at`,
 		src.ID, src.ItemID, src.StrmPath, src.URL, src.Cloud, src.DriveID, src.CloudFileID, src.SHA1ETag,
 		src.Size, src.Container, src.FileName, src.VersionName, src.SortRank,
-		src.DurationTicks, src.ProbeStatus, src.StrmMtime, src.StrmSize, now,
+		src.DurationTicks, src.ProbeStatus, src.StrmMtime, src.StrmSize,
+		now, 0, now,
 	)
 	return err
 }

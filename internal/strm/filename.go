@@ -27,6 +27,7 @@ type Metadata struct {
 	FrameRate     float64
 	VideoRange    string
 	Source        string
+	Platform      string // 发布平台，如 MyTVSuper / Tencent / Netflix
 	ReleaseGroup  string
 	Container     string
 	TmdbID        string
@@ -163,9 +164,48 @@ func Parse(name string) Metadata {
 		m.ReleaseGroup = loc[1]
 	}
 
+	m.Platform = detectPlatform(stem)
 	m.AudioLang, m.AudioLangName = detectAudioLang(stem)
 
 	return m
+}
+
+// 常见流媒体平台。按 token 匹配，避免把标题里的普通单词当成平台。
+var platformNames = []string{
+	"MyTVSuper", "MyTV", "TVBAnywhere", "TVB", "ViuTV", "HOYTV",
+	"Tencent", "TencentVideo", "QQVideo", "iQIYI", "Youku", "MangoTV",
+	"Netflix", "Disney+", "DisneyPlus", "Amazon", "AMZN", "AppleTV+", "AppleTV",
+	"Viu", "WeTV", "Bilibili", "Baha", "KKTV", "HamiVideo", "HBO", "Peacock",
+	"Hulu", "Crunchyroll", "ABEMA", "U-NEXT", "NHK", "KBS", "SBS", "MBC",
+	"JTBC", "tvN", "WOWOW", "FOD", "TVer", "Lemino", "DMM", "RakutenTV",
+	"Paramount+", "ParamountPlus", "SHOWTIME", "Starz", "NOWTV", "NowE",
+	"CCTV",
+}
+
+// detectPlatform 在整个文件名上找已知平台 token。
+// 返回空串表示识别不到，通知里直接省略这一行。
+func detectPlatform(stem string) string {
+	tokens := strings.FieldsFunc(stem, func(r rune) bool {
+		switch r {
+		case '.', ' ', '_', '-', '[', ']', '(', ')':
+			return true
+		}
+		return false
+	})
+	for _, token := range tokens {
+		for _, name := range platformNames {
+			if strings.EqualFold(token, name) ||
+				normalizePlatformToken(token) == normalizePlatformToken(name) {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func normalizePlatformToken(s string) string {
+	s = strings.ToLower(s)
+	return strings.NewReplacer("+", "", "-", "", " ", "", ".", "").Replace(s)
 }
 
 // detectAudioLang 从文件名里的常见标记推断音轨语言。

@@ -132,6 +132,63 @@ func TestWebSettingsProbeWarmup(t *testing.T) {
 	}
 }
 
+func TestWebSettingsIngestTelegram(t *testing.T) {
+	env := newTestEnv(t)
+	hash, _ := store.HashPassword("pw")
+	admin, err := env.db.CreateUser("admin-ingest", hash, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := env.db.CreateToken(admin.ID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	put := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/web/api/settings", bytes.NewBufferString(body))
+		req.Header.Set("X-Emby-Token", tok)
+		rr := httptest.NewRecorder()
+		env.handler.ServeHTTP(rr, req)
+		return rr
+	}
+
+	rr := put(`{"IngestTGEnabled":true,"IngestTGMode":"custom","IngestTGBotToken":"123:abc","IngestTGChatID":"-1001","IngestTGProxy":"http://127.0.0.1:7890","IngestTGDelay":"2m","IngestTGMaxWait":"10m","IngestTGBulkLimit":50}`)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("PUT = %d: %s", rr.Code, rr.Body.String())
+	}
+	cfg := env.api.ingestTGConfig()
+	if !cfg.Enabled || cfg.Token != "123:abc" || cfg.ChatID != "-1001" {
+		t.Fatalf("custom config = %+v", cfg)
+	}
+	if got, _ := env.db.GetSetting("ingest_tg_delay"); got != "2m" {
+		t.Fatalf("delay = %q, want 2m", got)
+	}
+	if got, _ := env.db.GetSetting("ingest_tg_bulk_limit"); got != "50" {
+		t.Fatalf("bulk = %q, want 50", got)
+	}
+
+	// 切回复用播放 Bot：Token/Chat 应该跟着播放配置走。
+	if err := env.db.SetSetting("tg_bot_token", "999:play"); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.db.SetSetting("tg_chat_id", "-2002"); err != nil {
+		t.Fatal(err)
+	}
+	rr = put(`{"IngestTGMode":"playback"}`)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("PUT playback = %d: %s", rr.Code, rr.Body.String())
+	}
+	cfg = env.api.ingestTGConfig()
+	if !cfg.Enabled || cfg.Token != "999:play" || cfg.ChatID != "-2002" {
+		t.Fatalf("playback config = %+v", cfg)
+	}
+
+	// 非法延迟必须拒绝。
+	if rr = put(`{"IngestTGDelay":"1s"}`); rr.Code != http.StatusBadRequest {
+		t.Fatalf("invalid delay = %d, want 400", rr.Code)
+	}
+}
+
 func TestWebBackupCreatesSnapshot(t *testing.T) {
 	env := newTestEnv(t)
 	hash, _ := store.HashPassword("pw")

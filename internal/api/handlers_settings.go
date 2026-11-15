@@ -59,6 +59,24 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			segmentPending = n
 		}
 		tg := h.tgConfig()
+		ingestTG := h.ingestTGConfig()
+		ingestCfg := h.ingestNotifySettings()
+		ingestMode, _ := h.db.GetSetting("ingest_tg_mode")
+		if ingestMode == "" {
+			ingestMode = "playback"
+		}
+		ingestDelay, _ := h.db.GetSetting("ingest_tg_delay")
+		if d, err := time.ParseDuration(ingestDelay); ingestDelay == "" || err != nil {
+			ingestDelay = shortDuration(ingestCfg.Delay)
+		} else {
+			ingestDelay = shortDuration(d)
+		}
+		ingestMaxWait, _ := h.db.GetSetting("ingest_tg_max_wait")
+		if d, err := time.ParseDuration(ingestMaxWait); ingestMaxWait == "" || err != nil {
+			ingestMaxWait = shortDuration(ingestCfg.MaxWait)
+		} else {
+			ingestMaxWait = shortDuration(d)
+		}
 		scrapeTimeout := 6 * 3600
 		if h.scraper != nil {
 			scrapeTimeout = int(h.scraper.Timeout().Seconds())
@@ -94,6 +112,18 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			"TGChatID":              tg.ChatID,
 			"TGProxy":               tg.Proxy,
 			"TGEvents":              notify.EventsString(tg.Events),
+
+			"IngestTGEnabled":      h.ingestEnabled(),
+			"IngestTGMode":         ingestMode,
+			"IngestTGReady":        ingestTG.Token != "" && ingestTG.ChatID != "",
+			"IngestTGBotTokenSet":  ingestTG.Token != "",
+			"IngestTGBotTokenHint": maskKey(ingestTG.Token),
+			"IngestTGChatID":       ingestTG.ChatID,
+			"IngestTGProxy":        ingestTG.Proxy,
+			"IngestTGDelay":        ingestDelay,
+			"IngestTGMaxWait":      ingestMaxWait,
+			"IngestTGBulkLimit":    ingestCfg.BulkLimit,
+			"IngestTGPending":      h.ingestPendingCount(),
 		})
 
 	case http.MethodPut:
@@ -120,6 +150,15 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			TGProxy              *string `json:"TGProxy"`
 			TGEnabled            *bool   `json:"TGEnabled"`
 			TGEvents             *string `json:"TGEvents"`
+
+			IngestTGEnabled   *bool   `json:"IngestTGEnabled"`
+			IngestTGMode      *string `json:"IngestTGMode"`
+			IngestTGBotToken  *string `json:"IngestTGBotToken"`
+			IngestTGChatID    *string `json:"IngestTGChatID"`
+			IngestTGProxy     *string `json:"IngestTGProxy"`
+			IngestTGDelay     *string `json:"IngestTGDelay"`
+			IngestTGMaxWait   *string `json:"IngestTGMaxWait"`
+			IngestTGBulkLimit *int    `json:"IngestTGBulkLimit"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -388,6 +427,90 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if tgChanged && h.notifier != nil {
 			h.notifier.SetConfig(h.tgConfig())
+		}
+
+		ingestTGChanged := false
+		if p.IngestTGEnabled != nil {
+			if err := h.db.SetSetting("ingest_tg_enabled", strconv.FormatBool(*p.IngestTGEnabled)); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			ingestTGChanged = true
+		}
+		if p.IngestTGMode != nil {
+			mode := strings.ToLower(strings.TrimSpace(*p.IngestTGMode))
+			if mode != "playback" && mode != "custom" {
+				writeError(w, http.StatusBadRequest, "入库通知模式只能是 playback 或 custom")
+				return
+			}
+			if err := h.db.SetSetting("ingest_tg_mode", mode); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			ingestTGChanged = true
+		}
+		if p.IngestTGBotToken != nil {
+			if v := strings.TrimSpace(*p.IngestTGBotToken); v != "" {
+				if err := h.db.SetSetting("ingest_tg_bot_token", v); err != nil {
+					writeError(w, http.StatusInternalServerError, "save setting failed")
+					return
+				}
+				ingestTGChanged = true
+			}
+		}
+		if p.IngestTGChatID != nil {
+			if err := h.db.SetSetting("ingest_tg_chat_id", strings.TrimSpace(*p.IngestTGChatID)); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			ingestTGChanged = true
+		}
+		if p.IngestTGProxy != nil {
+			if err := h.db.SetSetting("ingest_tg_proxy", strings.TrimSpace(*p.IngestTGProxy)); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			ingestTGChanged = true
+		}
+		if p.IngestTGDelay != nil {
+			v := strings.TrimSpace(*p.IngestTGDelay)
+			d, err := time.ParseDuration(v)
+			if err != nil || d < 10*time.Second || d > time.Hour {
+				writeError(w, http.StatusBadRequest, "入库通知延迟应在 10s 到 1h 之间，例如 3m")
+				return
+			}
+			if err := h.db.SetSetting("ingest_tg_delay", shortDuration(d)); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			ingestTGChanged = true
+		}
+		if p.IngestTGMaxWait != nil {
+			v := strings.TrimSpace(*p.IngestTGMaxWait)
+			d, err := time.ParseDuration(v)
+			if err != nil || d < 10*time.Second || d > 24*time.Hour {
+				writeError(w, http.StatusBadRequest, "入库通知最长等待应在 10s 到 24h 之间，例如 30m")
+				return
+			}
+			if err := h.db.SetSetting("ingest_tg_max_wait", shortDuration(d)); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			ingestTGChanged = true
+		}
+		if p.IngestTGBulkLimit != nil {
+			if *p.IngestTGBulkLimit < 1 || *p.IngestTGBulkLimit > 5000 {
+				writeError(w, http.StatusBadRequest, "入库通知批量阈值应在 1-5000 之间")
+				return
+			}
+			if err := h.db.SetSetting("ingest_tg_bulk_limit", strconv.Itoa(*p.IngestTGBulkLimit)); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			ingestTGChanged = true
+		}
+		if ingestTGChanged && h.ingestNotifier != nil {
+			h.ingestNotifier.SetConfig(h.ingestTGConfig())
 		}
 
 		if h.scraper != nil {

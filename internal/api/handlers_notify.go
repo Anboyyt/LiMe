@@ -311,3 +311,23 @@ func (h *Handler) webNotifyTest(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// webIngestNotifyTest 用入库通知的 Bot 配置发一条样例消息。
+// 用 SendNow 绕过事件开关，方便在正式启用前验证 Token / Chat ID。
+func (h *Handler) webIngestNotifyTest(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+	if h.ingestNotifier == nil || !h.ingestNotifier.Configured() {
+		writeError(w, http.StatusBadRequest, "请先填写入库通知 Bot Token 和 Chat ID")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	if err := h.ingestNotifier.SendNow(ctx, ingestTestText()); err != nil {
+		h.log.Warn("ingest telegram test failed", "err", err)
+		writeError(w, http.StatusBadGateway, "发送失败："+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

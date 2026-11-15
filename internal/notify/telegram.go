@@ -182,6 +182,13 @@ func (t *Telegram) NotifyMessage(event string, m Message) {
 	}
 }
 
+// SetAPIBaseForTest 让测试把请求指向本地 httptest 服务。
+func (t *Telegram) SetAPIBaseForTest(base string) {
+	t.mu.Lock()
+	t.apiBase = base
+	t.mu.Unlock()
+}
+
 // SendNow 同步发送，用于面板的「发送测试消息」。
 func (t *Telegram) SendNow(ctx context.Context, text string) error {
 	if !t.Configured() {
@@ -190,20 +197,34 @@ func (t *Telegram) SendNow(ctx context.Context, text string) error {
 	return t.send(ctx, text)
 }
 
+// SendMessageNow 同步发送一条完整消息（可带图片），用于需要确认发送成功
+// 才能标记已处理的后台任务，例如入库通知。
+func (t *Telegram) SendMessageNow(ctx context.Context, event string, m Message) error {
+	if !t.EventEnabled(event) {
+		return errors.New("telegram event disabled")
+	}
+	if !t.Configured() {
+		return errors.New("telegram 未配置 Bot Token 或 Chat ID")
+	}
+	return t.sendMessage(ctx, m)
+}
+
+func (t *Telegram) sendMessage(ctx context.Context, m Message) error {
+	if len(m.Photo) > 0 {
+		err := t.sendPhoto(ctx, m.Text, m.Photo, m.PhotoName)
+		if err == nil {
+			return nil
+		}
+		// 图片失败不能把通知本身丢掉，退回纯文本再发一次。
+		t.log.Warn("telegram photo failed, fallback to text", "err", err)
+	}
+	return t.send(ctx, m.Text)
+}
+
 func (t *Telegram) run() {
 	for m := range t.queue {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		var err error
-		if len(m.Photo) > 0 {
-			err = t.sendPhoto(ctx, m.Text, m.Photo, m.PhotoName)
-			if err != nil {
-				// 图片失败不能把通知本身丢掉，退回纯文本再发一次。
-				t.log.Warn("telegram photo failed, fallback to text", "err", err)
-				err = t.send(ctx, m.Text)
-			}
-		} else {
-			err = t.send(ctx, m.Text)
-		}
+		err := t.sendMessage(ctx, m)
 		cancel()
 		if err != nil {
 			t.log.Warn("telegram send failed", "err", err)
