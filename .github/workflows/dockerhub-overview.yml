@@ -8,6 +8,9 @@ on:
       - ".github/workflows/dockerhub-overview.yml"
   workflow_dispatch:
 
+permissions:
+  statuses: write
+
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -21,34 +24,67 @@ jobs:
           REPO: lime
           SHORT_DESC: "Jellyfin 兼容的轻量媒体服务器，网盘 STRM + 302 直连，不转码"
         run: |
-          set -euo pipefail
-          if [ -z "${DH_USER}" ] || [ -z "${DH_TOKEN}" ]; then
-            echo "DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 未配置，跳过"
-            exit 0
+          set -uo pipefail
+          {
+            if [ -z "${DH_USER}" ] || [ -z "${DH_TOKEN}" ]; then
+              echo "DOCKERHUB_USERNAME / DOCKERHUB_TOKEN 未配置"
+              exit 0
+            fi
+
+            echo "login as ${DH_USER}"
+            LOGIN=$(curl -sS -w '\n%{http_code}' -X POST "https://hub.docker.com/v2/users/login" \
+              -H "Content-Type: application/json" \
+              -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}")
+            CODE=${LOGIN##*$'\n'}
+            BODY=${LOGIN%$'\n'*}
+            echo "login HTTP ${CODE}"
+            echo "${BODY}" | head -c 300
+            if [ "${CODE}" != "200" ]; then
+              exit 1
+            fi
+            JWT=$(echo "${BODY}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
+            export JWT
+
+            python3 - "$SHORT_DESC" <<'PY'
+import json, os, sys, urllib.error, urllib.request
+text = open("docs/dockerhub-overview.md", encoding="utf-8").read()
+body = json.dumps({"description": sys.argv[1], "full_description": text}).encode()
+req = urllib.request.Request(
+    f"https://hub.docker.com/v2/repositories/{os.environ['DH_USER']}/{os.environ['REPO']}/",
+    data=body, method="PATCH",
+    headers={"Authorization": f"JWT {os.environ['JWT']}", "Content-Type": "application/json"})
+try:
+    with urllib.request.urlopen(req) as r:
+        print("PATCH ->", r.status)
+except urllib.error.HTTPError as e:
+    print("PATCH failed", e.code, e.read().decode("utf-8", "replace")[:500])
+    sys.exit(1)
+PY
+          } >/tmp/sync.log 2>&1
+          code=$?
+          cat /tmp/sync.log
+          if [ $code -ne 0 ]; then
+            tail -c 300 /tmp/sync.log >/tmp/sync.err
+            exit $code
           fi
 
-          JWT=$(curl -fsS -X POST "https://hub.docker.com/v2/users/login" \
-            -H "Content-Type: application/json" \
-            -d "{\"username\":\"${DH_USER}\",\"password\":\"${DH_TOKEN}\"}" \
-            | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
-          export JWT
-
-          python3 - "$SHORT_DESC" <<'PY'
-          import json, os, sys, urllib.request
-          text = open("docs/dockerhub-overview.md", encoding="utf-8").read()
-          body = json.dumps({"description": sys.argv[1], "full_description": text}).encode()
-          req = urllib.request.Request(
-              f"https://hub.docker.com/v2/repositories/{os.environ['DH_USER']}/{os.environ['REPO']}/",
-              data=body, method="PATCH",
-              headers={"Authorization": f"JWT {os.environ['JWT']}", "Content-Type": "application/json"})
-          with urllib.request.urlopen(req) as r:
-              print("PATCH ->", r.status)
-          PY
+      - name: Report failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          MSG=$(tail -c 200 /tmp/sync.err 2>/dev/null | tr '\n' ' ' | tr -d '"' | cut -c1-120)
+          [ -z "$MSG" ] && MSG="sync failed (no output)"
+          curl -sS -X POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -d "{\"state\":\"failure\",\"description\":\"${MSG}\",\"context\":\"dockerhub-overview\"}" >/dev/null
 
       - name: Verify
+        if: success()
         run: |
-          curl -fsS "https://hub.docker.com/v2/repositories/${USERNAME}/${REPO}/" \
+          curl -fsS "https://hub.docker.com/v2/repositories/${DOCKERHUB_USERNAME}/${REPO}/" \
             | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("description",""));print("full_description bytes:",len(d.get("full_description") or ""))'
         env:
-          USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           REPO: lime
