@@ -233,42 +233,48 @@ func (p *Prober) analyzeSeason(seriesID string, season int, focus []string) erro
 
 	saved := 0
 	for i, ep := range valid {
-		// 手动标记是权威来源，不再叠加自动结果。
+		// 先算这次的结果，再决定哪些旧片段保留：
+		// 章节是权威来源；旧的指纹结果可以被新边界替换；没有新结果时保留旧的。
+		intro, hasIntro := consensus(introCands[i], 0, ep.runtime, 15, 600, 0.5, false)
+		outro, hasOutro := consensus(outroCands[i], ep.tailStart, ep.runtime, 15, 900, 0.35, true)
+
 		existing, _ := p.db.MediaSegmentsForItem(ep.src.ItemID, nil)
-		have := make(map[string]bool, len(existing))
 		manual := false
+		preserve := make(map[string]bool, len(existing))
+		merged := make([]store.MediaSegment, 0, len(existing)+2)
 		for _, s := range existing {
-			have[s.Type] = true
 			if s.Source == "manual" {
 				manual = true
 			}
+			if s.Source == "fingerprint" {
+				if (s.Type == store.SegmentIntro && hasIntro) ||
+					(s.Type == store.SegmentOutro && hasOutro) {
+					continue // 用这次算出的边界替换
+				}
+			} else {
+				preserve[s.Type] = true
+			}
+			merged = append(merged, s)
 		}
 		if manual {
 			continue
 		}
-		// 只补缺失的类型：上次可能只认出片尾，换了片头的新集还能再补上，
-		// 不会因为「已经有 1 条片段」把整集永久跳过。
-		merged := append([]store.MediaSegment(nil), existing...)
 		added := 0
-		if !have[store.SegmentIntro] {
-			if s, ok := consensus(introCands[i], 0, ep.runtime, 15, 600, 0.5, false); ok {
-				merged = append(merged, store.MediaSegment{
-					ItemID: ep.src.ItemID, Type: store.SegmentIntro,
-					StartTicks: secondsToTicks(s.start), EndTicks: secondsToTicks(s.end),
-					Source: "fingerprint", Confidence: 0.7,
-				})
-				added++
-			}
+		if hasIntro && !preserve[store.SegmentIntro] {
+			merged = append(merged, store.MediaSegment{
+				ItemID: ep.src.ItemID, Type: store.SegmentIntro,
+				StartTicks: secondsToTicks(intro.start), EndTicks: secondsToTicks(intro.end),
+				Source: "fingerprint", Confidence: 0.7,
+			})
+			added++
 		}
-		if !have[store.SegmentOutro] {
-			if s, ok := consensus(outroCands[i], ep.tailStart, ep.runtime, 15, 900, 0.35, true); ok {
-				merged = append(merged, store.MediaSegment{
-					ItemID: ep.src.ItemID, Type: store.SegmentOutro,
-					StartTicks: secondsToTicks(s.start), EndTicks: secondsToTicks(s.end),
-					Source: "fingerprint", Confidence: 0.7,
-				})
-				added++
-			}
+		if hasOutro && !preserve[store.SegmentOutro] {
+			merged = append(merged, store.MediaSegment{
+				ItemID: ep.src.ItemID, Type: store.SegmentOutro,
+				StartTicks: secondsToTicks(outro.start), EndTicks: secondsToTicks(outro.end),
+				Source: "fingerprint", Confidence: 0.7,
+			})
+			added++
 		}
 		if added == 0 {
 			continue
@@ -512,6 +518,26 @@ func longestRun(a, b []float64, lag int) (fpSpan, fpSpan) {
 			break
 		}
 		bestEnd += 6
+	}
+	// 8 秒检测窗会让边界提前几秒。用 4 秒窗把两端收回来：
+	// 起点处这 4 秒对不上就往后挪，终点处对不上就往前挪。
+	// 否则片尾会从正片最后几秒就开始跳。
+	const fw = 8 // 4 秒
+	ok := func(k int) bool {
+		return k >= 0 && k+fw <= n &&
+			pearson(a[i0+k:i0+k+fw], b[j0+k:j0+k+fw]) >= 0.5
+	}
+	for moved := 0; moved < 16 && bestEnd-bestStart > 12; moved++ {
+		if ok(bestStart) {
+			break
+		}
+		bestStart++
+	}
+	for moved := 0; moved < 16 && bestEnd-bestStart > 12; moved++ {
+		if ok(bestEnd - fw) {
+			break
+		}
+		bestEnd--
 	}
 	return fpSpan{start: float64(i0+bestStart) * 0.5, end: float64(i0+bestEnd) * 0.5},
 		fpSpan{start: float64(j0+bestStart) * 0.5, end: float64(j0+bestEnd) * 0.5}
