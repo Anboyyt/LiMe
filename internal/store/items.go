@@ -948,8 +948,8 @@ func (d *DB) buildItemWhere(q ItemQuery) ([]string, []any) {
 			where = append(where, "1 = 0")
 		} else {
 			where = append(where,
-				`EXISTS (SELECT 1 FROM item_persons ip WHERE ip.item_id = items.id
-				 AND ip.name_lower IN (`+placeholders(len(names))+`))`)
+				`items.id IN (SELECT ip.item_id FROM item_persons ip
+				 WHERE ip.name_lower IN (`+placeholders(len(names))+`))`)
 			args = append(args, names...)
 		}
 	}
