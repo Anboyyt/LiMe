@@ -6,16 +6,79 @@
 [![Telegram Channel](https://img.shields.io/badge/Telegram-Channel-26A5E4?logo=telegram&logoColor=white)](https://t.me/Lime_see)
 [![Telegram Chat](https://img.shields.io/badge/Telegram-Chat-229ED9?logo=telegram&logoColor=white)](https://t.me/Lime_seee)
 
-一个用 Go 写的轻量媒体服务器，**兼容 Jellyfin 客户端**，专为「网盘 STRM + 302 直连」场景设计。
+**轻量 Jellyfin 兼容媒体服务器 · 只适配 PanSave**
 
-服务端不接触视频字节、不转码、不缓存 URL —— 播放时只回一个 `302`，让客户端直连云盘。
+兼容 Jellyfin 客户端、爆米花、SenPlayer、VidHub —— **SenPlayer 体验最佳**。
+
+服务端代客户端跟一跳 PanSave 的 302；**外网直接访问 LiMe 就能播放**，
+视频流不再绕经 PanSave 反向代理。
 
 ```
 客户端 → LiMe → 302 → 115/123 CDN → 播放
 ```
 
-LiMe 在服务端替客户端跟一跳 PanSave 的 302（`LIME_RESOLVE_REDIRECT`），
-所以外网可以直接访问 LiMe，播放流量不必再绕经 PanSave 反代。
+开启 `LIME_RESOLVE_REDIRECT` 后，LiMe 在服务端就把 PanSave 那一跳跟掉，
+直接把最终 CDN 地址交给客户端 —— PanSave 的 16868 端口完全不用暴露到公网。
+
+> 服务端不接触视频字节、不转码、不缓存 URL。播放大库时 LiMe 几乎不占上传带宽。
+
+---
+
+## 目录
+
+- [为什么是 LiMe](#为什么是-lime)
+- [功能特性](#功能特性)
+- [快速开始](#快速开始)
+- [客户端兼容](#客户端兼容)
+- [Web 界面](#web-界面)
+- [片头片尾](#片头片尾)
+- [媒体库管理](#媒体库管理)
+- [运维面板](#运维面板)
+- [本地播放器唤起](#本地播放器唤起)
+- [配置项](#配置项)
+- [播放链路](#播放链路)
+- [刮削](#刮削)
+- [本地元数据](#本地元数据-nfo--本地图片)
+- [外挂字幕](#外挂字幕)
+- [多版本合并](#多版本合并)
+- [搜索](#搜索)
+- [部署模式](#部署模式)
+- [更新记录](#更新记录)
+- [已实现接口](#已实现接口)
+- [本地开发](#本地开发)
+- [目录结构](#目录结构)
+- [社区与许可证](#社区与许可证)
+
+---
+
+## 为什么是 LiMe
+
+- **只为「网盘 STRM + 302」这一件事**。不接云盘 API、不做转码、不缓存直链，
+  云盘那层全部交给 PanSave，LiMe 只负责索引和协议。
+- **29 万条 STRM 能扫**。流式 `WalkDir` + 12 个解析 worker + 批量事务，
+  实测 29 万条约 2 秒完成启动对账，内存稳定在几十 MB。
+- **出网带宽几乎为零**。播放时只回一个 302，视频字节从 CDN 直进客户端，
+  NAS 不承担中转。
+- **复用官方客户端生态**。实现 Jellyfin 兼容 API，Android / Android TV /
+  Infuse / VidHub / SenPlayer / 爆米花都能直接连。
+- **单二进制 + SQLite**。Go 静态编译，无 CGO、无外部数据库、无前端构建链。
+
+## 功能特性
+
+| 能力 | 说明 |
+|---|---|
+| Jellyfin / Emby 兼容 | 同时接受 `/emby/...` 前缀，PanSave 的 Emby 配置校验可直接通过 |
+| 302 直连 | 服务端只发重定向，不碰视频字节；可选在服务端跟掉 PanSave 一跳 |
+| STRM 索引 | 扫描 `.strm`，自动识别电影 / 剧集 / 季 / 单集，支持多版本归并 |
+| TMDB 刮削 | 按目录里的 `{tmdb-ID}` 精确刮削，海报 / 背景 / Logo / 简介 / 演员 |
+| 本地元数据 | 识别同目录 `.nfo` 与 `poster.jpg` / `fanart.jpg`，本地优先 |
+| 实时监控 | 新 `.strm` 落盘即增量解析并精准刮削，删除/改名同步清理 |
+| 片头片尾 | 章节 + 音频指纹两种来源，返回 `MediaSegments`，支持手动标记 |
+| 多用户 | 独立进度、收藏、已看状态，支持按库授权与查看权限 |
+| 相似推荐 | 按类型 / 演员 / 评分 / 年份打分，电影只推电影、剧集只推剧集 |
+| 本地播放器 | 唤起 PotPlayer / VLC / MPV / IINA / Infuse，也可导出 m3u |
+| 自带 Web UI | `/` 原生媒体界面，`/web/` 运维面板，均无前端框架 |
+| 单二进制 | Go 静态编译 + SQLite，镜像约 58MB（含 ffmpeg） |
 
 ---
 
@@ -35,7 +98,7 @@ mv docker-compose.example.yml docker-compose.yml
 ```yaml
 LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
 volumes:
-  - /path/to/your/strm:/media:ro    # ← 你的 STRM 目录
+  - /path/to/your/strm:/media:ro    # ← 你的 PanSave STRM 目录
 ```
 
 然后启动：
@@ -76,6 +139,30 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 > 首次启动会自动扫描 `LIME_LIBRARIES` 指定的目录。扫描大库时建议设置
 > `LIME_SCAN_ON_START=false`，启动后在面板里手动触发。
 
+## 客户端兼容
+
+| 客户端 | 状态 | 说明 |
+|---|---|---|
+| **SenPlayer** | ✅ 最佳 | 实际按它的请求行为做过针对性适配，片源切换 / 续播 / 字幕最完整 |
+| VidHub | ✅ | 多版本列表、进度上报正常 |
+| 爆米花（Filmly） | ✅ | 登录 / 浏览 / 播放正常 |
+| Infuse | ✅ | 兼容性好，可作对照组 |
+| Jellyfin 官方 Android / Android TV | ⚠️ 基础可用 | 浏览 / 播放 / 续播正常；片头跳过按钮需服务端 ≥ 10.10，LiMe 仍报 10.9.11，按钮暂不显示 |
+| jellyfin-web | ❌ | 浏览器播不了 mkv / H.265，服务端不转码，属架构固有边界 |
+
+已针对性补齐的兼容点：
+
+- API 路径首段大小写不敏感：`/emby/videos/{id}/stream.mkv` 与 `/Videos/...` 等价
+- `/Items/Counts`、`/Items/Filters`、`/Items/{id}/Similar`、`/Studios`
+- 演员：`/Persons`、`/Persons/{name|id}`、`/Items?PersonIds=` 反查；
+  `/Items/{personId}` 也能返回 Person 条目，点演员可直接跳详情
+- `/MediaSegments/{id}`、`/Items/{id}/ThemeMedia|ThemeSongs|ThemeVideos|LocalTrailers|SpecialFeatures`
+- `/DisplayPreferences/{id}`、`/System/Ping`、`/Plugins`、`/Devices`
+- `/api/danmu/{id}/raw` 返回空数组，避免弹幕插件报错
+- 用户头像 `Images/Primary` 不强制 token（返回 LiMe logo）
+- `POST /Items/{id}` 返回 204，避免客户端因 405 反复重试
+- 外挂字幕走 `/Videos/{id}/{sourceId}/Subtitles/{index}/Stream.{format}`
+
 ## Web 界面
 
 `/` 是自带的原生媒体界面，参考 Pelagica 的布局自己实现，**没有前端框架**：
@@ -83,9 +170,10 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 - 首页：随机背景 + 继续观看 + 最近添加
 - 媒体库：海报网格、按名称/年份/最近添加/最新一集排序、分页
 - 详情：海报/背景、简介、类型、演员、季与单集（带剧照）、片源直链、外挂字幕、标记已看/收藏
-- **相似推荐**：详情页底部按「类型交集 + 同演员 + 评分 + 年份」打分，电影只推电影、剧集只推剧集
+- **相似推荐**：按「类型交集 + 同演员 + 评分 + 年份」打分，电影只推电影、剧集只推剧集
 - 搜索、登录、退出；播放时自动上报进度，能接上续播
 - 亮/暗主题可切换，配色取自 LiMe logo；字体和图标全部本地，不依赖外网 CDN
+- 详情页可直接唤起本地播放器（PotPlayer 等），见[本地播放器唤起](#本地播放器唤起)
 - 整个前端约 60KB（未压缩，JS + CSS），不会出现完整 SPA 那种浏览器内存暴涨
 
 > 浏览器仍然播不了 mkv / H.265（服务端不转码）；mp4/webm 可以直接播，
@@ -93,14 +181,50 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 >
 > `/socket` WebSocket 握手保留，官方客户端会连。
 
-## 用户与 API Key
+## 片头片尾
 
-- 首次启动自动创建管理员（`LIME_ADMIN_USER` / `LIME_ADMIN_PASSWORD`）
-- 管理员可在面板「用户」页新建/删除用户、改名、重置密码、禁用账号
-- 普通用户能浏览和播放，不能改配置、管理用户或生成 API Key
-- 管理类接口要求管理员：扫描/刮削、刷新、建库删库；普通用户只能看到自己和自己的会话
-- 改密码会吊销其他设备的 token，当前会话保留
-- API Key 在面板左侧「API Key」页生成，可直接当 `X-Emby-Token` 使用
+`GET /MediaSegments/{itemId}` 返回 Jellyfin 10.10 的
+`QueryResult<MediaSegmentDto>`（支持 `includeSegmentTypes` 过滤），
+片段类型为 `Intro / Outro / Recap / Preview / Commercial`。
+数据按**单集**存储，同一部剧不同集各有各的起点和终点。
+
+两种识别方式，可以叠加使用：
+
+**1. 章节（默认开启）**
+
+`ffprobe -show_chapters` 和轨道探测走同一次请求，**没有额外流量**，
+实测 1–2 秒/集。按章节名匹配：
+
+- 片头：`Intro` / `Opening Credits` / `片头`
+- 片尾：`Credits` / `End Credits` / `片尾`
+- 其他：`Recap` / `Preview`
+- 普通 `Chapter 01` / `Scene 1` 不做猜测
+
+时长做了上下限约束（Intro 5 秒–15 分钟、Outro 5 秒–20 分钟），
+避免把几分钟的正片误判成片头。章节大概覆盖 60% 的片尾、20% 的片头，
+其余靠音频指纹。
+
+**2. 音频指纹（无章节的剧）**
+
+把每集开头/结尾的音频转成 0.5 秒 RMS 包络，同季多集两两做互相关，
+找出重复出现的连续片段。不依赖章节名，也不需要人工规则。
+同一时间只跑一季，避免打满 NAS 的 CPU 和网盘带宽。
+
+**触发时机**
+
+- 新入库条目立即探测并提取（不依赖后续整轮扫描）
+- 单集播放进度达到 `LIME_SEGMENT_AUTO_AFTER`（默认 **10 分钟**，`0` 关闭）时
+  自动补齐整部剧；10 / 20 分钟各检查一次。
+  同一部剧 12 小时内只预热一次
+- 新集章节为空时，自动补跑本季音频指纹
+- 手动触发（管理员）：
+  - `POST /web/api/segments/scan?seriesId=&limit=` 按剧补齐
+  - `POST /web/api/segments/scan?itemIds=a,b` 定点补条目
+  - `POST /web/api/segments/fingerprint?seriesId=&season=` 跑本季指纹
+  - `POST /web/api/segments` 手动写入片段（`ItemId` + `Segments[]`，会标记为手动来源）
+
+> 官方客户端播放器里的「跳过片头」按钮依赖服务端版本号 ≥ 10.10，
+> LiMe 目前仍报 10.9.11，按钮暂不显示；接口和原生 Web UI 的数据都正常。
 
 ## 媒体库管理
 
@@ -158,24 +282,42 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 
 ## 运维面板
 
-`/web/` 是一个内嵌的轻量运维页（纯静态，无前端框架）：
+`/web/` 是一个内嵌的轻量运维页（纯静态，无前端框架），**仅管理员可进**：
 
 - 概览：库数量、条目/片源/播放记录统计、扫描与刮削状态
 - 媒体库：浏览、按类型筛选、按标题搜索、分页加载
 - 条目详情：元数据、播放状态、片源列表、**复制直链**、标记已看/收藏
-- 会话：当前播放设备与进度
+- 会话：当前播放设备与进度（30 分钟不上屏、24 小时清理）
 - 播放记录：最近 7 天的播放历史（`GET /web/api/playback-history`）
 - 用户：新建/删除、改名、重置密码、禁用、按库授权
 - 刮削失败：按接口错误 / 404 / 海报 / 背景图分类，支持 CSV 导出
 - 通知：Telegram 播放通知配置 + 测试消息
 - 系统：服务器信息、当前配置、扫描记录、实时监控开关、每日任务、立即备份
+- **运行日志**：进程内环形缓存最近 1000 条，可按级别筛选、一键导出
+  `.txt`（`GET /web/api/logs/export`）；日志不落盘，`docker logs lime` 才是完整来源
+- 片头片尾：展示每集片段、触发提取、跑本季音频指纹
 - 一键触发全量扫描 / 增量扫描 / 刮削 / 海报与背景图回填
 
 > 面板**不承担播放**：服务端不转码，浏览器打不开 mkv / H.265。
 > 「复制直链」拿到的 302 地址交给 VLC / PotPlayer / 官方客户端用。
 > 页面上的「浏览器播放」只对 mp4/webm 这类容器有意义。
 
-### 修改配置
+## 本地播放器唤起
+
+媒体界面和运维面板的播放按钮可以直接拉起本机播放器，不用先复制直链：
+
+- 片源区顶部有「本地播放器」下拉，默认 **PotPlayer**，选择存 localStorage
+- 支持：PotPlayer `potplayer://`、VLC `vlc://`、MPV `mpv://`、
+  IINA（macOS）`iina://weblink?url=`、Infuse `infuse://x-callback-url/play?url=`
+- 后端 `GET /web/api/play-target?itemId=&sourceId=&player=` 返回
+  `HttpUrl / ProtocolUrl / M3uUrl / Player / Players`；sourceId 可省略取第一个源
+- `POST /web/api/play-target` 保存管理员默认播放器
+- `GET /web/api/playlist.m3u?itemId=&sourceId=` 输出 m3u 作为回退
+
+> 浏览器首次会弹「是否打开 PotPlayer」，无法绕过；协议没注册时会静默失败，
+> 这时用「播放列表」或「复制直链」回退。
+
+## 配置项
 
 编辑 `docker-compose.yml` 里的 `environment`，重点：
 
@@ -188,18 +330,18 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 | `LIME_DATA_DIR` | 数据目录（SQLite、缓存） | `./data` |
 | `LIME_MAX_ITEMS` | 单次列表查询最大返回条数，防大库一次性返回 | `20000` |
 | `LIME_LIBRARIES` | 首次启动时的媒体库种子配置，见下 | 自动探测 `/strm` |
-| `LIME_LIBRARY_ROOTS` | 面板里新建库允许的容器内根路径，默认 `/strm` | `/strm` |
+| `LIME_LIBRARY_ROOTS` | 面板里新建库允许的容器内根路径 | `/strm` |
 | `LIME_SCAN_ON_START` | 启动时是否全量扫描 | `true` |
 | `LIME_SCAN_INTERVAL` | 定时重扫间隔，如 `6h`；留空关闭 | 空 |
 | `LIME_SCAN_DAILY_AT` | 每天固定时间做增量扫描，格式 `HH:MM`；留空关闭 | 空 |
-| `LIME_REALTIME_MONITOR` | 实时监控媒体库目录（类似 Emby 实时监控），新 `.strm` 出现即增量解析并补刮削 | `true` |
+| `LIME_REALTIME_MONITOR` | 实时监控媒体库目录，新 `.strm` 出现即增量解析并补刮削 | `true` |
 | `LIME_REALTIME_RECONCILE` | 启动时做一次磁盘与片源表的对账，补齐停机期间的增删 | `true` |
 | `LIME_REWRITE_ENABLED` | 是否改写 STRM 里的地址 | `false` |
 | `LIME_REWRITE_FROM` | STRM 里的原始 host | — |
 | `LIME_REWRITE_LOCAL` | 局域网客户端使用的地址 | — |
 | `LIME_REWRITE_PUBLIC` | 外网客户端使用的地址 | — |
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token | `false` |
-| `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址，如 `http://192.168.1.100:886`。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
+| `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
 | `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端；公网直连建议开 | `false`（compose 模板里为 `true`） |
 | `LIME_TMDB_API_KEY` | TMDB v3 API Key，留空则关闭刮削 | 空 |
 | `LIME_TMDB_LANGUAGE` | 刮削语言 | `zh-CN` |
@@ -207,16 +349,18 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 | `LIME_SCRAPE_TIMEOUT` | 单次刮削的时长上限，到点正常暂停，下次继续；`0` 不限 | `6h` |
 | `LIME_SCRAPE_WORKERS` | 刮削并发数（1-8） | `3` |
 | `LIME_SCRAPE_RATE_MS` | 每次 TMDB 请求之间的间隔（毫秒） | `50` |
+| `LIME_SEGMENT_EXTRACT` | 是否提取片头片尾 | `true` |
+| `LIME_SEGMENT_SCOPE` | 存量回填范围：`favorites` / `watching` / `recent` / `all` | `watching` |
+| `LIME_SEGMENT_AUTO_AFTER` | 单集观看多久后自动补齐整部剧；`0` 关闭 | `10m` |
 | `LIME_TG_BOT_TOKEN` | Telegram Bot Token（也可在面板填写，面板优先） | 空 |
 | `LIME_TG_CHAT_ID` | 接收通知的 Chat ID，群组为负数 | 空 |
 | `LIME_TG_PROXY` | 访问 `api.telegram.org` 的 HTTP 代理 | 空 |
 | `LIME_TG_NOTIFY` | 通知总开关；留空时 token + chat id 都齐就自动开启 | 自动 |
 | `LIME_TG_EVENTS` | 推送事件，逗号分隔：`start,pause,resume,stop` | 全部 |
-| 面板「定时任务」 | 每日扫描 / 每日刮削时间，互不联动 | 扫描 03:30、刮削关闭 |
-| 面板「Telegram 播放通知」 | 填 Token / Chat ID / 代理，勾选事件，可发测试消息 | 关闭 |
 
-> `LIME_REWRITE_LOCAL` / `LIME_REWRITE_PUBLIC` 可以只写 `host:port`，也可以带 scheme（如 `https://pan.example.com`）。
-> 客户端来自私有网段时用 LOCAL，公网时用 PUBLIC。只改写 `LIME_REWRITE_FROM` 指定的 host，其他地址原样透传。
+> `LIME_REWRITE_LOCAL` / `LIME_REWRITE_PUBLIC` 可以只写 `host:port`，也可以带 scheme
+> （如 `https://pan.example.com`）。客户端来自私有网段时用 LOCAL，公网时用 PUBLIC。
+> 只改写 `LIME_REWRITE_FROM` 指定的 host，其他地址原样透传。
 
 ### 挂载 STRM 目录并配置媒体库
 
@@ -230,180 +374,86 @@ environment:
   LIME_LIBRARIES: "电影|/strm/Movies|movies;剧集|/strm/TV|tvshows"
 ```
 
----
-
-## 当前进度
-
-**M0–M6 已完成**：服务骨架、认证、STRM 扫描、媒体库浏览、播放 302、续播、
-TMDB 刮削、用户与 API Key、运维面板。
-
-**M7 元数据增强**：TMDB 类型/演员写入 `Genres`/`People`，新增 `/Genres`、
-`/Items/Filters`；单集时长和剧照自动补全；原生详情页展示类型、演员和单集缩略图；
-外挂字幕（srt/ass/ssa/vtt）按需发现并提供 Jellyfin/Emby 字幕流。
-
-**M8 稳定性与观感**：
-
-| 版本 | 内容 |
-|---|---|
-| v1.0.5 | 相似推荐打分（类型/演员/评分/年份）、海报回填修复、同目录 STRM 归并、时长回填 |
-| v1.0.6 | 新 logo 与青柠绿主题、去掉装饰性渐变、公网直连不再需要 PanSave 中转、修复 logo 路由 404 |
-| v1.0.15 | 演员筛选：persons 索引、`PersonIds` 反查、本地 `tvshow.nfo` 演员挂到 Series |
-| v1.0.16 | 会话 30 分钟不上屏、24 小时清理；会话并入概览；面板新增运行日志页 |
-| v1.0.18 | 已播判定改为 90%，进度心跳也参与；Stopped 位置为 0 时回退最后进度；补齐历史 ≥90% 记录 |
-
-已实现的接口：
+## 播放链路
 
 ```
-GET  /health
-GET  /System/Info/Public | /System/Info
-GET  /System/Configuration | /System/Configuration/public
-GET  /Branding/Configuration
-GET  /Branding/Splashscreen | /Branding/logo.png   ← LiMe logo
-POST /Users/AuthenticateByName
-GET  /Users/Public | /Users | /Users/Me | /Users/{userId}
-GET  /Users/{userId}/Views
-GET  /Users/{userId}/Items/Latest | /Items/Resume
-GET  /Items                       ← 主查询接口
-GET  /Items/Counts | /Items/Filters
-GET  /Genres
-GET  /Items/{itemId}
-GET  /Items/{itemId}/Similar
-GET  /Shows/{seriesId}/Seasons | /Episodes
-GET  /Shows/NextUp                  ← 「接下来看」
-POST /Library/Refresh[?mode=fast]    ← 默认全量，fast 为增量
-POST /Library/Media/Updated          ← PanSave 入库通知，按路径匹配库后增量扫描
-POST /Items/{itemId}/Refresh          ← 只重解析该条目（剧集含其单集）
-GET  /Library/VirtualFolders | /VirtualFolders/Query | /SelectableMediaFolders
-GET  /Library/MediaFolders
-GET  /QuickConnect/Enabled
-
-# M3 播放
-GET|POST /Items/{itemId}/PlaybackInfo
-GET  /Videos/{itemId}/stream        ← 302 到 PanSave/网盘
-GET  /Videos/{itemId}/{sourceId}/Subtitles/{index}/Stream.{format}
-GET  /Videos/{itemId}/Subtitles/{index}/Stream.{format}
-GET  /Audio/{itemId}/stream
-POST /Sessions/Playing | /Progress | /Stopped
-GET  /Sessions
-
-# M5 续播 / 观看状态
-GET  /Users/{userId}/Items/Resume   ← 真实续播列表
-POST|DELETE /Users/{userId}/PlayedItems/{itemId}
-POST|DELETE /Users/{userId}/FavoriteItems/{itemId}
-
-# M6 用户与凭据
-POST   /Users/New                        ← 新建用户（管理员）
-POST   /Users/{userId}                   ← 改名（本人或管理员）
-DELETE /Users/{userId}                   ← 删除用户（管理员）
-POST   /Users/{userId}/Password          ← 改密码 / 管理员重置
-POST   /Users/{userId}/Policy            ← 管理员/禁用状态
-POST   /Sessions/Logout                  ← 吊销当前 token
-GET|POST /Auth/Keys                      ← 列出 / 生成 API Key（管理员）
-DELETE /Auth/Keys/{key}                  ← 删除 API Key（管理员）
-
-# M4 刮削
-GET  /Items/{itemId}/Images/{imageType}   ← 海报/背景图（本地文件）
-GET|POST /web/api/scrape                  查询 / 触发刮削
-
-# 运维面板
-GET  /                 → 302 /web/
-GET  /web/             内嵌静态页
-GET  /web/api/stats    统计 + 扫描/刮削/图片回填状态
-GET|POST /web/api/scan 查询 / 触发扫描
-GET|POST /web/api/libraries             列出 / 新建媒体库
-PUT|DELETE /web/api/libraries/{id}      修改 / 删除媒体库
-POST /web/api/libraries/{id}/scan       只扫描指定库
-GET  /web/api/browse?path=/strm         列出可选的子目录
-GET|PUT  /web/api/settings              读写面板设置（含 Telegram、实时监控）
-GET|POST /web/api/scrape                查询 / 触发刮削
-GET  /web/api/scrape/failures           刮削失败列表（?format=csv 导出）
-GET|POST /web/api/images/posters        海报回填
-GET|POST /web/api/images/backdrops      背景图回填
-GET  /web/api/playback-history          播放历史（保留 7 天）
-POST /web/api/notify/test               发送 Telegram 测试消息
-POST /web/api/backup                    立即备份数据库
+客户端 → GET /Items/{id}/PlaybackInfo   （拿到 MediaSource，Path 指向本服务）
+      → GET /Videos/{id}/stream?static=true&MediaSourceId=...
+      → 302（LIME_RESOLVE_REDIRECT=true 时直接给 CDN 地址）
+      → 115/123 CDN（支持 Range，206）
 ```
 
-`/Items`、`/Items/{id}`、`/Items/Resume` 返回的 `UserData` 现在带真实数据：
-`PlaybackPositionTicks`、`Played`、`PlayCount`、`IsFavorite`、`PlayedPercentage`，
-剧集/季额外带 `UnplayedItemCount`（未看集数角标）。
+关闭 `LIME_RESOLVE_REDIRECT` 时，LiMe 只回 STRM 里的 PanSave 地址，
+由客户端再跟一跳 PanSave 的 302。
 
-### Emby 兼容
+- `SupportsTranscoding: false`，没有任何转码路径；客户端不支持直连编码时会直接报错，这是设计边界
+- CDN 直链的签名与请求 UA 绑定，LiMe 会透传客户端 UA，否则会 403 `invalid signature`
+- `RunTimeTicks = 0` 时部分客户端进度条异常，属已知限制；有 TMDB 时长后会自动回填
+- 多版本默认按画质排序，客户端不指定 `MediaSourceId` 时播最高画质
 
-所有接口都同时接受 `/emby/...` 前缀（去掉前缀后走同一套路由），该前缀下
-`ProductName` 返回 `Emby Server`。PanSave 的 Emby 配置校验依赖：
+### 时长
 
-- `GET /emby/System/Info`
-- `GET /emby/Library/VirtualFolders/Query`
-- `GET /emby/Library/SelectableMediaFolders`
-- `GET /emby/Items`、`GET /emby/Users`
+TMDB 刮削会写回电影和单集的 `RunTimeTicks`；对升级前已刮削、时长为 0 的条目，
+启动刮削时会自动补一轮（`run_time_ticks = 0` 的电影与单集）。有真实时长后，
+客户端进度条和 90% 自动判定已看才能正常工作。
 
-### 部署模式
+> 时长未知（`RunTimeTicks = 0`）时，服务端无法自动判定「看完」，
+> 需要客户端显式调用 `PlayedItems` 标记；进度条百分比也要有真实时长才会返回。
 
-两种都能用，**推荐直连**：少一跳反代，客户端直接吃 LiMe 的 302。
-
-#### 模式 A：客户端直连 LiMe（推荐）
-
-```
-客户端 → https://lime.example.com（CF Tunnel / 端口映射）
-      → LiMe 886 → 302 → 115/123 CDN → 播放
-```
-
-- `LIME_RESOLVE_REDIRECT: "true"`：LiMe 在返回 302 前先跟一跳 PanSave，
-  把最终 CDN 地址交给客户端。PanSave 的 16868 不需要暴露到公网
-- `LIME_INTERNAL_URL` 留空即可：PlaybackInfo 里的 `Path` 直接用客户端访问的域名。
-  就算填了也不影响公网客户端，见下面「自动判断」
-- CDN 直链的签名与请求 UA 绑定，LiMe 会透传客户端 UA，否则会 403
-  `invalid signature`
-
-#### 模式 B：PanSave 反代（只有反代端口对外）
+**文件名解析**支持常见命名：
 
 ```
-客户端 → https://lime.example.com（CF Tunnel）
-      → PanSave 反代 1886 → LiMe 886
-      → LiMe 302 → 最终 CDN
+剧名.2026.S01E01.2160p.25fps.WEB-DL.SDR.H.265.8bit.AAC2.0-HHWEB.mp4
+  → 剧名 / 2026 / S01E01 / 2160p / hevc / aac 2ch / mp4
+
+电影名.2024.1080p.WEB-DL.H.264.DDP5.1.mkv
+  → 电影名 / 2024 / 1080p / h264 / eac3 6ch / mkv
 ```
 
-PanSave 反代会拿 `MediaSources[].Path` 去探测 302，这个地址必须是
-**PanSave 能直接访问的上游地址**，不能是公网域名，否则会打回反代自身形成回环
-（日志：`302 探测失败，透明回退`）。所以：
+## 刮削
 
-```yaml
-LIME_INTERNAL_URL: "http://192.168.1.100:886"
-LIME_RESOLVE_REDIRECT: "true"
+服务端用目录名里的 `{tmdb-ID}` 精确请求 TMDB，不做标题搜索，避免刮错片：
+
+- 电影 → `/movie/{id}`，剧集 → `/tv/{id}`，单集 → `/tv/{id}/season/{n}`
+- 写回简介、原名、首播日期、评分、类型、演员；海报/背景图/ClearLogo 下载到
+  `data/images/`，由 `/Items/{id}/Images/{type}` 本地提供，不依赖外网始终可用
+- 只处理 `scraped_at = 0` 的条目，重复扫描/重启不会重复请求
+- **单次运行有软性时长上限**（`LIME_SCRAPE_TIMEOUT`，默认 `6h`，`0` 表示不限）。
+  到点后本次正常结束，已处理的条目全部落库，面板显示「本次已达到单次运行上限，
+  剩余条目下次继续」；这不是错误，不会标红，也不会把余下条目标成 TMDB 失败
+- 单个条目偶发失败（网络抖动、单请求 25s 超时）只进「刮削失败」列表；
+  只有连续 20 条都失败才认为 TMDB/代理整体不可用并在面板报错
+- 面板里有「刮削失败」页，按接口错误 / 404 / 海报 / 背景图分类，可导出 CSV
+- **海报回填**：海报为空的条目也会进回填队列并排在最前，避免「刮过但当时 TMDB 还没图」的片永远缺海报
+- 头像回填并发执行，共用 50ms 全局限速；头像按需下载
+- 年份排序以 TMDB 首映/上映日期为准，不再被目录名里的年份带偏
+
+> 国内直连 `api.themoviedb.org` 不通时，设置 `LIME_TMDB_PROXY`
+> （NAS 上 mihomo 监听 `7890`，容器里要用宿主机 IP，不能写 `127.0.0.1`）。
+> API Key 建议放在 compose 同目录的 `.env`，该文件已在 `.gitignore` /
+> `.dockerignore` 中排除，同步源码时也不要带过去。
+
+## 本地元数据（NFO / 本地图片）
+
+媒体目录里自带 `.nfo` 和图片时，**本地元数据优先**，定时 TMDB 刮削不会覆盖：
+
+```
+电影名 (2024)/movie.nfo
+电影名 (2024)/poster.jpg | folder.jpg | cover.jpg | thumb.jpg
+电影名 (2024)/fanart.jpg | backdrop.jpg
 ```
 
-#### `LIME_INTERNAL_URL` 是自动判断的
+- 支持 Kodi / Emby 风格的 `movie` / `episodedetails` / `tvshow`
+- 识别 title / originaltitle / plot / year / premiered / runtime / rating /
+  mpaa / genre / actor / director / studio / uniqueid(tmdb)
+- 图片**不复制**，数据库存 `local:/绝对路径`，图片接口限制在媒体库根目录内（防穿越）
+- 扫描时应用 NFO 并写入 `scraped_at`，本地元数据是权威来源
+- 只改 NFO 不会触发实时监控，需要 `POST /Library/Refresh`
 
-同一个实例可以同时服务两种客户端，不需要二选一：
+> NFO 标题变化会改变条目 ID，可能撞 `media_sources(drive_id, cloud_file_id)`
+> 唯一索引，需要清库重扫（见下面「多版本合并」的说明）。
 
-- 请求的 `Host` 是内网地址（`192.168.x.x`、`localhost`、裸主机名）→ 用
-  `LIME_INTERNAL_URL`
-- 请求来自公网域名（经 CF Tunnel / 端口映射）→ 用请求本身的
-  `scheme://host`，并优先采信 `X-Forwarded-Proto` / `X-Forwarded-Host`
-
-所以把 `LIME_INTERNAL_URL` 配好，公网客户端走域名访问照样能播；
-只想纯直连的话留空即可。
-
-> 局域网内可以把 `LIME_RESOLVE_REDIRECT` 关掉，让客户端沿 PanSave 自己的
-> 302 链走；公网建议保持开启，省掉一次客户端往返。
-
-### 客户端兼容
-
-针对 SenPlayer / VidHub / Filmly（爆米花）实际请求补过的兼容点：
-
-- API 路径首段大小写不敏感：`/emby/videos/{id}/stream.mkv` 和 `/Videos/...` 等价
-- `/Items/Counts`、`/Items/Filters`、`/Items/{id}/Similar`、`/Studios`
-- 演员：`/Persons` 列表、`/Persons/{name|id}`、`/Items?PersonIds=` 反查该演员的全部电影/剧集；
-  `/Items/{personId}` 也能返回 Person 条目（客户端点演员直接跳详情）
-- `/MediaSegments/{id}`、`/Items/{id}/ThemeMedia|ThemeSongs|ThemeVideos|LocalTrailers|SpecialFeatures`
-- `/DisplayPreferences/{id}`、`/System/Ping`、`/Plugins`、`/Devices`
-- `/api/danmu/{id}/raw` 返回空数组，避免弹幕插件报错
-- 用户头像 `Images/Primary` 不强制 token（返回 LiMe logo）
-- `POST /Items/{id}` 返回 204，避免客户端因 405 反复重试
-- `/Videos/{id}/{sourceId}/Subtitles/{index}/Stream.{format}` 外挂字幕
-
-### 外挂字幕
+## 外挂字幕
 
 播放时按需扫描 STRM 同目录下的同名字幕，不需要重新扫描媒体库：
 
@@ -419,7 +469,7 @@ movie.strm + movie.zh-CN.vtt
   `DeliveryUrl`，客户端可以直接选字幕轨
 - 只做外挂字幕；内封字幕需要读取视频字节探测，按当前「不碰视频」架构不处理
 
-### 多版本合并
+## 多版本合并
 
 归并规则：
 
@@ -456,90 +506,183 @@ DV · 2160p · 14.8 Mbps
 VidHub / SenPlayer 的版本列表里手动切低版本。媒体源 ID 不变，重扫不会影响
 已有播放进度。
 
-### 时长
-
-TMDB 刮削会写回电影和单集的 `RunTimeTicks`；对升级前已刮削、时长为 0 的条目，
-启动刮削时会自动补一轮（`run_time_ticks = 0` 的电影与单集）。有真实时长后，客户端进度条和
-95% 自动判定已看才能正常工作。
-
-> 时长未知（`RunTimeTicks = 0`）时，服务端无法按 95% 自动判定「看完」，
-> 需要客户端显式调用 `PlayedItems` 标记；进度条百分比也要有真实时长才会返回。
-
-**文件名解析**支持常见命名：
-
-```
-剧名.2026.S01E01.2160p.25fps.WEB-DL.SDR.H.265.8bit.AAC2.0-HHWEB.mp4
-  → 剧名 / 2026 / S01E01 / 2160p / hevc / aac 2ch / mp4
-
-电影名.2024.1080p.WEB-DL.H.264.DDP5.1.mkv
-  → 电影名 / 2024 / 1080p / h264 / eac3 6ch / mkv
-```
-
-播放链路：
-
-```
-客户端 → GET /Items/{id}/PlaybackInfo   （拿到 MediaSource，Path 指向本服务）
-      → GET /Videos/{id}/stream?static=true&MediaSourceId=...
-      → 302（LIME_RESOLVE_REDIRECT=true 时直接给 CDN 地址）
-      → 115/123 CDN（支持 Range，206）
-```
-
-关闭 `LIME_RESOLVE_REDIRECT` 时，LiMe 只回 STRM 里的 PanSave 地址，
-由客户端再跟一跳 PanSave 的 302。
-
-`SupportsTranscoding: false`，没有任何转码路径；客户端不支持直连编码时会直接报错，这是设计边界。
-
-### 刮削（M4）
-
-服务端用目录名里的 `{tmdb-ID}` 精确请求 TMDB，不做标题搜索，避免刮错片：
-
-- 电影 → `/movie/{id}`，剧集 → `/tv/{id}`，单集 → `/tv/{id}/season/{n}`
-- 写回简介、原名、首播日期、评分、类型、演员；海报/背景图/ClearLogo 下载到
-  `data/images/`，由 `/Items/{id}/Images/{type}` 本地提供，不依赖外网始终可用
-- 只处理 `scraped_at = 0` 的条目，重复扫描/重启不会重复请求
-- **单次运行有软性时长上限**（`LIME_SCRAPE_TIMEOUT`，默认 `6h`，`0` 表示不限）。
-  到点后本次正常结束，已处理的条目全部落库，面板显示「本次已达到单次运行上限，
-  剩余条目下次继续」；这不是错误，不会标红，也不会把余下条目标成 TMDB 失败
-- 单个条目偶发失败（网络抖动、单请求 25s 超时）只进「刮削失败」列表；
-  只有连续 20 条都失败才认为 TMDB/代理整体不可用并在面板报错
-- 面板里有「刮削失败」页，按接口错误 / 404 / 海报 / 背景图分类，可导出 CSV
-- **海报回填**：海报为空的条目也会进回填队列并排在最前。早先只回填
-  `image_path <> ''` 的条目，「刮过但当时 TMDB 还没图」的片会永远缺海报
-- 头像回填并发执行，共用 50ms 全局限速；头像按需下载
-
-> 国内直连 `api.themoviedb.org` 不通时，设置 `LIME_TMDB_PROXY`
-> （NAS 上 mihomo 监听 `7890`，容器里要用宿主机 IP，不能写 `127.0.0.1`）。
-> API Key 建议放在 compose 同目录的 `.env`，该文件已在 `.gitignore` /
-> `.dockerignore` 中排除，同步源码时也不要带过去。
-
-### 本地元数据（NFO / 本地图片）
-
-媒体目录里自带 `.nfo` 和图片时，**本地元数据优先**，定时 TMDB 刮削不会覆盖：
-
-```
-电影名 (2024)/movie.nfo
-电影名 (2024)/poster.jpg | folder.jpg | cover.jpg | thumb.jpg
-电影名 (2024)/fanart.jpg | backdrop.jpg
-```
-
-- 支持 Kodi / Emby 风格的 `movie` / `episodedetails` / `tvshow`
-- 识别 title / originaltitle / plot / year / premiered / runtime / rating /
-  mpaa / genre / actor / director / studio / uniqueid(tmdb)
-- 图片**不复制**，数据库存 `local:/绝对路径`，图片接口限制在媒体库根目录内（防穿越）
-- 扫描时应用 NFO 并写入 `scraped_at`，本地元数据是权威来源
-- 只改 NFO 不会触发实时监控，需要 `POST /Library/Refresh`
-
-> NFO 标题变化会改变条目 ID，可能撞 `media_sources(drive_id, cloud_file_id)`
-> 唯一索引，需要清库重扫（见上面「多版本合并」的说明）。
-
-### 搜索
+## 搜索
 
 `items_fts` 用 SQLite FTS5 trigram 索引，增删改由触发器同步：
 
 - ≥3 个字符走 FTS：实测「流浪地球」1.2ms、「蜘蛛侠」0.5ms
 - 2 个字符的中文（如「三体」）仍走 `LIKE`，trigram 的固有限制
 
----
+## 部署模式
+
+两种都能用，**推荐直连**：少一跳反代，客户端直接吃 LiMe 的 302。
+
+### 模式 A：客户端直连 LiMe（推荐）
+
+```
+客户端 → https://lime.example.com（CF Tunnel / 端口映射）
+      → LiMe 886 → 302 → 115/123 CDN → 播放
+```
+
+- `LIME_RESOLVE_REDIRECT: "true"`：LiMe 在返回 302 前先跟一跳 PanSave，
+  把最终 CDN 地址交给客户端。PanSave 的 16868 不需要暴露到公网
+- `LIME_INTERNAL_URL` 留空即可：PlaybackInfo 里的 `Path` 直接用客户端访问的域名。
+  就算填了也不影响公网客户端，见下面「自动判断」
+- CDN 直链的签名与请求 UA 绑定，LiMe 会透传客户端 UA，否则会 403
+  `invalid signature`
+
+### 模式 B：PanSave 反代（只有反代端口对外）
+
+```
+客户端 → https://lime.example.com（CF Tunnel）
+      → PanSave 反代 1886 → LiMe 886
+      → LiMe 302 → 最终 CDN
+```
+
+PanSave 反代会拿 `MediaSources[].Path` 去探测 302，这个地址必须是
+**PanSave 能直接访问的上游地址**，不能是公网域名，否则会打回反代自身形成回环
+（日志：`302 探测失败，透明回退`）。所以：
+
+```yaml
+LIME_INTERNAL_URL: "http://192.168.1.100:886"
+LIME_RESOLVE_REDIRECT: "true"
+```
+
+### `LIME_INTERNAL_URL` 是自动判断的
+
+同一个实例可以同时服务两种客户端，不需要二选一：
+
+- 请求的 `Host` 是内网地址（`192.168.x.x`、`localhost`、裸主机名）→ 用
+  `LIME_INTERNAL_URL`
+- 请求来自公网域名（经 CF Tunnel / 端口映射）→ 用请求本身的
+  `scheme://host`，并优先采信 `X-Forwarded-Proto` / `X-Forwarded-Host`
+
+所以把 `LIME_INTERNAL_URL` 配好，公网客户端走域名访问照样能播；
+只想纯直连的话留空即可。
+
+> 局域网内可以把 `LIME_RESOLVE_REDIRECT` 关掉，让客户端沿 PanSave 自己的
+> 302 链走；公网建议保持开启，省掉一次客户端往返。
+
+### Emby 兼容
+
+所有接口都同时接受 `/emby/...` 前缀（去掉前缀后走同一套路由），该前缀下
+`ProductName` 返回 `Emby Server`。PanSave 的 Emby 配置校验依赖：
+
+- `GET /emby/System/Info`
+- `GET /emby/Library/VirtualFolders/Query`
+- `GET /emby/Library/SelectableMediaFolders`
+- `GET /emby/Items`、`GET /emby/Users`
+
+## 更新记录
+
+当前版本 **v1.0.26**。
+
+| 版本 | 内容 |
+|---|---|
+| v1.0.26 | 新集章节为空时自动补跑本季音频指纹 |
+| v1.0.25 | 新入库条目立即探测并提取片头片尾，不等整轮扫描 |
+| v1.0.24 | 年份排序以 TMDB 首播/上映日期为准 |
+| v1.0.23 | 音频指纹识别片头片尾（无章节的剧可用），Emby 章节标记 |
+| v1.0.22 | 手动标记片头片尾接口 `POST /web/api/segments` |
+| v1.0.21 | 片段回填按观看状态排序，播放 10 / 20 分钟二次触发 |
+| v1.0.20 | 片头片尾提取（章节）+ 预热与在看自动补齐 |
+| v1.0.19 | 运行日志导出、运维面板限管理员、图标改内联 SVG |
+| v1.0.18 | 已播判定改为 90%，进度心跳也参与；Stopped 位置为 0 时回退最后进度 |
+| v1.0.16 | 会话 30 分钟不上屏、24 小时清理；会话并入概览；面板新增运行日志页 |
+| v1.0.15 | 演员筛选：persons 索引、`PersonIds` 反查、本地 `tvshow.nfo` 演员挂到 Series |
+| v1.0.6 | 新 logo 与青柠绿主题、公网直连不再需要 PanSave 中转 |
+| v1.0.5 | 相似推荐打分、海报回填修复、同目录 STRM 归并、时长回填 |
+
+**已完成**：服务骨架、认证、STRM 扫描、媒体库浏览、302 播放、续播、
+TMDB 刮削、用户与 API Key、运维面板、实时监控、片头片尾。
+
+**待做**：官方客户端跳过按钮（需要把伪装版本号提到 10.10）、
+无章节剧的音频指纹覆盖率继续提升、原生 Web UI 播放器加跳过按钮。
+
+## 已实现接口
+
+```
+GET  /health
+GET  /System/Info/Public | /System/Info
+GET  /System/Configuration | /System/Configuration/public
+GET  /Branding/Configuration
+GET  /Branding/Splashscreen | /Branding/logo.png   ← LiMe logo
+POST /Users/AuthenticateByName
+GET  /Users/Public | /Users | /Users/Me | /Users/{userId}
+GET  /Users/{userId}/Views
+GET  /Users/{userId}/Items/Latest | /Items/Resume
+GET  /Items                       ← 主查询接口
+GET  /Items/Counts | /Items/Filters
+GET  /Genres | /Persons | /Studios
+GET  /Items/{itemId}
+GET  /Items/{itemId}/Similar
+GET  /Shows/{seriesId}/Seasons | /Episodes
+GET  /Shows/NextUp                  ← 「接下来看」
+GET  /MediaSegments/{itemId}        ← 片头片尾
+POST /Library/Refresh[?mode=fast]    ← 默认全量，fast 为增量
+POST /Library/Media/Updated          ← PanSave 入库通知，按路径匹配库后增量扫描
+POST /Items/{itemId}/Refresh          ← 只重解析该条目（剧集含其单集）
+GET  /Library/VirtualFolders | /VirtualFolders/Query | /SelectableMediaFolders
+GET  /Library/MediaFolders
+GET  /QuickConnect/Enabled
+
+# 播放
+GET|POST /Items/{itemId}/PlaybackInfo
+GET  /Videos/{itemId}/stream        ← 302 到 PanSave/网盘
+GET  /Videos/{itemId}/{sourceId}/Subtitles/{index}/Stream.{format}
+GET  /Videos/{itemId}/Subtitles/{index}/Stream.{format}
+GET  /Audio/{itemId}/stream
+POST /Sessions/Playing | /Progress | /Stopped
+GET  /Sessions
+
+# 续播 / 观看状态
+GET  /Users/{userId}/Items/Resume   ← 真实续播列表
+POST|DELETE /Users/{userId}/PlayedItems/{itemId}
+POST|DELETE /Users/{userId}/FavoriteItems/{itemId}
+
+# 用户与凭据
+POST   /Users/New                        ← 新建用户（管理员）
+POST   /Users/{userId}                   ← 改名（本人或管理员）
+DELETE /Users/{userId}                   ← 删除用户（管理员）
+POST   /Users/{userId}/Password          ← 改密码 / 管理员重置
+POST   /Users/{userId}/Policy            ← 管理员/禁用状态
+POST   /Sessions/Logout                  ← 吊销当前 token
+GET|POST /Auth/Keys                      ← 列出 / 生成 API Key（管理员）
+DELETE /Auth/Keys/{key}                  ← 删除 API Key（管理员）
+
+# 刮削
+GET  /Items/{itemId}/Images/{imageType}   ← 海报/背景图（本地文件）
+GET|POST /web/api/scrape                  查询 / 触发刮削
+
+# 运维面板
+GET  /                 → 媒体界面
+GET  /web/             运维面板（管理员）
+GET  /web/api/stats    统计 + 扫描/刮削/图片回填状态
+GET  /web/api/logs     运行日志（环形缓存 1000 条）
+GET  /web/api/logs/export  导出日志 .txt
+GET|POST /web/api/scan 查询 / 触发扫描
+GET|POST /web/api/libraries             列出 / 新建媒体库
+PUT|DELETE /web/api/libraries/{id}      修改 / 删除媒体库
+POST /web/api/libraries/{id}/scan       只扫描指定库
+GET  /web/api/browse?path=/strm         列出可选的子目录
+GET|PUT  /web/api/settings              读写面板设置（含 Telegram、实时监控、片头片尾）
+GET|POST /web/api/scrape                查询 / 触发刮削
+GET  /web/api/scrape/failures           刮削失败列表（?format=csv 导出）
+GET|POST /web/api/images/posters        海报回填
+GET|POST /web/api/images/backdrops      背景图回填
+GET  /web/api/playback-history          播放历史（保留 7 天）
+POST /web/api/segments/scan             批量补齐片头片尾
+POST /web/api/segments                  手动写入片头片尾
+POST /web/api/segments/fingerprint      跑指定季的音频指纹
+GET  /web/api/play-target               获取播放器协议链接
+GET  /web/api/playlist.m3u              导出 m3u
+POST /web/api/notify/test               发送 Telegram 测试消息
+POST /web/api/backup                    立即备份数据库
+```
+
+`/Items`、`/Items/{id}`、`/Items/Resume` 返回的 `UserData` 带真实数据：
+`PlaybackPositionTicks`、`Played`、`PlayCount`、`IsFavorite`、`PlayedPercentage`，
+剧集/季额外带 `UnplayedItemCount`（未看集数角标）。
 
 ## 自测脚本
 
@@ -550,8 +693,6 @@ TMDB 刮削会写回电影和单集的 `RunTimeTicks`；对升级前已刮削、
 ADMIN_PASS=你的密码 python tools/verify_m5.py
 ADMIN_PASS=你的密码 python tools/verify_m4.py
 ```
-
----
 
 ## 本地开发
 
@@ -571,8 +712,6 @@ curl -s -X POST http://127.0.0.1:886/Users/AuthenticateByName \
   -d '{"Username":"admin","Pw":"password"}'
 ```
 
----
-
 ## 目录结构
 
 ```
@@ -585,7 +724,7 @@ internal/
   library/                STRM 扫描器、实时监控（fsnotify）、条目归并
   strm/                   STRM 解析 + 文件名/目录名解析
   nfo/                    本地 .nfo / poster.jpg 解析
-  probe/                  ffprobe 探测（时长、音轨、分辨率）
+  probe/                  ffprobe 探测（轨道、时长、章节、音频指纹）
   scrape/                 TMDB 刮削、海报/背景图/logo 回填
   tmdb/                   TMDB API 客户端 + 图片下载
   notify/                 Telegram 播放通知
@@ -595,16 +734,13 @@ internal/
     migrations/           SQL 迁移，按文件名顺序执行
 ```
 
----
-
-## 社区
+## 社区与许可证
 
 - **频道** <https://t.me/Lime_see>：版本发布、本次更新内容、已知问题
 - **群组** <https://t.me/Lime_seee>：使用讨论、问题反馈
+- **Docker Hub** <https://hub.docker.com/r/lixxh/lime>
 
 打 `v*` tag 后，CI 会把版本号和更新列表自动推送到频道。
-
-## 许可证
 
 MIT。本项目按 Jellyfin 的公开 API 契约独立实现，与 Jellyfin 项目无隶属关系。
 
