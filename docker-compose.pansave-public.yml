@@ -82,7 +82,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 120s
 
 # ---------------------------------------------------------------------------
 # 模式 B：PanSave 没有公网域名，只有内网/反代端口

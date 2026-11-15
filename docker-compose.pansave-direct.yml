@@ -108,7 +108,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 120s
 
     # 每次播放会打一条 stream redirect 日志，限制一下防止无限增长
     logging:
