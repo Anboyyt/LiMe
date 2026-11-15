@@ -603,10 +603,11 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.36**。
+当前版本 **v1.0.37**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.37 | 增量扫描的 changedIDs 每 2 万条分批展开演员，避免首次快扫时内存无限累积 |
 | v1.0.36 | 演员筛选改走 `IN (SELECT item_id ...)`，让 SQLite 从 `item_persons` 索引驱动（55 条结果从 545ms 降到 1ms） |
 | v1.0.35 | 演员筛选改 `item_persons` 关联表，不再全表解析 people JSON；扫描器单次扫描内每部剧/每季只写一次 |
 | v1.0.34 | 大库优化：筛选面板 5 分钟缓存、补充索引、SQLite 参数调优、支持 `EnableTotalRecordCount=false`、启动补数据后台化、watch 目录数上报、卡顿记录保留 90 天 |

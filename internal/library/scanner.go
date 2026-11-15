@@ -418,6 +418,15 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 		}
 		if fast && changedID != "" {
 			changedIDs = append(changedIDs, changedID)
+			// 首次快扫可能几十万条都变化，先提交当前批次再分批展开演员，
+			// 避免 changedIDs 无限增长，也避免和扫描事务抢写锁。
+			if len(changedIDs) >= 20000 {
+				commit()
+				if _, err := s.db.IndexPersonsFromItems(changedIDs); err != nil {
+					s.log.Warn("index persons batch", "library", lib.Name, "err", err)
+				}
+				changedIDs = changedIDs[:0]
+			}
 		}
 
 		if batch != nil {
