@@ -11,6 +11,7 @@ on:
 permissions:
   contents: read
   statuses: write
+  checks: write
 
 jobs:
   sync:
@@ -39,8 +40,8 @@ jobs:
             CODE=${LOGIN##*$'\n'}
             BODY=${LOGIN%$'\n'*}
             echo "login HTTP ${CODE}"
-            echo "${BODY}" | head -c 300
             if [ "${CODE}" != "200" ]; then
+              echo "${BODY}" | head -c 300
               exit 1
             fi
             JWT=$(echo "${BODY}" | python3 -c 'import json,sys;print(json.load(sys.stdin)["token"])')
@@ -60,13 +61,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          [ -s /tmp/sync.err ] || tail -c 200 /tmp/sync.log >/tmp/sync.err 2>/dev/null || true
-          MSG=$(tail -c 200 /tmp/sync.err 2>/dev/null | tr '\n' ' ' | tr -d '"' | cut -c1-120)
+          MSG=$(tail -c 200 /tmp/sync.log 2>/dev/null | tr '\n' ' ' | tr -d '"' | cut -c1-120)
           [ -z "$MSG" ] && MSG="sync failed (no output)"
           curl -sS -X POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
             -H "Authorization: Bearer ${GH_TOKEN}" \
             -H "Accept: application/vnd.github+json" \
             -d "{\"state\":\"failure\",\"description\":\"${MSG}\",\"context\":\"dockerhub-overview\"}" >/dev/null
+
+          PAYLOAD=$(python3 -c 'import json,sys;print(json.dumps({"name":"dockerhub-overview","head_sha":sys.argv[1],"status":"completed","conclusion":"failure","output":{"title":"sync failed","summary":open("/tmp/sync.log").read()[-3000:]}}))' "${GITHUB_SHA}")
+          curl -sS -X POST "https://api.github.com/repos/${GITHUB_REPOSITORY}/check-runs" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -d "${PAYLOAD}" >/dev/null
 
       - name: Verify
         if: success()
