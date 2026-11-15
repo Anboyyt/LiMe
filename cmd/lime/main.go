@@ -127,6 +127,13 @@ func main() {
 	} else if n > 0 {
 		logger.Info("played states backfilled", "count", n)
 	}
+	// 清理历史上留下的「没有片源但条目还在」的空壳。
+	if n, err := db.PurgeOrphanItems(); err != nil {
+		logger.Warn("purge orphan items", "err", err)
+	} else if n > 0 {
+		logger.Info("orphan items removed", "count", n)
+	}
+
 	// 清理不发 Stopped 的客户端留下的僵尸会话，以及 90 天前的卡顿记录。
 	purgeOld := func() {
 		_, _ = db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionRetention))

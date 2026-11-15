@@ -134,3 +134,36 @@ GROUP BY i.id, ms.strm_path`, libraryID, before)
 	}
 	return out, rows.Err()
 }
+
+// PurgeOrphanItems 清理没有任何片源的电影/单集，以及因此变空的季和剧。
+// 正常删除由实时监控/扫描负责；这里兜底历史版本留下的空壳。
+// 片源表为空时直接跳过，避免挂载异常时把整库清空。
+func (d *DB) PurgeOrphanItems() (int, error) {
+	var sources int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM media_sources`).Scan(&sources); err != nil {
+		return 0, err
+	}
+	if sources == 0 {
+		return 0, nil
+	}
+
+	steps := []string{
+		`DELETE FROM items WHERE type IN ('Movie', 'Episode')
+		 AND NOT EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = items.id)`,
+		`DELETE FROM items WHERE type = 'Season'
+		 AND NOT EXISTS (SELECT 1 FROM items e WHERE e.parent_id = items.id)`,
+		`DELETE FROM items WHERE type = 'Series'
+		 AND NOT EXISTS (SELECT 1 FROM items e WHERE e.series_id = items.id)`,
+	}
+	total := 0
+	for _, q := range steps {
+		res, err := d.Exec(q)
+		if err != nil {
+			return total, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			total += int(n)
+		}
+	}
+	return total, nil
+}
