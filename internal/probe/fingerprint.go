@@ -33,8 +33,21 @@ func (p *Prober) startSeasonFingerprint(seriesID string, season int, focus []str
 	key := fmt.Sprintf("%s|%d", seriesID, season)
 	p.fpMu.Lock()
 	if last, ok := p.fpSeasonLast[key]; ok && time.Since(last) < 30*time.Minute {
-		p.fpMu.Unlock()
-		return false
+		// 上次已经覆盖了这批新集才跳过；有新集进来就放行。
+		covered := len(focus) == 0
+		if !covered {
+			covered = true
+			for _, id := range focus {
+				if !p.fpSeasonFocus[key][id] {
+					covered = false
+					break
+				}
+			}
+		}
+		if covered {
+			p.fpMu.Unlock()
+			return false
+		}
 	}
 	p.fpMu.Unlock()
 
@@ -50,6 +63,12 @@ func (p *Prober) startSeasonFingerprint(seriesID string, season int, focus []str
 	}
 	p.fpMu.Lock()
 	p.fpSeasonLast[key] = time.Now()
+	if p.fpSeasonFocus[key] == nil {
+		p.fpSeasonFocus[key] = make(map[string]bool, len(focus))
+	}
+	for _, id := range focus {
+		p.fpSeasonFocus[key][id] = true
+	}
 	p.fpMu.Unlock()
 
 	go func() {
@@ -77,6 +96,7 @@ type fpCandidate struct {
 	partner int
 	start   float64
 	end     float64
+	score   float64
 }
 
 type fpSpan struct{ start, end float64 }
@@ -200,72 +220,102 @@ func (p *Prober) analyzeSeason(seriesID string, season int, focus []string) erro
 	outroCands := make([][]fpCandidate, len(valid))
 	for i := 0; i < len(valid); i++ {
 		for j := i + 1; j < len(valid); j++ {
-			if a, b, ok := findRepeat(valid[i].head, valid[j].head); ok && a.end-a.start >= 15 {
-				introCands[i] = append(introCands[i], fpCandidate{partner: j, start: a.start, end: a.end})
-				introCands[j] = append(introCands[j], fpCandidate{partner: i, start: b.start, end: b.end})
+			if a, b, score, ok := findRepeat(valid[i].head, valid[j].head); ok && a.end-a.start >= 15 {
+				introCands[i] = append(introCands[i], fpCandidate{partner: j, start: a.start, end: a.end, score: score})
+				introCands[j] = append(introCands[j], fpCandidate{partner: i, start: b.start, end: b.end, score: score})
 			}
-			if a, b, ok := findRepeat(valid[i].tail, valid[j].tail); ok && a.end-a.start >= 15 {
-				outroCands[i] = append(outroCands[i], fpCandidate{partner: j, start: a.start, end: a.end})
-				outroCands[j] = append(outroCands[j], fpCandidate{partner: i, start: b.start, end: b.end})
+			if a, b, score, ok := findRepeat(valid[i].tail, valid[j].tail); ok && a.end-a.start >= 15 {
+				outroCands[i] = append(outroCands[i], fpCandidate{partner: j, start: a.start, end: a.end, score: score})
+				outroCands[j] = append(outroCands[j], fpCandidate{partner: i, start: b.start, end: b.end, score: score})
 			}
 		}
 	}
 
 	saved := 0
 	for i, ep := range valid {
-		// 已有章节/手动片段就不覆盖，指纹只补空集。
-		if existing, _ := p.db.MediaSegmentsForItem(ep.src.ItemID, nil); len(existing) > 0 {
+		// 手动标记是权威来源，不再叠加自动结果。
+		existing, _ := p.db.MediaSegmentsForItem(ep.src.ItemID, nil)
+		have := make(map[string]bool, len(existing))
+		manual := false
+		for _, s := range existing {
+			have[s.Type] = true
+			if s.Source == "manual" {
+				manual = true
+			}
+		}
+		if manual {
 			continue
 		}
-		segs := make([]store.MediaSegment, 0, 2)
-		if s, ok := consensus(introCands[i], 0, ep.runtime, 15, 600, 0.5, false); ok {
-			segs = append(segs, store.MediaSegment{
-				ItemID: ep.src.ItemID, Type: store.SegmentIntro,
-				StartTicks: secondsToTicks(s.start), EndTicks: secondsToTicks(s.end),
-				Source: "fingerprint", Confidence: 0.7,
-			})
+		// 只补缺失的类型：上次可能只认出片尾，换了片头的新集还能再补上，
+		// 不会因为「已经有 1 条片段」把整集永久跳过。
+		merged := append([]store.MediaSegment(nil), existing...)
+		added := 0
+		if !have[store.SegmentIntro] {
+			if s, ok := consensus(introCands[i], 0, ep.runtime, 15, 600, 0.5, false); ok {
+				merged = append(merged, store.MediaSegment{
+					ItemID: ep.src.ItemID, Type: store.SegmentIntro,
+					StartTicks: secondsToTicks(s.start), EndTicks: secondsToTicks(s.end),
+					Source: "fingerprint", Confidence: 0.7,
+				})
+				added++
+			}
 		}
-		if s, ok := consensus(outroCands[i], ep.tailStart, ep.runtime, 15, 900, 0.35, true); ok {
-			segs = append(segs, store.MediaSegment{
-				ItemID: ep.src.ItemID, Type: store.SegmentOutro,
-				StartTicks: secondsToTicks(s.start), EndTicks: secondsToTicks(s.end),
-				Source: "fingerprint", Confidence: 0.7,
-			})
+		if !have[store.SegmentOutro] {
+			if s, ok := consensus(outroCands[i], ep.tailStart, ep.runtime, 15, 900, 0.35, true); ok {
+				merged = append(merged, store.MediaSegment{
+					ItemID: ep.src.ItemID, Type: store.SegmentOutro,
+					StartTicks: secondsToTicks(s.start), EndTicks: secondsToTicks(s.end),
+					Source: "fingerprint", Confidence: 0.7,
+				})
+				added++
+			}
 		}
-		if len(segs) == 0 {
+		if added == 0 {
 			continue
 		}
-		if err := p.db.ReplaceMediaSegments(ep.src.ItemID, segs, "fingerprint", ""); err != nil {
+		if err := p.db.ReplaceMediaSegments(ep.src.ItemID, merged, "fingerprint", ""); err != nil {
 			p.log.Warn("save fingerprint segments failed", "item", ep.src.ItemID, "err", err)
 			continue
 		}
 		saved++
 		p.log.Info("fingerprint segments", "item", ep.src.ItemID,
-			"segments", len(segs), "season", season)
+			"added", added, "total", len(merged), "season", season)
 	}
 	p.log.Info("fingerprint season done", "series", seriesID, "season", season,
 		"episodes", len(valid), "saved", saved)
 	return nil
 }
 
+// 季中换 OP/ED 时，新片段可能只出现两三集。单伙伴匹配只要
+// 30 秒窗口相关度足够高、连续匹配段足够长，也接受。
+const (
+	singlePartnerMinScore = 0.80
+	singlePartnerMinSpan  = 60.0
+)
+
 // consensus 把同一集来自不同对手集的候选按开始时间聚类，取支持数最多的簇。
 func consensus(cands []fpCandidate, windowStart, runtime, minLen, maxLen, minStartRatio float64, isOutro bool) (fpSpan, bool) {
-	if len(cands) < 2 {
+	if len(cands) == 0 {
 		return fpSpan{}, false
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].start < cands[j].start })
 
 	bestSupport := 0
+	bestScore := 0.0
 	var best fpSpan
 	for i := 0; i < len(cands); i++ {
 		start, end := cands[i].start, cands[i].end
 		support := 1
+		score := cands[i].score
 		partners := map[int]bool{cands[i].partner: true}
 		for j := i + 1; j < len(cands); j++ {
 			if math.Abs(cands[j].start-start) <= 6 {
 				if !partners[cands[j].partner] {
 					partners[cands[j].partner] = true
 					support++
+				}
+				if cands[j].score > score {
+					score = cands[j].score
 				}
 				end = math.Max(end, cands[j].end)
 			}
@@ -278,25 +328,32 @@ func consensus(cands []fpCandidate, windowStart, runtime, minLen, maxLen, minSta
 				if isOutro {
 					if absStart >= runtime*minStartRatio && absEnd <= runtime+2 {
 						bestSupport = support
+						bestScore = score
 						best = fpSpan{start: absStart, end: math.Min(absEnd, runtime)}
 					}
 				} else if absStart < runtime*0.5 {
 					bestSupport = support
+					bestScore = score
 					best = fpSpan{start: absStart, end: absEnd}
 				}
 			}
 		}
 	}
-	if bestSupport < 2 {
-		return fpSpan{}, false
+	if bestSupport >= 2 {
+		return best, true
 	}
-	return best, true
+	if bestSupport == 1 && bestScore >= singlePartnerMinScore &&
+		best.end-best.start >= singlePartnerMinSpan {
+		return best, true
+	}
+	return fpSpan{}, false
 }
 
-// findRepeat 返回两段包络里最长的一段重复区间（各自相对窗口起点，秒）。
-func findRepeat(a, b []float64) (fpSpan, fpSpan, bool) {
+// findRepeat 返回两段包络里最长的一段重复区间（各自相对窗口起点，秒）
+// 以及该区间所在 lag 的 30 秒窗口相关度。
+func findRepeat(a, b []float64) (fpSpan, fpSpan, float64, bool) {
 	if len(a) < 60 || len(b) < 60 {
-		return fpSpan{}, fpSpan{}, false
+		return fpSpan{}, fpSpan{}, 0, false
 	}
 	type lagScore struct {
 		lag   int
@@ -308,6 +365,7 @@ func findRepeat(a, b []float64) (fpSpan, fpSpan, bool) {
 	sort.Slice(scores, func(i, j int) bool { return scores[i].score > scores[j].score })
 
 	bestLen := 0.0
+	bestScore := 0.0
 	var bestA, bestB fpSpan
 	for k := 0; k < len(scores) && k < 8; k++ {
 		if scores[k].score < 0.7 {
@@ -316,13 +374,14 @@ func findRepeat(a, b []float64) (fpSpan, fpSpan, bool) {
 		sa, sb := longestRun(a, b, scores[k].lag)
 		if sa.end-sa.start > bestLen {
 			bestLen = sa.end - sa.start
+			bestScore = scores[k].score
 			bestA, bestB = sa, sb
 		}
 	}
 	if bestLen < 15 {
-		return fpSpan{}, fpSpan{}, false
+		return fpSpan{}, fpSpan{}, 0, false
 	}
-	return bestA, bestB, true
+	return bestA, bestB, bestScore, true
 }
 
 func localLagScores(a, b []float64) []struct {

@@ -323,6 +323,23 @@ ON CONFLICT(item_id) DO UPDATE SET status = 'done', method = 'manual',
 	return tx.Commit()
 }
 
+// ResetSegmentAnalysis 清掉一个条目的全部片段和分析状态。
+// 手动标记过空结果的条目会被永久排除在自动分析之外，需要这个入口重新跑。
+func (d *DB) ResetSegmentAnalysis(itemID string) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`DELETE FROM media_segments WHERE item_id = ?`, itemID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM segment_analysis WHERE item_id = ?`, itemID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 // SeasonEpisodeSource 是某季一集的主片源，音频指纹分析用。
 type SeasonEpisodeSource struct {
 	ItemID       string

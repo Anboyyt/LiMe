@@ -363,6 +363,25 @@ func (h *Handler) themeMedia(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// webSegmentsReset 清掉条目的片段和分析状态后立即重新排队。
+// 用于「手动标记过空结果」「换了 OP/ED 想重跑」这类场景。
+func (h *Handler) webSegmentsReset(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+	itemID := strings.TrimSpace(r.URL.Query().Get("itemId"))
+	if itemID == "" {
+		writeError(w, http.StatusBadRequest, "itemId is required")
+		return
+	}
+	if err := h.db.ResetSegmentAnalysis(itemID); err != nil {
+		writeError(w, http.StatusInternalServerError, "reset segments failed")
+		return
+	}
+	queued := h.prober.WarmIngestedItems([]string{itemID})
+	writeJSON(w, http.StatusOK, map[string]any{"Reset": true, "Queued": queued})
+}
+
 // webFingerprintSeason 手动触发某一季的音频指纹分析（异步，几分钟）。
 func (h *Handler) webFingerprintSeason(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {

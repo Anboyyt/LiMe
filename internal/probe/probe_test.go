@@ -187,6 +187,46 @@ func TestClassifyChapterGenericIgnored(t *testing.T) {
 	}
 }
 
+func TestClassifyChapterNumberedOPED(t *testing.T) {
+	cases := map[string]string{
+		"OP2":      store.SegmentIntro,
+		"OP 2":     store.SegmentIntro,
+		"NCOP":     store.SegmentIntro,
+		"オープニング":   store.SegmentIntro,
+		"ED2":      store.SegmentOutro,
+		"ED 2":     store.SegmentOutro,
+		"NCED":     store.SegmentOutro,
+		"Ending 2": store.SegmentOutro,
+		"エンディング":   store.SegmentOutro,
+	}
+	for name, want := range cases {
+		got, ok := classifyChapter(name)
+		if !ok || got != want {
+			t.Fatalf("classifyChapter(%q) = %q, %v; want %q", name, got, ok, want)
+		}
+	}
+}
+
+// 季中换 OP 后只有两集共享新片段：单伙伴但足够长、相关度高也要收。
+func TestConsensusSingleLongPartner(t *testing.T) {
+	cands := []fpCandidate{{partner: 1, start: 44, end: 140, score: 0.91}}
+	if span, ok := consensus(cands, 0, 1420, 15, 600, 0.5, false); !ok {
+		t.Fatal("single long partner should be accepted")
+	} else if span.start != 44 || span.end != 140 {
+		t.Fatalf("span = %.0f-%.0f", span.start, span.end)
+	}
+
+	short := []fpCandidate{{partner: 1, start: 44, end: 70, score: 0.91}}
+	if _, ok := consensus(short, 0, 1420, 15, 600, 0.5, false); ok {
+		t.Fatal("short single partner should be rejected")
+	}
+
+	weak := []fpCandidate{{partner: 1, start: 44, end: 140, score: 0.72}}
+	if _, ok := consensus(weak, 0, 1420, 15, 600, 0.5, false); ok {
+		t.Fatal("weak single partner should be rejected")
+	}
+}
+
 func TestFindRepeatSynthetic(t *testing.T) {
 	// 600 个 0.5s 帧；把 a 的 100..300 帧复制到 b 的 200..400。
 	base := make([]float64, 600)
@@ -199,7 +239,7 @@ func TestFindRepeatSynthetic(t *testing.T) {
 	b := make([]float64, 600)
 	copy(b[200:], base[100:300])
 
-	sa, sb, ok := findRepeat(a, b)
+	sa, sb, _, ok := findRepeat(a, b)
 	if !ok {
 		t.Fatal("repeat not found")
 	}

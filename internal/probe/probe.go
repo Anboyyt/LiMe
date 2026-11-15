@@ -44,8 +44,11 @@ type Prober struct {
 
 	fpRunning atomic.Bool
 	// fpSeasonLast 记录每季上次指纹分析时间，避免新集连续入库时反复扫同一季。
-	fpMu         sync.Mutex
-	fpSeasonLast map[string]time.Time
+	// fpSeasonFocus 记录上次分析覆盖的集；同一季里又来了新集时放行，
+	// 否则连续入库的第二集会因为 30 分钟去重被永久跳过。
+	fpMu          sync.Mutex
+	fpSeasonLast  map[string]time.Time
+	fpSeasonFocus map[string]map[string]bool
 }
 
 // probeJob 让探测和片段回填共用同一个 worker 池。
@@ -57,13 +60,14 @@ type probeJob struct {
 
 func New(cfg config.Config, db *store.DB, log *slog.Logger) *Prober {
 	p := &Prober{
-		db:           db,
-		log:          log,
-		timeout:      cfg.ProbeTimeout,
-		queue:        make(chan probeJob, 256),
-		inflight:     make(map[string]chan struct{}),
-		segTriggers:  make(map[string]time.Time),
-		fpSeasonLast: make(map[string]time.Time),
+		db:            db,
+		log:           log,
+		timeout:       cfg.ProbeTimeout,
+		queue:         make(chan probeJob, 256),
+		inflight:      make(map[string]chan struct{}),
+		segTriggers:   make(map[string]time.Time),
+		fpSeasonLast:  make(map[string]time.Time),
+		fpSeasonFocus: make(map[string]map[string]bool),
 	}
 	p.segmentsOn.Store(cfg.SegmentExtract)
 	if !cfg.ProbeEnabled {
@@ -795,8 +799,10 @@ func chaptersToSegments(itemID string, chapters []ffChapter) []store.MediaSegmen
 var (
 	chapterRecap   = regexp.MustCompile(`(?i)\b(recap|previously\s+on)\b|前情|回顾`)
 	chapterPreview = regexp.MustCompile(`(?i)\b(preview|next\s+(episode|on))\b|下集|预告`)
-	chapterIntro   = regexp.MustCompile(`(?i)\b(intro|introduction|opening(\s+credits)?|op|title\s+sequence)\b|片头|主题曲|片头曲`)
-	chapterOutro   = regexp.MustCompile(`(?i)\b(end\s+credits|credits|ending|outro)\b|片尾|片尾曲`)
+	// OP2 / ED2、NCOP / NCED、オープニング / エンディング 都是季中换片头片尾时
+	// 常见的章节名，只认 OP 本体会漏掉第 2 首之后的部分。
+	chapterIntro = regexp.MustCompile(`(?i)\b(ncop|intro|introduction|opening(\s+credits)?|op\s*\d*|title\s+sequence)\b|片头|主题曲|片头曲|オープニング`)
+	chapterOutro = regexp.MustCompile(`(?i)\b(nced|end\s*credits|credits|ending\s*\d*|ed\s*\d*|outro)\b|片尾|片尾曲|エンディング`)
 )
 
 func classifyChapter(title string) (string, bool) {
