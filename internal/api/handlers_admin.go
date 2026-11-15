@@ -23,7 +23,15 @@ type webStats struct {
 	Scan           library.Status `json:"Scan"`
 	Scrape         scrape.Status  `json:"Scrape"`
 	ScrapeEnabled  bool           `json:"ScrapeEnabled"`
+	WatchDirs      int            `json:"WatchDirs"`
 	Stats          *store.Stats   `json:"Stats"`
+}
+
+func (h *Handler) realtimeDirs() int {
+	if h.realtime == nil {
+		return 0
+	}
+	return h.realtime.WatchDirs()
 }
 
 func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
@@ -53,6 +61,7 @@ func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
 		Scan:           h.scanner.Status(),
 		Scrape:         scrapeStatus,
 		ScrapeEnabled:  h.scraper != nil && h.scraper.Enabled(),
+		WatchDirs:      h.realtimeDirs(),
 		Stats:          stats,
 	})
 }
@@ -74,6 +83,7 @@ func (h *Handler) webScan(w http.ResponseWriter, r *http.Request) {
 		}
 		go func() {
 			count, err := h.scanner.ScanAll()
+			h.invalidateFilterCache()
 			if err != nil {
 				h.log.Error("library refresh failed", "err", err)
 				return

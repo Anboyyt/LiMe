@@ -22,6 +22,7 @@ import (
 type realtimeMonitor interface {
 	Enabled() bool
 	SetEnabled(bool) error
+	WatchDirs() int
 }
 
 type Handler struct {
@@ -42,6 +43,10 @@ type Handler struct {
 	// 播放卡顿监控：按 PlaySessionId 记录上次进度和告警时间。
 	stallMu    sync.Mutex
 	stallWatch map[string]*stallState
+
+	// 筛选面板缓存（Genres / Years / Ratings），按可见库集合缓存。
+	filterMu    sync.Mutex
+	filterCache map[string]filterCacheEntry
 
 	serverID  string
 	startedAt time.Time

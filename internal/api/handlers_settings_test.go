@@ -18,7 +18,8 @@ type fakeRealtime struct {
 	db *store.DB
 }
 
-func (f *fakeRealtime) Enabled() bool { return f.on }
+func (f *fakeRealtime) Enabled() bool  { return f.on }
+func (f *fakeRealtime) WatchDirs() int { return 0 }
 func (f *fakeRealtime) SetEnabled(v bool) error {
 	f.on = v
 	return f.db.SetSetting("realtime_monitor", strconv.FormatBool(v))

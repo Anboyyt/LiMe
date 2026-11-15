@@ -67,26 +67,16 @@ func (h *Handler) itemFilters(w http.ResponseWriter, r *http.Request) {
 	if !all {
 		libIDs = allowed
 	}
-	genres, err := h.db.GenreNamesIn(libIDs)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	years, err := h.db.ProductionYearsIn(libIDs)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	ratings, err := h.db.OfficialRatingsIn(libIDs)
+	opts, err := h.filterOptionsFor(libIDs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"Genres":          genres,
+		"Genres":          opts.Genres,
 		"Tags":            []string{},
-		"OfficialRatings": ratings,
-		"Years":           years,
+		"OfficialRatings": opts.OfficialRatings,
+		"Years":           opts.Years,
 	})
 }
 
@@ -105,11 +95,12 @@ func (h *Handler) genres(w http.ResponseWriter, r *http.Request) {
 	if !all {
 		libIDs = allowed
 	}
-	names, err := h.db.GenreNamesIn(libIDs)
+	opts, err := h.filterOptionsFor(libIDs)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	names := opts.Genres
 	items := make([]*dto.BaseItemDto, 0, len(names))
 	for _, name := range names {
 		sum := sha1.Sum([]byte("genre:" + name))

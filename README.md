@@ -354,7 +354,7 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_ADMIN_PASSWORD` | 初始管理员密码（仅首次生效） | `password` |
 | `LIME_HTTP_ADDR` | 监听地址 | `:886` |
 | `LIME_DATA_DIR` | 数据目录（SQLite、缓存） | `./data` |
-| `LIME_MAX_ITEMS` | 单次列表查询最大返回条数，防大库一次性返回 | `20000` |
+| `LIME_MAX_ITEMS` | 单次列表查询最大返回条数，防大库一次性返回；客户端传 `EnableTotalRecordCount=false` 时跳过 COUNT | `20000` |
 | `LIME_LIBRARIES` | 首次启动时的媒体库种子配置，见下 | 自动探测 `/strm` |
 | `LIME_LIBRARY_ROOTS` | 面板里新建库允许的容器内根路径 | `/strm` |
 | `LIME_SCAN_ON_START` | 启动时是否全量扫描 | `true` |
@@ -603,10 +603,11 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.33**。
+当前版本 **v1.0.34**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.34 | 大库优化：筛选面板 5 分钟缓存、补充索引、SQLite 参数调优、支持 `EnableTotalRecordCount=false`、启动补数据后台化、watch 目录数上报、卡顿记录保留 90 天 |
 | v1.0.33 | Telegram 播放通知带 16:9 背景图（退回竖版海报）；新增播放卡顿监控、落库与告警 |
 | v1.0.32 | 匹配段中心重新校准 lag，修正粗匹配半秒偏差导致的片尾起点偏早 |
 | v1.0.31 | 边界回收阈值提到 0.7、最多回收 16 秒，修正片尾仍偏早 |

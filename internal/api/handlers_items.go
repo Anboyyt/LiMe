@@ -1052,6 +1052,7 @@ func (h *Handler) latestItems(w http.ResponseWriter, r *http.Request) {
 		SortBy:     []string{"DateCreated"},
 		Descending: true,
 		Limit:      limit,
+		SkipTotal:  true,
 	}
 	if !all {
 		q.LibraryIDs = allowed
@@ -1220,6 +1221,8 @@ func parseItemQuery(r *http.Request) store.ItemQuery {
 		Descending: strings.EqualFold(v.Get("SortOrder"), "Descending"),
 		StartIndex: atoiDefault(v.Get("StartIndex"), 0),
 		Limit:      atoiDefault(v.Get("Limit"), 0),
+		// Jellyfin 客户端可以明确表示不需要总数，跳过 COUNT(*)。
+		SkipTotal: strings.EqualFold(v.Get("EnableTotalRecordCount"), "false"),
 	}
 }
 

@@ -435,3 +435,13 @@ FROM playback_stalls WHERE created_at >= ? ORDER BY created_at DESC LIMIT ?`, si
 	}
 	return out, rows.Err()
 }
+
+// PurgePlaybackStalls 清理过旧的卡顿记录，避免长期运行无限增长。
+func (d *DB) PurgePlaybackStalls(before int64) (int64, error) {
+	res, err := d.Exec(`DELETE FROM playback_stalls WHERE created_at < ?`, before)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}

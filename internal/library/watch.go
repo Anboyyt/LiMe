@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -34,7 +35,12 @@ type Watcher struct {
 	applyMu sync.Mutex
 
 	warnedLimit bool
+	usageWarn   bool
+	dirs        atomic.Int64
 }
+
+// WatchDirs 返回当前成功注册 watch 的目录数。
+func (w *Watcher) WatchDirs() int { return int(w.dirs.Load()) }
 
 // NewWatcher 创建实时监控。debounce <= 0 时默认 2 秒；
 // onIngest 在增量解析成功后回调，参数是受影响的条目 ID（用于精准刮削）。
@@ -63,13 +69,13 @@ func (w *Watcher) Run(ctx context.Context) {
 
 	roots := w.libraryRoots()
 	w.setRoots(roots)
-	dirs := 0
 	for _, root := range roots {
-		dirs += w.addTree(fsw, root)
+		w.addTree(fsw, root)
 	}
 	// 库路径的父目录也要 watch：库整体被删除/改名时，只有父目录能收到事件。
 	w.addParentWatches(fsw, roots)
-	w.log.Info("realtime monitor watching", "roots", len(roots), "dirs", dirs)
+	w.warnWatchUsage()
+	w.log.Info("realtime monitor watching", "roots", len(roots), "dirs", w.WatchDirs())
 
 	// 启动后补一次对账，把停机期间漏掉的增删补上。
 	go w.reconcile(ctx)
@@ -376,6 +382,7 @@ func (w *Watcher) addTree(fsw *fsnotify.Watcher, root string) int {
 			w.warnWatchLimit(err)
 			return nil
 		}
+		w.dirs.Add(1)
 		dirs++
 		if dirs%5000 == 0 {
 			w.log.Info("realtime monitor progress", "root", root, "dirs", dirs)
@@ -383,6 +390,27 @@ func (w *Watcher) addTree(fsw *fsnotify.Watcher, root string) int {
 		return nil
 	})
 	return dirs
+}
+
+// warnWatchUsage 在接近 inotify 上限时提前告警；超限后 addTree 会静默失败。
+func (w *Watcher) warnWatchUsage() {
+	if w.usageWarn {
+		return
+	}
+	raw, err := os.ReadFile("/proc/sys/fs/inotify/max_user_watches")
+	if err != nil {
+		return
+	}
+	limit, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || limit <= 0 {
+		return
+	}
+	if w.WatchDirs()*100/limit >= 80 {
+		w.usageWarn = true
+		w.log.Warn("realtime monitor: inotify watch usage is high",
+			"dirs", w.WatchDirs(), "limit", limit,
+			"hint", "raise fs.inotify.max_user_watches before adding a larger library")
+	}
 }
 
 func (w *Watcher) warnWatchLimit(err error) {

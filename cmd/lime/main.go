@@ -127,17 +127,17 @@ func main() {
 	} else if n > 0 {
 		logger.Info("played states backfilled", "count", n)
 	}
-	// 清理不发 Stopped 的客户端留下的僵尸会话。
-	if n, err := db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionRetention)); err != nil {
-		logger.Warn("purge stale playback sessions", "err", err)
-	} else if n > 0 {
-		logger.Info("stale playback sessions removed", "count", n)
+	// 清理不发 Stopped 的客户端留下的僵尸会话，以及 90 天前的卡顿记录。
+	purgeOld := func() {
+		_, _ = db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionRetention))
+		_, _ = db.PurgePlaybackStalls(time.Now().Add(-90 * 24 * time.Hour).Unix())
 	}
+	purgeOld()
 	go func() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
-			_, _ = db.PurgeStalePlaybackSessions(time.Now().Add(-store.PlaybackSessionRetention))
+			purgeOld()
 		}
 	}()
 	if rebuilt, err := db.EnsureSearchIndex(); err != nil {
@@ -145,18 +145,17 @@ func main() {
 	} else if rebuilt {
 		logger.Info("search index built")
 	}
-	if err := db.BackfillRatingScores(); err != nil {
-		logger.Warn("backfill rating scores", "err", err)
-	}
-	if n, err := db.BackfillPinyin(); err != nil {
-		logger.Warn("backfill pinyin", "err", err)
-	} else if n > 0 {
-		logger.Info("pinyin sort keys built", "items", n)
-	}
-
-	// 老库升级后把 items.people 展开进 persons，演员筛选才能反查名字。
-	// 大库可能要几秒，放后台跑，不阻塞 HTTP。
+	// 老库升级后的补数据任务放后台：100 万条目时拼音/评分/persons 可能要几分钟，
+	// 不能卡住 HTTP 启动。
 	go func() {
+		if err := db.BackfillRatingScores(); err != nil {
+			logger.Warn("backfill rating scores", "err", err)
+		}
+		if n, err := db.BackfillPinyin(); err != nil {
+			logger.Warn("backfill pinyin", "err", err)
+		} else if n > 0 {
+			logger.Info("pinyin sort keys built", "items", n)
+		}
 		start := time.Now()
 		n, err := db.BackfillPersonsFromItems()
 		if err != nil {
@@ -166,6 +165,7 @@ func main() {
 		if n > 0 {
 			logger.Info("persons index built", "persons", n, "dur", time.Since(start).String())
 		}
+		_ = db.Optimize()
 	}()
 
 	if err := db.EnsureAdmin(cfg.AdminUser, cfg.AdminPass); err != nil {

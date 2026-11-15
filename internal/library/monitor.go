@@ -21,6 +21,18 @@ type Monitor struct {
 	baseCtx context.Context
 	cancel  context.CancelFunc
 	done    chan struct{}
+	watcher *Watcher
+}
+
+// WatchDirs 返回当前实时监控注册的目录数；未启用时返回 0。
+func (m *Monitor) WatchDirs() int {
+	m.mu.Lock()
+	w := m.watcher
+	m.mu.Unlock()
+	if w == nil {
+		return 0
+	}
+	return w.WatchDirs()
 }
 
 // NewMonitor 创建实时监控控制器；defOn 是没有运行时设置时的默认值。
@@ -80,9 +92,10 @@ func (m *Monitor) start() {
 	done := make(chan struct{})
 	m.cancel = cancel
 	m.done = done
+	w := NewWatcher(m.db, m.scanner, m.log, 0, m.onIngest)
+	m.watcher = w
 	m.mu.Unlock()
 
-	w := NewWatcher(m.db, m.scanner, m.log, 0, m.onIngest)
 	m.log.Info("realtime monitor enabled")
 	go func() {
 		defer close(done)
@@ -93,7 +106,7 @@ func (m *Monitor) start() {
 func (m *Monitor) stop() {
 	m.mu.Lock()
 	cancel, done := m.cancel, m.done
-	m.cancel, m.done = nil, nil
+	m.cancel, m.done, m.watcher = nil, nil, nil
 	m.mu.Unlock()
 
 	if cancel == nil {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -522,39 +521,36 @@ func (d *DB) GenreNames() ([]string, error) { return d.GenreNamesIn(nil) }
 
 // GenreNamesIn 只聚合指定库的类型名；libraryIDs 为空表示全部。
 func (d *DB) GenreNamesIn(libraryIDs []string) ([]string, error) {
-	q := `SELECT genres FROM items WHERE genres <> ''`
+	// 直接在 SQLite 里展开 JSON 去重，避免把每一行的 genres 读进 Go 再解析。
+	// 100 万条目时这是几万行 JSON 的差别；调用方还会做缓存。
+	q := `SELECT DISTINCT CAST(g.value AS TEXT)
+FROM items, json_each(CASE WHEN json_valid(items.genres) THEN items.genres ELSE '[]' END) g
+WHERE g.value <> ''`
 	args := make([]any, 0, len(libraryIDs))
 	if len(libraryIDs) > 0 {
-		q += ` AND library_id IN (` + placeholders(len(libraryIDs)) + `)`
+		q += ` AND items.library_id IN (` + placeholders(len(libraryIDs)) + `)`
 		for _, id := range libraryIDs {
 			args = append(args, id)
 		}
 	}
+	q += ` ORDER BY 1`
+
 	rows, err := d.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	seen := map[string]bool{}
-	var out []string
+	out := make([]string, 0, 32)
 	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
+		var name string
+		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
-		var names []string
-		if json.Unmarshal([]byte(raw), &names) != nil {
-			continue
-		}
-		for _, name := range names {
-			if name != "" && !seen[name] {
-				seen[name] = true
-				out = append(out, name)
-			}
+		if name != "" {
+			out = append(out, name)
 		}
 	}
-	sort.Strings(out)
 	return out, rows.Err()
 }
 
@@ -807,18 +803,22 @@ type ItemQuery struct {
 	Descending      bool
 	StartIndex      int
 	Limit           int
+	// SkipTotal 对应客户端的 EnableTotalRecordCount=false，跳过 COUNT(*)。
+	SkipTotal bool
 }
 
 func (d *DB) QueryItems(q ItemQuery) ([]*Item, int, error) {
 	where, args := d.buildItemWhere(q)
 
-	countSQL := `SELECT COUNT(*) FROM items`
-	if len(where) > 0 {
-		countSQL += " WHERE " + strings.Join(where, " AND ")
-	}
-	var total int
-	if err := d.QueryRow(countSQL, args...).Scan(&total); err != nil {
-		return nil, 0, err
+	total := 0
+	if !q.SkipTotal {
+		countSQL := `SELECT COUNT(*) FROM items`
+		if len(where) > 0 {
+			countSQL += " WHERE " + strings.Join(where, " AND ")
+		}
+		if err := d.QueryRow(countSQL, args...).Scan(&total); err != nil {
+			return nil, 0, err
+		}
 	}
 
 	order := buildOrderBy(q)

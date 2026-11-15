@@ -194,6 +194,7 @@ func (s *Scanner) scanAll(fast bool) (int, error) {
 			"library", lib.Name, "strm", n, "fast", fast, "dur", time.Since(start).String())
 		total += n
 	}
+	_ = s.db.Optimize()
 	return total, nil
 }
 
@@ -236,6 +237,7 @@ func (s *Scanner) scanLibraryID(id string, fast bool) (int, error) {
 		return 0, err
 	}
 	total = n
+	_ = s.db.Optimize()
 	s.log.Info("library scanned", "library", lib.Name, "strm", n, "fast", fast)
 	return n, nil
 }

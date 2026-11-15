@@ -26,7 +26,9 @@ type DB struct {
 func Open(path string) (*DB, error) {
 	p := filepath.ToSlash(path)
 	dsn := fmt.Sprintf(
-		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)",
+		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=foreign_keys(1)"+
+			"&_pragma=synchronous(NORMAL)&_pragma=cache_size(-65536)&_pragma=temp_store(memory)"+
+			"&_pragma=journal_size_limit(67108864)&_pragma=wal_autocheckpoint(2000)",
 		p,
 	)
 
@@ -113,4 +115,11 @@ func splitStatements(text string) []string {
 		}
 	}
 	return out
+}
+
+// Optimize 让 SQLite 更新统计信息；大库扫描/刮削后调用，
+// 避免查询规划器一直用旧的表大小估计。
+func (d *DB) Optimize() error {
+	_, err := d.Exec(`PRAGMA optimize`)
+	return err
 }
