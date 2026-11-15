@@ -252,6 +252,27 @@ func TestFindRepeatSynthetic(t *testing.T) {
 	}
 }
 
+// 两集片尾经常差 0.5 秒（整数帧不对齐），粗 lag 步长会跳过正确偏移。
+func TestFindRepeatHalfSecondOffset(t *testing.T) {
+	base := make([]float64, 600)
+	rng := rand.New(rand.NewSource(2))
+	for i := range base {
+		base[i] = rng.NormFloat64()
+	}
+	a := make([]float64, 600)
+	copy(a, base)
+	b := make([]float64, 600)
+	copy(b[201:], base[100:300])
+
+	sa, sb, _, ok := findRepeat(a, b)
+	if !ok {
+		t.Fatal("repeat with 0.5s offset not found")
+	}
+	if math.Abs(sa.start-50) > 8 || math.Abs(sb.start-100.5) > 8 {
+		t.Fatalf("spans = %.1f / %.1f, want ~50 / ~100.5", sa.start, sb.start)
+	}
+}
+
 // 新入库条目要立即进入探测队列；已探测过的片源只补片段。
 func TestWarmIngestedItemsQueuesSources(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "lime.db"))

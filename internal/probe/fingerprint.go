@@ -371,11 +371,15 @@ func findRepeat(a, b []float64) (fpSpan, fpSpan, float64, bool) {
 		if scores[k].score < 0.7 {
 			break
 		}
-		sa, sb := longestRun(a, b, scores[k].lag)
-		if sa.end-sa.start > bestLen {
-			bestLen = sa.end - sa.start
-			bestScore = scores[k].score
-			bestA, bestB = sa, sb
+		// 粗搜索步长是 0.5 秒的两帧，两集片尾经常正好差 0.5 秒；
+		// 对每个高分 lag 再做 ±1 帧细化，否则会错过正确对齐。
+		for _, lag := range []int{scores[k].lag - 1, scores[k].lag, scores[k].lag + 1} {
+			sa, sb := longestRun(a, b, lag)
+			if sa.end-sa.start > bestLen {
+				bestLen = sa.end - sa.start
+				bestScore = scores[k].score
+				bestA, bestB = sa, sb
+			}
 		}
 	}
 	if bestLen < 15 {
@@ -390,7 +394,7 @@ func localLagScores(a, b []float64) []struct {
 } {
 	const w = 60      // 30 秒
 	const step = 15   // 7.5 秒
-	const lagStep = 2 // 1 秒
+	const lagStep = 1 // 0.5 秒：片尾偏移经常是半秒，1 秒步长会整段错过
 	out := make([]struct {
 		lag   int
 		score float64
