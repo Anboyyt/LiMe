@@ -9,7 +9,6 @@
 用法：python3 tools/dockerhub_sync.py "短描述"
 """
 
-import base64
 import json
 import os
 import sys
@@ -37,7 +36,6 @@ def main() -> int:
     user = os.environ["DH_USER"]
     repo = os.environ.get("REPO", "lime")
     jwt = os.environ["JWT"]
-    token = os.environ.get("DH_TOKEN", "")
     desc = sys.argv[1] if len(sys.argv) > 1 else ""
 
     with open("docs/dockerhub-overview.md", encoding="utf-8") as f:
@@ -51,10 +49,6 @@ def main() -> int:
         return 0
     if patch(modern, body, f"JWT {jwt}"):
         return 0
-    if token:
-        basic = base64.b64encode(f"{user}:{token}".encode()).decode()
-        if patch(legacy, body, f"Basic {basic}"):
-            return 0
     return 1
 
 
