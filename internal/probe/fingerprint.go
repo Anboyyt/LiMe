@@ -466,7 +466,9 @@ func longestRun(a, b []float64, lag int) (fpSpan, fpSpan) {
 	if m := len(b) - j0; m < n {
 		n = m
 	}
-	const w = 6 // 3 秒
+	// 8 秒窗口。3 秒窗口对音乐太敏感，换气/和声段会掉到阈值以下，
+	// 把 90 秒的片尾截成 30 多秒，单伙伴匹配就过不了长度门槛。
+	const w = 16
 	if n < w {
 		return fpSpan{}, fpSpan{}
 	}

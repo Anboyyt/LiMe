@@ -243,10 +243,11 @@ func TestFindRepeatSynthetic(t *testing.T) {
 	if !ok {
 		t.Fatal("repeat not found")
 	}
-	if math.Abs(sa.start-50) > 3 || math.Abs(sa.end-150) > 3 {
+	// 8 秒相关窗会让边界提前几秒，允许 ±8 秒误差。
+	if math.Abs(sa.start-50) > 8 || math.Abs(sa.end-150) > 8 {
 		t.Fatalf("a span = %.1f-%.1f, want 50-150", sa.start, sa.end)
 	}
-	if math.Abs(sb.start-100) > 3 || math.Abs(sb.end-200) > 3 {
+	if math.Abs(sb.start-100) > 8 || math.Abs(sb.end-200) > 8 {
 		t.Fatalf("b span = %.1f-%.1f, want 100-200", sb.start, sb.end)
 	}
 }
