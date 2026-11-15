@@ -372,6 +372,7 @@ func findRepeat(a, b []float64) (fpSpan, fpSpan, float64, bool) {
 
 	bestLen := 0.0
 	bestScore := 0.0
+	bestLag := 0
 	var bestA, bestB fpSpan
 	for k := 0; k < len(scores) && k < 8; k++ {
 		if scores[k].score < 0.7 {
@@ -384,6 +385,7 @@ func findRepeat(a, b []float64) (fpSpan, fpSpan, float64, bool) {
 			if sa.end-sa.start > bestLen {
 				bestLen = sa.end - sa.start
 				bestScore = scores[k].score
+				bestLag = lag
 				bestA, bestB = sa, sb
 			}
 		}
@@ -391,7 +393,32 @@ func findRepeat(a, b []float64) (fpSpan, fpSpan, float64, bool) {
 	if bestLen < 15 {
 		return fpSpan{}, fpSpan{}, 0, false
 	}
+	// 用匹配段中间 15 秒再校一次 lag：粗匹配可能把半秒偏差带进来，
+	// 导致边界回收时停在正片里。
+	if bestLen >= 30 {
+		lag := refineLag(a, b, bestLag, bestA)
+		if sa, sb := longestRun(a, b, lag); sa.end-sa.start >= bestLen-8 {
+			bestA, bestB = sa, sb
+		}
+	}
 	return bestA, bestB, bestScore, true
+}
+
+// refineLag 在匹配段中心用 15 秒窗口找相关度最高的 lag。
+func refineLag(a, b []float64, lag int, span fpSpan) int {
+	center := int(span.start + span.end) // 秒换算成 0.5 秒帧后再取中点
+	const half = 15                      // 15 秒
+	bestLag, bestC := lag, -2.0
+	for l := lag - 2; l <= lag+2; l++ {
+		i, j := center-half, center-half+l
+		if i < 0 || j < 0 || i+2*half > len(a) || j+2*half > len(b) {
+			continue
+		}
+		if c := pearson(a[i:i+2*half], b[j:j+2*half]); c > bestC {
+			bestC, bestLag = c, l
+		}
+	}
+	return bestLag
 }
 
 func localLagScores(a, b []float64) []struct {

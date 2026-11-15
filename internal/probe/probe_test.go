@@ -273,6 +273,22 @@ func TestFindRepeatHalfSecondOffset(t *testing.T) {
 	}
 }
 
+func TestRefineLagHalfSecond(t *testing.T) {
+	base := make([]float64, 600)
+	rng := rand.New(rand.NewSource(3))
+	for i := range base {
+		base[i] = rng.NormFloat64()
+	}
+	a := make([]float64, 600)
+	copy(a, base)
+	b := make([]float64, 600)
+	copy(b[201:], base[100:300])
+
+	if got := refineLag(a, b, 100, fpSpan{start: 50, end: 150}); got != 101 {
+		t.Fatalf("refineLag = %d, want 101", got)
+	}
+}
+
 // 新入库条目要立即进入探测队列；已探测过的片源只补片段。
 func TestWarmIngestedItemsQueuesSources(t *testing.T) {
 	db, err := store.Open(filepath.Join(t.TempDir(), "lime.db"))
