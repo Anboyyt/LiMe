@@ -398,6 +398,69 @@ WHERE i.library_id = ?`, libraryID)
 	return out, rows.Err()
 }
 
+// PathHash 把 STRM 路径压成 64 位哈希，供快速扫描的快照 map 使用。
+// FNV-1a 足够快；100 万条路径的碰撞概率可以忽略。
+func PathHash(s string) uint64 {
+	const (
+		offset = 1469598103934665603
+		prime  = 1099511628211
+	)
+	h := uint64(offset)
+	for i := 0; i < len(s); i++ {
+		h ^= uint64(s[i])
+		h *= prime
+	}
+	return h
+}
+
+// SourceSnapshotHashed 和 SourceSnapshot 一样，但 key 是路径哈希。
+// 100 万条时字符串 map 约 100–200MB，哈希 map 约 40–50MB。
+func (d *DB) SourceSnapshotHashed(libraryID string) (map[uint64]SourceStub, error) {
+	rows, err := d.Query(`
+SELECT ms.strm_path, ms.strm_mtime, ms.strm_size
+FROM media_sources ms
+JOIN items i ON i.id = ms.item_id
+WHERE i.library_id = ?`, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[uint64]SourceStub, 4096)
+	for rows.Next() {
+		var path string
+		var stub SourceStub
+		if err := rows.Scan(&path, &stub.MTime, &stub.Size); err != nil {
+			return nil, err
+		}
+		out[PathHash(path)] = stub
+	}
+	return out, rows.Err()
+}
+
+// ForEachSourcePath 流式遍历某个库的片源路径，避免一次性加载全部路径。
+func (d *DB) ForEachSourcePath(libraryID string, fn func(string) error) error {
+	rows, err := d.Query(`
+SELECT ms.strm_path
+FROM media_sources ms
+JOIN items i ON i.id = ms.item_id
+WHERE i.library_id = ?`, libraryID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return err
+		}
+		if err := fn(path); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
 // SourcesForProbeWarmup 返回需要后台预热探测的片源。
 //
 //   - favoriteOnly=true：收藏的电影/单集，以及收藏剧集下的单集（最可能点开的内容）

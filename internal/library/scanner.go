@@ -263,10 +263,10 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 	started := time.Now().Unix()
 
 	// 快速模式先取已有片源的 mtime/size，遍历时据此跳过未变化文件。
-	var known map[string]store.SourceStub
+	var known map[uint64]store.SourceStub
 	if fast {
 		var err error
-		known, err = s.db.SourceSnapshot(lib.ID)
+		known, err = s.db.SourceSnapshotHashed(lib.ID)
 		if err != nil {
 			return 0, err
 		}
@@ -343,9 +343,10 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 				if fast {
 					// 先取旧快照，再从 map 里划掉。走完剩下的就是
 					// 「库里有记录、但这次没看到」的路径，用来兜底清理停机期间的删除。
-					if k, ok := known[path]; ok {
+					h := store.PathHash(path)
+					if k, ok := known[h]; ok {
 						stub, hasStub = k, true
-						delete(known, path)
+						delete(known, h)
 					}
 				}
 				if info, ierr := d.Info(); ierr == nil {
@@ -511,17 +512,25 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 }
 
 // pruneUnseenSources 删除本次遍历没看到、且 os.Stat 确认已不存在的片源。
-// 路径存在但被跳过（.hidden、@eaDir、无读权限）时一律保留。
-func (s *Scanner) pruneUnseenSources(lib *store.Library, unseen map[string]store.SourceStub) {
+// unseen 里只剩哈希；再流式扫一遍数据库路径，只对未命中的做 stat，
+// 避免为了 prun 把整库路径字符串常驻内存。
+func (s *Scanner) pruneUnseenSources(lib *store.Library, unseen map[uint64]store.SourceStub) {
 	if len(unseen) == 0 {
 		return
 	}
 	removed := 0
-	for path := range unseen {
+	err := s.db.ForEachSourcePath(lib.ID, func(path string) error {
+		if _, ok := unseen[store.PathHash(path)]; !ok {
+			return nil
+		}
 		if _, err := os.Stat(path); err == nil || !os.IsNotExist(err) {
-			continue
+			return nil
 		}
 		removed += s.removeSourceByPath(path)
+		return nil
+	})
+	if err != nil {
+		s.log.Warn("prune unseen sources", "library", lib.Name, "err", err)
 	}
 	if removed > 0 {
 		s.log.Info("removed missing sources", "library", lib.Name, "count", removed)
