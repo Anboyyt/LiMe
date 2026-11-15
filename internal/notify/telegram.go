@@ -19,7 +19,7 @@ import (
 )
 
 // Events 是支持的通知事件名。空字符串表示全部开启。
-var Events = []string{"start", "pause", "resume", "stop", "stall"}
+var Events = []string{"start", "pause", "resume", "stop", "stall", "health"}
 
 // Config 是 Telegram 通知的运行时配置。
 type Config struct {

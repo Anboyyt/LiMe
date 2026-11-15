@@ -96,6 +96,9 @@ func (d *DB) Migrate() error {
 	if err := d.EnsureItemPersonsIndex(); err != nil {
 		return err
 	}
+	if err := d.EnsureItemGenresIndex(); err != nil {
+		return err
+	}
 	return nil
 }
 

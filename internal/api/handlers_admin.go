@@ -24,6 +24,10 @@ type webStats struct {
 	Scrape         scrape.Status  `json:"Scrape"`
 	ScrapeEnabled  bool           `json:"ScrapeEnabled"`
 	WatchDirs      int            `json:"WatchDirs"`
+	DiskFreeBytes  uint64         `json:"DiskFreeBytes"`
+	DiskTotalBytes uint64         `json:"DiskTotalBytes"`
+	DBLatencyMs    int64          `json:"DBLatencyMs"`
+	Goroutines     int            `json:"Goroutines"`
 	Stats          *store.Stats   `json:"Stats"`
 }
 
@@ -51,6 +55,7 @@ func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
 		scrapeStatus = h.scraper.Status()
 	}
 
+	health := h.healthMetrics()
 	writeJSON(w, http.StatusOK, webStats{
 		ServerName:     h.cfg.ServerName,
 		Version:        h.cfg.Version,
@@ -62,6 +67,10 @@ func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
 		Scrape:         scrapeStatus,
 		ScrapeEnabled:  h.scraper != nil && h.scraper.Enabled(),
 		WatchDirs:      h.realtimeDirs(),
+		DiskFreeBytes:  health.DiskFreeBytes,
+		DiskTotalBytes: health.DiskTotalBytes,
+		DBLatencyMs:    health.DBLatencyMs,
+		Goroutines:     health.Goroutines,
 		Stats:          stats,
 	})
 }

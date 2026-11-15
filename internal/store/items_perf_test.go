@@ -43,6 +43,28 @@ func TestQueryItemsSkipTotal(t *testing.T) {
 	}
 }
 
+func TestQueryItemsRandomUsesWindow(t *testing.T) {
+	db := newTestDB(t)
+	seedLibrary(t, db)
+	for _, id := range []string{"m1", "m2", "m3"} {
+		if err := db.UpsertItem(&Item{
+			ID: id, LibraryID: "lib", ParentID: "lib",
+			Type: TypeMovie, Name: id, SortName: id, CreatedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, _, err := db.QueryItems(ItemQuery{
+		Types: []string{TypeMovie}, SortBy: []string{"Random"}, Limit: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("random items = %d, want 2", len(items))
+	}
+}
+
 func TestGenreNamesInDedupAndSort(t *testing.T) {
 	db := newTestDB(t)
 	if _, err := db.Exec(

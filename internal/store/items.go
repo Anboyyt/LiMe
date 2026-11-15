@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -521,14 +522,10 @@ func (d *DB) GenreNames() ([]string, error) { return d.GenreNamesIn(nil) }
 
 // GenreNamesIn 只聚合指定库的类型名；libraryIDs 为空表示全部。
 func (d *DB) GenreNamesIn(libraryIDs []string) ([]string, error) {
-	// 直接在 SQLite 里展开 JSON 去重，避免把每一行的 genres 读进 Go 再解析。
-	// 100 万条目时这是几万行 JSON 的差别；调用方还会做缓存。
-	q := `SELECT DISTINCT CAST(g.value AS TEXT)
-FROM items, json_each(CASE WHEN json_valid(items.genres) THEN items.genres ELSE '[]' END) g
-WHERE g.value <> ''`
+	q := `SELECT DISTINCT ig.genre FROM item_genres ig`
 	args := make([]any, 0, len(libraryIDs))
 	if len(libraryIDs) > 0 {
-		q += ` AND items.library_id IN (` + placeholders(len(libraryIDs)) + `)`
+		q += ` JOIN items i ON i.id = ig.item_id WHERE i.library_id IN (` + placeholders(len(libraryIDs)) + `)`
 		for _, id := range libraryIDs {
 			args = append(args, id)
 		}
@@ -826,12 +823,33 @@ func (d *DB) QueryItems(q ItemQuery) ([]*Item, int, error) {
 	if len(where) > 0 {
 		sqlText += " WHERE " + strings.Join(where, " AND ")
 	}
-	sqlText += " ORDER BY " + order
-
-	if q.Limit > 0 {
-		sqlText += fmt.Sprintf(" LIMIT %d OFFSET %d", q.Limit, max0(q.StartIndex))
-	} else if q.StartIndex > 0 {
-		sqlText += fmt.Sprintf(" LIMIT -1 OFFSET %d", q.StartIndex)
+	if q.Limit > 0 && strings.Contains(order, "RANDOM()") {
+		// 大库上 ORDER BY RANDOM() 会全表排序。改成在 rowid 上取一个随机窗口，
+		// 再在窗口内随机排序；结果仍是随机的，但只扫 1000-10000 行。
+		cand := q.Limit * 50
+		if cand < 1000 {
+			cand = 1000
+		}
+		if cand > 10000 {
+			cand = 10000
+		}
+		offset := "0"
+		if total > cand {
+			offset = fmt.Sprintf("(abs(random()) %% %d)", total-cand)
+		}
+		inner := `SELECT ` + itemColumns + ` FROM items`
+		if len(where) > 0 {
+			inner += " WHERE " + strings.Join(where, " AND ")
+		}
+		inner += fmt.Sprintf(" ORDER BY rowid LIMIT %d OFFSET %s", cand, offset)
+		sqlText = "SELECT * FROM (" + inner + ") ORDER BY RANDOM() LIMIT " + strconv.Itoa(q.Limit)
+	} else {
+		sqlText += " ORDER BY " + order
+		if q.Limit > 0 {
+			sqlText += fmt.Sprintf(" LIMIT %d OFFSET %d", q.Limit, max0(q.StartIndex))
+		} else if q.StartIndex > 0 {
+			sqlText += fmt.Sprintf(" LIMIT -1 OFFSET %d", q.StartIndex)
+		}
 	}
 
 	rows, err := d.Query(sqlText, args...)
@@ -981,9 +999,9 @@ func (d *DB) buildItemWhere(q ItemQuery) ([]string, []any) {
 		args = append(args, condArgs...)
 	}
 	if len(q.Genres) > 0 {
-		// genres 是 JSON 文本；json_valid 兜底 NULL/空串，避免脏数据报错。
+		// 走 item_genres 关联表，避免每行展开 genres JSON。
 		where = append(where,
-			"EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(genres) THEN genres ELSE '[]' END) WHERE json_each.value IN ("+
+			"items.id IN (SELECT ig.item_id FROM item_genres ig WHERE ig.genre IN ("+
 				placeholders(len(q.Genres))+"))")
 		for _, g := range q.Genres {
 			args = append(args, g)
@@ -1296,13 +1314,13 @@ func (d *DB) SimilarItems(itemID string, limit int) ([]*Item, error) {
 
 	// 两个相关子查询都会为每个候选行跑一次 json_each。实测 115 库（电影 1.5 万、
 	// 剧集 0.7 万）最坏 95ms，够快；WHERE 里先按类型交集收窄候选集。
-	genreMatch := `(SELECT COUNT(*) FROM json_each(CASE WHEN json_valid(items.genres) THEN items.genres ELSE '[]' END) g
-		WHERE g.value IN (` + placeholders(len(genres)) + `))`
+	genreMatch := `(SELECT COUNT(*) FROM item_genres ig
+		WHERE ig.item_id = items.id AND ig.genre IN (` + placeholders(len(genres)) + `))`
 
 	score := fmt.Sprintf("%g*%s", similarGenreWeight, genreMatch)
 	if len(people) > 0 {
-		peopleMatch := `(SELECT COUNT(*) FROM json_each(CASE WHEN json_valid(items.people) THEN items.people ELSE '[]' END) p
-			WHERE json_extract(p.value, '$.Name') IN (` + placeholders(len(people)) + `))`
+		peopleMatch := `(SELECT COUNT(*) FROM item_persons ip
+			WHERE ip.item_id = items.id AND ip.name_lower IN (` + placeholders(len(people)) + `))`
 		score += fmt.Sprintf(" + %g*%s", similarPeopleWeight, peopleMatch)
 	}
 	score += fmt.Sprintf(` + %g*COALESCE(community_rating, 0)
@@ -1316,11 +1334,12 @@ func (d *DB) SimilarItems(itemID string, limit int) ([]*Item, error) {
 	args := []any{target.Type, target.ID}
 	args = append(args, toAnyArgs(genres)...)
 	args = append(args, toAnyArgs(genres)...)
-	args = append(args, toAnyArgs(people)...)
+	args = append(args, lowerPersonNames(people)...)
 	args = append(args, target.ProductionYear, target.ProductionYear, limit)
 
 	rows, err := d.Query(`SELECT `+itemColumns+` FROM items
-		WHERE type = ? AND id <> ? AND `+genreMatch+` > 0
+		WHERE type = ? AND id <> ?
+		  AND items.id IN (SELECT item_id FROM item_genres WHERE genre IN (`+placeholders(len(genres))+`))
 		ORDER BY (`+score+`) DESC, community_rating DESC, created_at DESC
 		LIMIT ?`, args...)
 	if err != nil {

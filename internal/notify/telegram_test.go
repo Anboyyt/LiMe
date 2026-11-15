@@ -16,8 +16,8 @@ func TestParseEvents(t *testing.T) {
 		raw  string
 		want map[string]bool
 	}{
-		{"", map[string]bool{"start": true, "pause": true, "resume": true, "stop": true, "stall": true}},
-		{"all", map[string]bool{"start": true, "pause": true, "resume": true, "stop": true, "stall": true}},
+		{"", map[string]bool{"start": true, "pause": true, "resume": true, "stop": true, "stall": true, "health": true}},
+		{"all", map[string]bool{"start": true, "pause": true, "resume": true, "stop": true, "stall": true, "health": true}},
 		{"none", map[string]bool{}},
 		{"start,stop", map[string]bool{"start": true, "stop": true}},
 		{" start , PAUSE ", map[string]bool{"start": true, "pause": true}},

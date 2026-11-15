@@ -45,8 +45,12 @@ type Handler struct {
 	stallWatch map[string]*stallState
 
 	// 筛选面板缓存（Genres / Years / Ratings），按可见库集合缓存。
-	filterMu    sync.Mutex
-	filterCache map[string]filterCacheEntry
+	filterMu       sync.Mutex
+	filterCache    map[string]filterCacheEntry
+	filterInflight map[string]bool
+
+	healthMu      sync.Mutex
+	healthAlertAt map[string]time.Time
 
 	serverID  string
 	startedAt time.Time
@@ -123,6 +127,7 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	h.notifier = notify.New(h.tgConfig(), log)
 	// 面板里保存的预热设置优先于环境变量。
 	h.prober.StartWarmup(h.warmupConfig())
+	go h.runHealthMonitor()
 	h.prober.SetSegmentsEnabled(h.segmentExtractEnabled())
 	go h.refreshProbeCounts()
 

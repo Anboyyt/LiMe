@@ -88,7 +88,7 @@ services:
       LIME_TG_PROXY: "${LIME_TG_PROXY:-}"
       # 留空 = 有 token+chat 就自动开启；true/false 强制开关
       LIME_TG_NOTIFY: "${LIME_TG_NOTIFY:-}"
-      LIME_TG_EVENTS: "start,pause,resume,stop,stall"
+      LIME_TG_EVENTS: "start,pause,resume,stop,stall,health"
 
       # ---- 媒体信息探测（ffprobe 远程读取 HEAD/元数据，结果缓存）----
       LIME_PROBE_ENABLED: "true"

@@ -382,7 +382,7 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_TG_CHAT_ID` | 接收通知的 Chat ID，群组为负数 | 空 |
 | `LIME_TG_PROXY` | 访问 `api.telegram.org` 的 HTTP 代理 | 空 |
 | `LIME_TG_NOTIFY` | 通知总开关；留空时 token + chat id 都齐就自动开启 | 自动 |
-| `LIME_TG_EVENTS` | 推送事件，逗号分隔：`start,pause,resume,stop,stall` | 全部 |
+| `LIME_TG_EVENTS` | 推送事件，逗号分隔：`start,pause,resume,stop,stall,health` | 全部 |
 | `LIME_STALL_ALERT_AFTER` | 未暂停时进度多久不前进就发卡顿告警；`0` 关闭 | `2m` |
 | `LIME_STALL_ALERT_COOLDOWN` | 同一播放会话两次卡顿告警的最小间隔 | `10m` |
 
@@ -603,10 +603,11 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.39**。
+当前版本 **v1.0.40**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.40 | 类型筛选/相似推荐改走 `item_genres`；筛选缓存过期后先返回旧值再后台刷新；新增磁盘/DB 延迟指标与 TG 健康告警；Random 排序改用随机窗口 |
 | v1.0.39 | 快扫快照改用 64 位路径哈希 + 流式修剪，整库路径 map 内存约降到 1/3–1/4 |
 | v1.0.38 | 启动时清理没有片源的电影/单集及变空的季、剧，修复历史遗留空壳条目 |
 | v1.0.37 | 增量扫描的 changedIDs 每 2 万条分批展开演员，避免首次快扫时内存无限累积 |
@@ -698,7 +699,7 @@ GET|POST /web/api/scrape                  查询 / 触发刮削
 # 运维面板
 GET  /                 → 媒体界面
 GET  /web/             运维面板（管理员）
-GET  /web/api/stats    统计 + 扫描/刮削/图片回填状态
+GET  /web/api/stats    统计 + 扫描/刮削状态 + 磁盘/DB 延迟/WatchDirs
 GET  /web/api/logs     运行日志（环形缓存 1000 条）
 GET  /web/api/logs/export  导出日志 .txt
 GET|POST /web/api/scan 查询 / 触发扫描

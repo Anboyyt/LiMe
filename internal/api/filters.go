@@ -27,12 +27,34 @@ func (h *Handler) filterOptionsFor(libraryIDs []string) (filterOptions, error) {
 	key := filterCacheKey(libraryIDs)
 
 	h.filterMu.Lock()
-	if e, ok := h.filterCache[key]; ok && time.Since(e.at) < filterCacheTTL {
+	if e, ok := h.filterCache[key]; ok {
+		if time.Since(e.at) < filterCacheTTL {
+			h.filterMu.Unlock()
+			return e.opts, nil
+		}
+		// 过期后先返回旧结果，后台刷新；只有第一次请求需要等查询。
+		if !h.filterInflight[key] {
+			if h.filterInflight == nil {
+				h.filterInflight = make(map[string]bool, 4)
+			}
+			h.filterInflight[key] = true
+			ids := append([]string(nil), libraryIDs...)
+			go h.refreshFilterOptions(key, ids)
+		}
 		h.filterMu.Unlock()
 		return e.opts, nil
 	}
 	h.filterMu.Unlock()
 
+	opts, err := h.loadFilterOptions(libraryIDs)
+	if err != nil {
+		return filterOptions{}, err
+	}
+	h.storeFilterOptions(key, opts)
+	return opts, nil
+}
+
+func (h *Handler) loadFilterOptions(libraryIDs []string) (filterOptions, error) {
 	genres, err := h.db.GenreNamesIn(libraryIDs)
 	if err != nil {
 		return filterOptions{}, err
@@ -45,15 +67,30 @@ func (h *Handler) filterOptionsFor(libraryIDs []string) (filterOptions, error) {
 	if err != nil {
 		return filterOptions{}, err
 	}
-	opts := filterOptions{Genres: genres, Years: years, OfficialRatings: ratings}
+	return filterOptions{Genres: genres, Years: years, OfficialRatings: ratings}, nil
+}
 
+func (h *Handler) refreshFilterOptions(key string, libraryIDs []string) {
+	opts, err := h.loadFilterOptions(libraryIDs)
 	h.filterMu.Lock()
+	delete(h.filterInflight, key)
+	if err == nil {
+		h.storeFilterOptionsLocked(key, opts)
+	}
+	h.filterMu.Unlock()
+}
+
+func (h *Handler) storeFilterOptions(key string, opts filterOptions) {
+	h.filterMu.Lock()
+	h.storeFilterOptionsLocked(key, opts)
+	h.filterMu.Unlock()
+}
+
+func (h *Handler) storeFilterOptionsLocked(key string, opts filterOptions) {
 	if h.filterCache == nil || len(h.filterCache) > 64 {
 		h.filterCache = make(map[string]filterCacheEntry, 8)
 	}
 	h.filterCache[key] = filterCacheEntry{opts: opts, at: time.Now()}
-	h.filterMu.Unlock()
-	return opts, nil
 }
 
 func filterCacheKey(libraryIDs []string) string {
