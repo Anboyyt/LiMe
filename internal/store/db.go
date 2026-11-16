@@ -23,13 +23,29 @@ type DB struct {
 	searchReady bool
 }
 
-func Open(path string) (*DB, error) {
+// OpenOptions 控制 SQLite 的连接数与页缓存。CacheMB 是每个连接的页缓存，
+// MmapMB 是共享 mmap 大小；两者都会计入容器 RSS，机器内存紧张时可调小。
+type OpenOptions struct {
+	CacheMB int
+	MmapMB  int
+}
+
+func Open(path string, opts ...OpenOptions) (*DB, error) {
+	cacheMB, mmapMB := 64, 256
+	if len(opts) > 0 {
+		if opts[0].CacheMB > 0 {
+			cacheMB = opts[0].CacheMB
+		}
+		if opts[0].MmapMB >= 0 {
+			mmapMB = opts[0].MmapMB
+		}
+	}
 	p := filepath.ToSlash(path)
 	dsn := fmt.Sprintf(
 		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=foreign_keys(1)"+
-			"&_pragma=synchronous(NORMAL)&_pragma=cache_size(-65536)&_pragma=temp_store(memory)"+
-			"&_pragma=mmap_size(268435456)&_pragma=journal_size_limit(67108864)&_pragma=wal_autocheckpoint(2000)",
-		p,
+			"&_pragma=synchronous(NORMAL)&_pragma=cache_size(-%d)&_pragma=temp_store(memory)"+
+			"&_pragma=mmap_size(%d)&_pragma=journal_size_limit(67108864)&_pragma=wal_autocheckpoint(2000)",
+		p, cacheMB*1024, mmapMB<<20,
 	)
 
 	sqlDB, err := sql.Open("sqlite", dsn)

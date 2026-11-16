@@ -74,6 +74,9 @@ services:
       # 先只在 Yamby 的 PlaybackInfo 上触发，用于减少起播前读 MKV 索引的等待。
       LIME_STREAM_CACHE_MB: "${LIME_STREAM_CACHE_MB:-0}"
       LIME_STREAM_CACHE_MAX_MB: "${LIME_STREAM_CACHE_MAX_MB:-4096}"
+      # SQLite 内存占用；大库首页并发多时保持默认，内存紧张可调小。
+      LIME_SQLITE_CACHE_MB: "${LIME_SQLITE_CACHE_MB:-64}"
+      LIME_SQLITE_MMAP_MB: "${LIME_SQLITE_MMAP_MB:-256}"
 
       # 临时排查第三方集成：记录 API 请求路径（不记录图片/静态资源）
       LIME_HTTP_LOG: "true"

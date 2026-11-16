@@ -210,6 +210,7 @@ func loggableQuery(r *http.Request) string {
 	keys := []string{
 		"ParentId", "Recursive", "IncludeItemTypes", "ExcludeItemTypes",
 		"Limit", "StartIndex", "SortBy", "SortOrder", "SearchTerm",
+		"Filters", "IsFavorite",
 	}
 	q := r.URL.Query()
 	parts := make([]string, 0, len(keys))

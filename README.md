@@ -387,6 +387,8 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_YAMBY_PROXY` | Yamby 跟 302 不稳时，把它的视频流改成服务端中转；会占用 NAS 上行 | `false` |
 | `LIME_STREAM_CACHE_MB` | 仅代理模式：每个片源预取的头部长度的 MB 数，`0` 关闭（尾部固定 2MB） | `0` |
 | `LIME_STREAM_CACHE_MAX_MB` | 头/尾缓存总上限 | `4096` |
+| `LIME_SQLITE_CACHE_MB` | SQLite 每个连接的页缓存（MB），大库首页并发查询用 | `64` |
+| `LIME_SQLITE_MMAP_MB` | SQLite mmap 大小（MB），`0` 关闭 | `256` |
 | `LIME_TMDB_API_KEY` | TMDB v3 API Key，留空则关闭刮削 | 空 |
 | `LIME_TMDB_LANGUAGE` | 刮削语言 | `zh-CN` |
 | `LIME_TMDB_PROXY` | 访问 TMDB 的 HTTP 代理（国内需要） | 空 |

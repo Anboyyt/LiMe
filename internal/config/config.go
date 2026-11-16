@@ -63,6 +63,11 @@ type Config struct {
 	StreamCacheMB    int
 	StreamCacheMaxMB int
 
+	// SQLite 每个连接的页缓存（MB）和 mmap 大小（MB）。大库默认 64/256，
+	// 内存紧张时可调小；首页并发查询多时可以适当调大。
+	SQLiteCacheMB int
+	SQLiteMmapMB  int
+
 	Libraries []LibrarySpec
 	// 面板里新建库时允许的容器内根路径，默认 /strm。
 	LibraryRoots []string
@@ -154,6 +159,8 @@ func Load() Config {
 		ProxyYamby:         getbool("LIME_YAMBY_PROXY", false),
 		StreamCacheMB:      getint("LIME_STREAM_CACHE_MB", 0),
 		StreamCacheMaxMB:   getint("LIME_STREAM_CACHE_MAX_MB", 4096),
+		SQLiteCacheMB:      getint("LIME_SQLITE_CACHE_MB", 64),
+		SQLiteMmapMB:       getint("LIME_SQLITE_MMAP_MB", 256),
 		Libraries:          parseLibraries(os.Getenv("LIME_LIBRARIES")),
 		LibraryRoots:       parseRoots(os.Getenv("LIME_LIBRARY_ROOTS")),
 		ScanOnStart:        getbool("LIME_SCAN_ON_START", true),

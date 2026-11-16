@@ -26,6 +26,19 @@ func (h *Handler) persons(w http.ResponseWriter, r *http.Request) {
 		limit = 500
 	}
 
+	// 「收藏 → 人物」会带 IsFavorite=true。LiMe 还没有人物收藏表，
+	// 这里必须返回空，否则客户端会把全部演员（九万多人）当收藏展示。
+	favoriteOnly := strings.EqualFold(v.Get("IsFavorite"), "true") ||
+		containsFold(splitCSV(v.Get("Filters")), "IsFavorite")
+	if favoriteOnly {
+		writeJSON(w, http.StatusOK, dto.QueryResult{
+			Items:            []*dto.BaseItemDto{},
+			TotalRecordCount: 0,
+			StartIndex:       start,
+		})
+		return
+	}
+
 	list, total, err := h.db.ListPersons(v.Get("SearchTerm"), start, limit)
 	if err != nil {
 		h.log.Error("list persons", "err", err)

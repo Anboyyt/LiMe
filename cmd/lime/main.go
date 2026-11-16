@@ -110,7 +110,10 @@ func main() {
 		dbPath = filepath.Join(cfg.DataDir, "lime.db")
 	}
 
-	db, err := store.Open(dbPath)
+	db, err := store.Open(dbPath, store.OpenOptions{
+		CacheMB: cfg.SQLiteCacheMB,
+		MmapMB:  cfg.SQLiteMmapMB,
+	})
 	if err != nil {
 		logger.Error("open database", "err", err)
 		os.Exit(1)
