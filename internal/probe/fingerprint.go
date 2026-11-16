@@ -11,6 +11,7 @@ import (
 	"math"
 	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -70,15 +71,64 @@ func (p *Prober) startSeasonFingerprint(seriesID string, season int, focus []str
 		p.fpSeasonFocus[key][id] = true
 	}
 	p.fpMu.Unlock()
+	_ = p.db.MarkFingerprintRun(seriesID, season, "running", "")
 
 	go func() {
 		defer p.fpRunning.Store(false)
-		if err := p.analyzeSeason(seriesID, season, focus); err != nil {
+		saved, err := p.analyzeSeason(seriesID, season, focus)
+		if err == nil && saved == 0 && len(focus) > 0 {
+			// 新集入库时只采样了 6 集；如果它们没有共同的 OP/ED，
+			// 再用整季样本重试一次，避免新剧因为样本太少被永久漏掉。
+			p.log.Info("fingerprint focus empty; retry full season",
+				"series", seriesID, "season", season)
+			saved, err = p.analyzeSeason(seriesID, season, nil)
+		}
+		if err != nil {
+			_ = p.db.MarkFingerprintRun(seriesID, season, "failed", firstLine(err.Error()))
 			p.log.Warn("fingerprint season failed", "series", seriesID, "season", season, "err", err)
 			return
 		}
+		_ = p.db.MarkFingerprintRun(seriesID, season, "done", fmt.Sprintf("saved=%d", saved))
 	}()
 	return true
+}
+
+// WarmMissingFingerprints 给夜间回填用：找一季还没有 Intro/Outro 的剧跑指纹。
+// 同时只跑一季（startSeasonFingerprint 内部有全局锁），返回实际启动的数量。
+func (p *Prober) WarmMissingFingerprints(limit int) int {
+	if p == nil || !p.enabled || p.ffmpegBin == "" || !p.segmentsOn.Load() {
+		return 0
+	}
+	if limit <= 0 {
+		limit = 1
+	}
+	if limit > 10 {
+		limit = 10
+	}
+	cfg := p.warmupConfig()
+	mode := strings.ToLower(cfg.SegmentScope)
+	since := int64(0)
+	if mode == "recent" {
+		since = time.Now().Add(-7 * 24 * time.Hour).Unix()
+	}
+	// 失败或没有 OP/ED 的季 7 天内不重复扫；新集入库/播放仍会单独触发。
+	retryAfter := time.Now().Add(-7 * 24 * time.Hour).Unix()
+	cands, err := p.db.FingerprintCandidates(mode, since, retryAfter, limit)
+	if err != nil {
+		p.log.Warn("fingerprint backfill query failed", "err", err)
+		return 0
+	}
+	started := 0
+	for _, c := range cands {
+		if p.startSeasonFingerprint(c.SeriesID, c.Season, nil) {
+			started++
+			break // 全局只能跑一季，剩下的下一轮再排
+		}
+	}
+	if started > 0 {
+		p.log.Info("fingerprint backfill started", "scope", mode, "candidates", len(cands))
+	}
+	return started
 }
 
 // FingerprintRunning 给面板显示当前是否在分析。
@@ -105,9 +155,14 @@ type fpSpan struct{ start, end float64 }
 // 只取新集和前后几集，避免为了一集去分析整季几十集音频。
 const focusFingerprintLimit = 6
 
+// fullFingerprintLimit 是夜间整季回填的采样上限。
+// 40 集 × 头尾各 10 分钟音频在网络盘上要跑 20-30 分钟，一晚补不了几季；
+// 16 集已经足够确认重复片段，单季回填时间能压到几分钟。
+const fullFingerprintLimit = 16
+
 // pickFingerprintSources 从整季里挑一小段采样。
 // focus 非空时以 focus 为中心向两边扩展，保证刚入库的集一定在样本里；
-// 没有 focus 时保持原来的行为（前 40 集）。
+// 没有 focus 时取前 16 集。
 func pickFingerprintSources(srcs []store.SeasonEpisodeSource, focus []string, limit int) []store.SeasonEpisodeSource {
 	if limit <= 0 {
 		limit = 40
@@ -163,15 +218,15 @@ func pickFingerprintSources(srcs []store.SeasonEpisodeSource, focus []string, li
 	return out
 }
 
-func (p *Prober) analyzeSeason(seriesID string, season int, focus []string) error {
+func (p *Prober) analyzeSeason(seriesID string, season int, focus []string) (int, error) {
 	srcs, err := p.db.SeasonSources(seriesID, season)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if len(srcs) < 2 {
-		return fmt.Errorf("not enough episodes: %d", len(srcs))
+		return 0, fmt.Errorf("not enough episodes: %d", len(srcs))
 	}
-	limit := 40
+	limit := fullFingerprintLimit
 	if len(focus) > 0 {
 		limit = focusFingerprintLimit
 	}
@@ -213,7 +268,7 @@ func (p *Prober) analyzeSeason(seriesID string, season int, focus []string) erro
 		}
 	}
 	if len(valid) < 2 {
-		return fmt.Errorf("not enough analyzable episodes: %d", len(valid))
+		return 0, fmt.Errorf("not enough analyzable episodes: %d", len(valid))
 	}
 
 	introCands := make([][]fpCandidate, len(valid))
@@ -289,7 +344,7 @@ func (p *Prober) analyzeSeason(seriesID string, season int, focus []string) erro
 	}
 	p.log.Info("fingerprint season done", "series", seriesID, "season", season,
 		"episodes", len(valid), "saved", saved)
-	return nil
+	return saved, nil
 }
 
 // 季中换 OP/ED 时，新片段可能只出现两三集。单伙伴匹配只要

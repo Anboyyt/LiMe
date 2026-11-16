@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestReplaceMediaSegmentsKeepsManual(t *testing.T) {
 	db := newTestDB(t)
@@ -49,6 +52,94 @@ func TestReplaceMediaSegmentsKeepsManual(t *testing.T) {
 	}
 	if len(onlyIntro) != 2 {
 		t.Fatalf("intro segments = %d, want 2", len(onlyIntro))
+	}
+}
+
+func TestFingerprintCandidatesSkipAttemptedAndCoveredSeasons(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+	if err := db.SetFavorite("u1", "s1", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"e1", "e2"} {
+		if err := db.UpsertMediaSource(&MediaSource{
+			ID: "src-" + id, ItemID: id, URL: "http://example/" + id, ProbeStatus: "done",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cands, err := db.FingerprintCandidates("favorites", 0, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 1 || cands[0].SeriesID != "s1" || cands[0].Season != 1 || cands[0].Episodes != 2 {
+		t.Fatalf("candidates = %+v, want s1 season 1 with 2 episodes", cands)
+	}
+
+	// 记录一次尝试后，7 天重试窗口内不再重复扫。
+	if err := db.MarkFingerprintRun("s1", 1, "done", "saved=0"); err != nil {
+		t.Fatal(err)
+	}
+	cands, err = db.FingerprintCandidates("favorites", 0, time.Now().Add(-time.Hour).Unix(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 0 {
+		t.Fatalf("candidates after attempt = %+v, want none", cands)
+	}
+
+	// 已经有 Intro/Outro 的季不需要指纹。
+	if _, err := db.Exec(`DELETE FROM segment_fingerprint_runs`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.ReplaceMediaSegments("e1", []MediaSegment{{
+		ItemID: "e1", Type: SegmentIntro, StartTicks: 100, EndTicks: 200, Source: "chapter",
+	}}, "chapter", ""); err != nil {
+		t.Fatal(err)
+	}
+	cands, err = db.FingerprintCandidates("favorites", 0, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 0 {
+		t.Fatalf("candidates with existing segments = %+v, want none", cands)
+	}
+}
+
+func TestFingerprintCandidatesActiveNeedsTenMinutes(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+	for _, id := range []string{"e1", "e2"} {
+		if err := db.UpsertMediaSource(&MediaSource{
+			ID: "src-" + id, ItemID: id, URL: "http://example/" + id, ProbeStatus: "done",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 只看了 5 分钟：老剧不进入自动回填。
+	if err := db.UpsertPlaystate("u1", "e1", 5*60*10_000_000, false); err != nil {
+		t.Fatal(err)
+	}
+	cands, err := db.FingerprintCandidates("active", 0, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 0 {
+		t.Fatalf("5min candidates = %+v, want none", cands)
+	}
+
+	// 看到 10 分钟以上：整季进入回填。
+	if err := db.UpsertPlaystate("u1", "e1", 10*60*10_000_000, false); err != nil {
+		t.Fatal(err)
+	}
+	cands, err = db.FingerprintCandidates("active", 0, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cands) != 1 || cands[0].SeriesID != "s1" || cands[0].Season != 1 {
+		t.Fatalf("10min candidates = %+v, want s1 season 1", cands)
 	}
 }
 

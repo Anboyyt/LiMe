@@ -164,6 +164,13 @@ ORDER BY item_id, start_ticks`, args...)
 
 // segmentScopeWhere 生成片段回填的范围条件。args 会按顺序追加。
 // primaryOnly 限定每个条目只取一个主片源，避免多版本重复分析。
+// 片头片尾回填的「最近在看」窗口和起播门槛。
+// 老剧只有看到 10 分钟才会进入自动回填，避免一上来就把整库旧剧扫一遍。
+const (
+	segmentActiveWindow   = 14 * 24 * time.Hour
+	segmentActiveMinTicks = int64(10 * 60 * 10_000_000)
+)
+
 func (d *DB) segmentScopeWhere(mode string, since int64, args *[]any) string {
 	// 失败条目隔 24 小时再试，避免坏文件每晚被反复扫描。
 	*args = append(*args, time.Now().Add(-24*time.Hour).Unix())
@@ -183,6 +190,16 @@ func (d *DB) segmentScopeWhere(mode string, since int64, args *[]any) string {
 			where += ` AND (i.created_at >= ? OR EXISTS (
         SELECT 1 FROM playstates p WHERE p.item_id = i.id AND p.position_ticks > 0))`
 			*args = append(*args, since)
+		}
+	case "active":
+		active, aerr := d.activeSeriesIDsSince(
+			time.Now().Add(-segmentActiveWindow).Unix(), segmentActiveMinTicks)
+		if aerr != nil || len(active) == 0 {
+			return where + ` AND 1 = 0`
+		}
+		where += ` AND i.series_id IN (` + placeholders(len(active)) + `)`
+		for _, id := range active {
+			*args = append(*args, id)
 		}
 	case "watching", "favorites":
 		items, series, err := d.favoriteIDs()

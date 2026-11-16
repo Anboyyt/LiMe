@@ -232,6 +232,9 @@ func (p *Prober) StartWarmup(cfg WarmupConfig) {
 	if p == nil || !p.enabled {
 		return
 	}
+	if err := p.db.ResetStaleFingerprintRuns(); err != nil {
+		p.log.Warn("reset stale fingerprint runs failed", "err", err)
+	}
 	p.SetWarmupConfig(cfg)
 
 	p.warmupMu.Lock()
@@ -242,6 +245,25 @@ func (p *Prober) StartWarmup(cfg WarmupConfig) {
 		return
 	}
 	go p.runWarmup()
+	go p.runFingerprintBackfill()
+}
+
+// runFingerprintBackfill 在预热时间窗内慢速补齐「整季都没有片头片尾」的收藏/在追剧。
+// 一次只跑一季，避免和播放、刮削抢带宽；没有候选时每 5 分钟再看一次。
+func (p *Prober) runFingerprintBackfill() {
+	time.Sleep(5 * time.Minute)
+	for {
+		cfg := p.warmupConfig()
+		if !cfg.Enabled || !cfg.Segments || !cfg.open(time.Now()) || p.FingerprintRunning() {
+			time.Sleep(time.Minute)
+			continue
+		}
+		if p.WarmMissingFingerprints(1) > 0 {
+			time.Sleep(10 * time.Second)
+			continue
+		}
+		time.Sleep(5 * time.Minute)
+	}
 }
 
 // SetSegmentsEnabled 运行中开关片头片尾提取。
@@ -536,7 +558,7 @@ func (p *Prober) QueueSegmentBackfill(limit int) int {
 	}
 	scope := p.warmupConfig().SegmentScope
 	if scope == "" {
-		scope = "watching"
+		scope = "active"
 	}
 	since := int64(0)
 	if strings.EqualFold(scope, "recent") {
@@ -584,9 +606,9 @@ func (p *Prober) warmupSegmentsOnce(limit int, scope string) int {
 	case "all":
 	case "recent":
 		since = time.Now().Add(-7 * 24 * time.Hour).Unix()
-	case "watching", "favorites":
+	case "active", "watching", "favorites":
 	default:
-		mode = "watching"
+		mode = "active"
 	}
 
 	srcs, err := p.db.SourcesForSegmentWarmup(since, limit, mode)

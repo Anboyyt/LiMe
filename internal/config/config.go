@@ -180,7 +180,7 @@ func Load() Config {
 		ProbeWindow:        getenv("LIME_PROBE_WINDOW", "03:00-06:00"),
 		ProbeMaxRun:        getduration("LIME_PROBE_MAX_RUN", 2*time.Hour),
 		SegmentExtract:     getbool("LIME_SEGMENT_EXTRACT", true),
-		SegmentScope:       getenv("LIME_SEGMENT_SCOPE", "watching"),
+		SegmentScope:       getenv("LIME_SEGMENT_SCOPE", "active"),
 		SegmentAutoAfter:   getduration("LIME_SEGMENT_AUTO_AFTER", 10*time.Minute),
 		StallAlertAfter:    getduration("LIME_STALL_ALERT_AFTER", 2*time.Minute),
 		StallAlertCooldown: getduration("LIME_STALL_ALERT_COOLDOWN", 10*time.Minute),

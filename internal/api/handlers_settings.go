@@ -332,9 +332,9 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 		if p.SegmentScope != nil {
 			scope := strings.ToLower(strings.TrimSpace(*p.SegmentScope))
 			switch scope {
-			case "favorites", "watching", "recent", "all":
+			case "active", "favorites", "watching", "recent", "all":
 			default:
-				writeError(w, http.StatusBadRequest, "片段范围只能是 favorites/watching/recent/all")
+				writeError(w, http.StatusBadRequest, "片段范围只能是 active/favorites/watching/recent/all")
 				return
 			}
 			if err := h.db.SetSetting("segment_scope", scope); err != nil {
@@ -646,7 +646,7 @@ func (h *Handler) segmentExtractEnabled() bool {
 func (h *Handler) segmentScopeValue() string {
 	if v, err := h.db.GetSetting("segment_scope"); err == nil && v != "" {
 		switch strings.ToLower(v) {
-		case "favorites", "watching", "recent", "all":
+		case "active", "favorites", "watching", "recent", "all":
 			return strings.ToLower(v)
 		}
 	}

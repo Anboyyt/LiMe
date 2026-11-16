@@ -1203,7 +1203,8 @@
             <span>启用提取</span>
           </label>
           <select id="segmentScope">
-            <option value="watching" ${settings.SegmentScope === 'watching' ? 'selected' : ''}>收藏 + 在追（推荐）</option>
+            <option value="active" ${settings.SegmentScope === 'active' ? 'selected' : ''}>最近在看 ≥10 分钟（推荐）</option>
+            <option value="watching" ${settings.SegmentScope === 'watching' ? 'selected' : ''}>收藏 + 在追</option>
             <option value="favorites" ${settings.SegmentScope === 'favorites' ? 'selected' : ''}>只回填收藏</option>
             <option value="recent" ${settings.SegmentScope === 'recent' ? 'selected' : ''}>最近 7 天 + 观看进度</option>
             <option value="all" ${settings.SegmentScope === 'all' ? 'selected' : ''}>全库</option>
@@ -1212,8 +1213,9 @@
             value="${esc(settings.SegmentAutoAfter || '10m')}">
           <button class="primary" data-action="save-settings">保存</button>
           <button data-action="scan-segments">立即提取一批</button>
+          <button data-action="scan-fingerprints">补齐缺失指纹</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">章节随预热探测顺手获取，零额外流量；没有标准章节的剧之后再接音频指纹。回填顺序：没看过的集 → 在看 → 已完成。单集看到设定时长后自动补齐整部剧，20 分钟时再补一次，捡起第一轮没排到的集。</p>
+        <p class="muted" style="margin:8px 0 0">章节随预热探测顺手获取，零额外流量；没有标准章节的剧会在预热时间窗内自动跑音频指纹，一次只跑一季。默认只处理最近 14 天内看到 10 分钟以上的剧；老剧等再看 10 分钟后才开始提取。单集看到设定时长后自动补齐整部剧，20 分钟时再补一次。</p>
       </div>
       <div class="panel"><h3>背景图清晰度</h3>
         <div class="kv">
@@ -1392,7 +1394,7 @@
   }
 
   function probeScopeLabel(scope) {
-    const labels = { watching: '收藏 + 在追', favorites: '只预热收藏', recent: '最近 7 天 + 观看进度', all: '全库' };
+    const labels = { active: '最近在看（≥10 分钟）', watching: '收藏 + 在追', favorites: '只收藏', recent: '最近 7 天 + 观看进度', all: '全库' };
     return labels[scope] || esc(scope || '—');
   }
 
@@ -1497,6 +1499,13 @@
       case 'scan-segments': {
         const r = await api('/web/api/segments/scan?limit=50', { method: 'POST' });
         toast(`已排队 ${r.Queued || 0} 个条目；完成后刷新页面看「待分析」数量`);
+        break;
+      }
+      case 'scan-fingerprints': {
+        const r = await api('/web/api/segments/fingerprint/backfill?limit=10', { method: 'POST' });
+        if (r.Started) toast('已开始分析一季缺失的片头片尾，完成后会自动继续下一季');
+        else if (r.Running) toast('已有指纹分析在跑，稍后再试');
+        else toast('没有待补的季');
         break;
       }
       case 'export-logs': {

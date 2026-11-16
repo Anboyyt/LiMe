@@ -576,11 +576,17 @@ WHERE p.is_favorite = 1`)
 // activeSeriesIDs 返回最近在看的剧集：任一单集有未看完进度且最近更新过。
 // 「一直在看一个剧」就把整部剧的剩余单集都加入预热。
 func (d *DB) activeSeriesIDs(since int64) ([]string, error) {
+	return d.activeSeriesIDsSince(since, 0)
+}
+
+// activeSeriesIDsSince 只返回最近看到指定进度的剧。
+// 片头片尾回填用它实现「老剧先看 10 分钟才提取」。
+func (d *DB) activeSeriesIDsSince(since, minPositionTicks int64) ([]string, error) {
 	rows, err := d.Query(`
 SELECT DISTINCT e.series_id FROM playstates p
 JOIN items e ON e.id = p.item_id
 WHERE e.type = 'Episode' AND e.series_id <> ''
-  AND p.position_ticks > 0 AND p.updated_at >= ?`, since)
+  AND p.position_ticks >= ? AND p.updated_at >= ?`, minPositionTicks, since)
 	if err != nil {
 		return nil, err
 	}

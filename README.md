@@ -217,7 +217,10 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 - 单集播放进度达到 `LIME_SEGMENT_AUTO_AFTER`（默认 **10 分钟**，`0` 关闭）时
   自动补齐整部剧；10 / 20 分钟各检查一次。
   同一部剧 12 小时内只预热一次
-- 新集章节为空时，自动补跑本季音频指纹
+- 新集章节为空时，自动补跑本季音频指纹；只采样 6 集没找到时会自动用整季重试
+- 最近 14 天看到 10 分钟以上的剧，整季都没有片头片尾时会在预热时间窗内
+  自动跑指纹回填；一次只跑一季，失败的季 7 天内不重复扫
+- 老剧不会主动回填，等单集看到 `LIME_SEGMENT_AUTO_AFTER` 后再按剧补齐
 - 季中换 OP/ED：新片段只要有两集共享即可识别；只有单伙伴时，
   匹配长度 ≥60 秒且相关度足够高也接受
 - 已经识别出片尾的集，后续还会补上缺的片头，不会因为「已有片段」整集跳过
@@ -396,7 +399,7 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_SCRAPE_WORKERS` | 刮削并发数（1-8） | `3` |
 | `LIME_SCRAPE_RATE_MS` | 每次 TMDB 请求之间的间隔（毫秒） | `50` |
 | `LIME_SEGMENT_EXTRACT` | 是否提取片头片尾 | `true` |
-| `LIME_SEGMENT_SCOPE` | 存量回填范围：`favorites` / `watching` / `recent` / `all` | `watching` |
+| `LIME_SEGMENT_SCOPE` | 存量回填范围：`active` / `favorites` / `watching` / `recent` / `all` | `active` |
 | `LIME_SEGMENT_AUTO_AFTER` | 单集观看多久后自动补齐整部剧；`0` 关闭 | `10m` |
 | `LIME_TG_BOT_TOKEN` | Telegram Bot Token（也可在面板填写，面板优先） | 空 |
 | `LIME_TG_CHAT_ID` | 接收通知的 Chat ID，群组为负数 | 空 |
@@ -623,10 +626,11 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.43**。
+当前版本 **v1.0.49**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.49 | 片头片尾回填：整季缺失自动跑音频指纹、新集指纹采样失败自动整季重试、失败记录 7 天内不重复扫；默认只回填最近 14 天看到 ≥10 分钟的剧，老剧等观看到 10 分钟后再补；整季采样上限 16 集；运维面板新增「补齐缺失指纹」 |
 | v1.0.43 | Infuse 8.x 兼容：补齐 `/UserViews`、`/UserViews/GroupingOptions`、`/Users/{id}/GroupingOptions`、`/UserItems/Resume`、`/Items/Latest`、`/UserItems/{id}/UserData`、`/UserFavoriteItems` 等接口；登录支持 query/form；Views 补 `DateCreated`；`DisplayPreferences` 字段类型修正；支持 camelCase 查询参数、`/Users/{id}/Items/` 尾斜杠、库 ID 当 item 查询；新增 `/Packages`；通知页待分析计数改后台缓存 |
 | v1.0.42 | 新增 Telegram 入库通知：刮削完成后推送、同剧同季多集合并、电影逐部通知、16:9 海报降级、独立/共用 Bot、批量抑制与失败重试 |
 | v1.0.41 | Web UI：继续观看中的单集统一用剧集海报；新增 `SeriesPrimaryImageTag`；手机端重做顶栏/底部导航、详情页、筛选、播放器与安全区适配 |
@@ -744,6 +748,7 @@ GET|POST /web/api/images/backdrops      背景图回填
 GET  /web/api/playback-history          播放历史（保留 7 天）
 GET  /web/api/stalls                    播放卡顿记录（?days=&limit=）
 POST /web/api/segments/scan             批量补齐片头片尾
+POST /web/api/segments/fingerprint/backfill  补齐整季缺失的音频指纹
 POST /web/api/segments                  手动写入片头片尾
 POST /web/api/segments/reset            清除片段与分析状态，重新分析
 POST /web/api/segments/fingerprint      跑指定季的音频指纹

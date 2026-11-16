@@ -419,3 +419,17 @@ func (h *Handler) webFingerprintSeason(w http.ResponseWriter, r *http.Request) {
 		"Running": h.prober.FingerprintRunning(),
 	})
 }
+
+// webFingerprintBackfill 手动触发「整季没有片头片尾」的收藏/在追剧回填。
+// 后台一次只跑一季；limit 只是候选扫描数量，不是并发数。
+func (h *Handler) webFingerprintBackfill(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.requireAdmin(w, r); !ok {
+		return
+	}
+	limit := atoiDefault(r.URL.Query().Get("limit"), 1)
+	started := h.prober.WarmMissingFingerprints(limit)
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"Started": started,
+		"Running": h.prober.FingerprintRunning(),
+	})
+}

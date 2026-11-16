@@ -37,6 +37,7 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /web/api/segments", h.webSetSegments)
 	mux.HandleFunc("POST /web/api/segments/reset", h.webSegmentsReset)
 	mux.HandleFunc("POST /web/api/segments/fingerprint", h.webFingerprintSeason)
+	mux.HandleFunc("POST /web/api/segments/fingerprint/backfill", h.webFingerprintBackfill)
 	mux.HandleFunc("GET /web/api/libraries", h.webLibraries)
 	mux.HandleFunc("POST /web/api/libraries", h.webLibraries)
 	mux.HandleFunc("GET /web/api/browse", h.webBrowseDirs)
