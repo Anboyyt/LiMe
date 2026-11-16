@@ -344,7 +344,8 @@ func (p *Prober) runWarmup() {
 }
 
 // WarmSeries 立即把某部剧里未探测的单集加入队列。
-// 播放开始/进度上报时调用，最多一次 30 集，避免长剧把队列打满；其余靠夜间预热。
+// 播放开始时只传很小的 limit（当前是 2），避免一集起播就压几十集给 PanSave；
+// 整剧补探测交给看到 10 分钟后的 WarmSeriesSegments / 夜间回填。
 func (p *Prober) WarmSeries(seriesID string, limit int) {
 	if p == nil || !p.enabled || seriesID == "" {
 		return
@@ -414,7 +415,9 @@ func (p *Prober) WarmSeriesSegments(seriesID, itemID string, level int) {
 	p.segTrigMu.Unlock()
 
 	go func() {
-		srcs, err := p.db.SourcesForSeriesSegmentBackfill(seriesID, 200)
+		// 一次最多排 50 集，避免长剧看到 10 分钟后瞬间压几百个章节请求；
+		// 第二档触发和夜间 active 回填会继续补齐。
+		srcs, err := p.db.SourcesForSeriesSegmentBackfill(seriesID, 50)
 		if err != nil {
 			p.log.Warn("series segment query failed", "series", seriesID, "err", err)
 			return

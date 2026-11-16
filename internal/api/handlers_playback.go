@@ -507,10 +507,11 @@ func (h *Handler) saveProgress(w http.ResponseWriter, r *http.Request, event pla
 		h.log.Warn("save playstate", "item", itemID, "err", err)
 	}
 
-	// 开始播放某部剧的单集时，立即把该剧未探测的单集排进预热队列，
-	// 下一集起播就不用再等 ffprobe。只在 start 事件触发，避免频繁重复。
+	// 开始播放时只预热当前剧的少量未探测集，避免一集起播就把整部剧
+	// 几十集同时压给 PanSave，反而把正在播放的直链解析堵死。
+	// 老剧的大量补探测等看到 10 分钟后再做。
 	if event == playbackStart && it.Type == store.TypeEpisode && it.SeriesID != "" {
-		h.prober.WarmSeries(it.SeriesID, 30)
+		h.prober.WarmSeries(it.SeriesID, 2)
 	}
 
 	// 单集看到设定时长后补整部剧：第一档（默认 10 分钟）先补没看过的集，
