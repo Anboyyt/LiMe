@@ -20,6 +20,29 @@ const (
 	TypeEpisode = "Episode"
 )
 
+// maxBackfillBatch 限制「缺失项回填」类查询一次读进内存的条目数。
+// 新库首扫或老库升级时这些查询可能命中几十万行，每个 *Item 都带
+// overview/people 等大字段，全量驻留会撑高 RSS。没读到的条目状态
+// 不会被推进，下一轮 run 会继续处理。
+const maxBackfillBatch = 50000
+
+// scanItemsLimited 读取最多 max 条，避免整库结果集一次性进内存。
+func scanItemsLimited(rows *sql.Rows, max int) ([]*Item, error) {
+	defer rows.Close()
+	out := make([]*Item, 0, 64)
+	for rows.Next() {
+		if len(out) >= max {
+			break
+		}
+		it, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
 type Item struct {
 	ID                string
 	LibraryID         string
@@ -268,17 +291,7 @@ ORDER BY sort_name`, typ)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]*Item, 0, 32)
-	for rows.Next() {
-		it, err := scanItem(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
+	return scanItemsLimited(rows, maxBackfillBatch)
 }
 
 // UpdateItemPeople 只更新演员 JSON。
@@ -301,17 +314,7 @@ ORDER BY sort_name`, typ)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]*Item, 0, 64)
-	for rows.Next() {
-		it, err := scanItem(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
+	return scanItemsLimited(rows, maxBackfillBatch)
 }
 
 // UpdateItemLogo 写回 logo 路径并标记已尝试；logoPath 为空表示 TMDB 没有 logo。
@@ -331,17 +334,7 @@ ORDER BY sort_name`, typ, checkedBefore)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]*Item, 0, 32)
-	for rows.Next() {
-		it, err := scanItem(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
+	return scanItemsLimited(rows, maxBackfillBatch)
 }
 
 // PropagateSeriesRatings 把剧集分级继承给还没分级的季和单集。
@@ -431,17 +424,7 @@ ORDER BY sort_name`, typ)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]*Item, 0, 32)
-	for rows.Next() {
-		it, err := scanItem(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
+	return scanItemsLimited(rows, maxBackfillBatch)
 }
 
 // ItemsMissingRuntime 返回已刮过但时长仍为空、且距上次尝试已超过
@@ -455,17 +438,7 @@ ORDER BY sort_name`, typ, checkedBefore)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]*Item, 0, 16)
-	for rows.Next() {
-		it, err := scanItem(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
+	return scanItemsLimited(rows, maxBackfillBatch)
 }
 
 // LibraryPosterCandidates 返回库内最近的有海报条目，供自动生成库封面。
@@ -504,17 +477,7 @@ ORDER BY sort_name`, typ, checkedBefore)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	out := make([]*Item, 0, 16)
-	for rows.Next() {
-		it, err := scanItem(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, it)
-	}
-	return out, rows.Err()
+	return scanItemsLimited(rows, maxBackfillBatch)
 }
 
 // GenreNames 聚合全部库的类型名。
@@ -778,8 +741,11 @@ func (d *DB) ItemsByIDs(ids []string) (map[string]*Item, error) {
 }
 
 type ItemQuery struct {
-	LibraryID       string
-	LibraryIDs      []string
+	LibraryID  string
+	LibraryIDs []string
+	// IDs 对应客户端的 ?Ids=a,b,c，按 ID 批取时不能退化成整库。
+	IDs             []string
+	NameStartsWith  string
 	ParentID        string
 	Recursive       bool
 	Types           []string
@@ -882,6 +848,16 @@ func (d *DB) buildItemWhere(q ItemQuery) ([]string, []any) {
 	var where []string
 	var args []any
 
+	if len(q.IDs) > 0 {
+		where = append(where, "id IN ("+placeholders(len(q.IDs))+")")
+		for _, id := range q.IDs {
+			args = append(args, id)
+		}
+	}
+	if q.NameStartsWith != "" {
+		where = append(where, "name LIKE ?")
+		args = append(args, q.NameStartsWith+"%")
+	}
 	if q.LibraryID != "" {
 		where = append(where, "library_id = ?")
 		args = append(args, q.LibraryID)

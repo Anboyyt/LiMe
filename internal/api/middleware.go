@@ -4,12 +4,74 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"time"
 )
+
+// recoveryWriter 记录响应是否已经发出，panic 后才知道还能不能补 500。
+type recoveryWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (w *recoveryWriter) WriteHeader(code int) {
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *recoveryWriter) Write(b []byte) (int, error) {
+	w.wrote = true
+	return w.ResponseWriter.Write(b)
+}
+
+// Hijack 让 WebSocket 升级仍然可用（/socket 走这条）。
+func (w *recoveryWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("response writer does not support hijacking")
+	}
+	return h.Hijack()
+}
+
+func (w *recoveryWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		w.wrote = true
+		f.Flush()
+	}
+}
+
+// withRecovery 捕获 handler panic，回 500 并记录堆栈。
+// net/http 自带的 recover 只会断开连接：客户端拿到空响应，日志里也没有堆栈。
+func withRecovery(log *slog.Logger, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rw := &recoveryWriter{ResponseWriter: w}
+		defer func() {
+			v := recover()
+			if v == nil {
+				return
+			}
+			// net/http 用它主动中断连接（客户端断开），不是 bug。
+			if v == http.ErrAbortHandler {
+				panic(v)
+			}
+			log.Error("panic in handler",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"panic", fmt.Sprint(v),
+				"stack", string(debug.Stack()),
+			)
+			if !rw.wrote {
+				writeError(rw, http.StatusInternalServerError, "internal error")
+			}
+		}()
+		next.ServeHTTP(rw, r)
+	})
+}
 
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

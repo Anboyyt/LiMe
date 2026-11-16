@@ -213,7 +213,9 @@ FROM playstates WHERE user_id = ? AND item_id IN (` + placeholders(len(ids)) + `
 // ResumeItemIDs 返回「继续观看」条目：有进度且未看完，按最近播放倒序。
 // libraryIDs 为空表示不限库；maxRating > 0 时过滤超过家长分级的条目。
 // 两个过滤条件都进 SQL，保证 TotalRecordCount 和分页一致。
-func (d *DB) ResumeItemIDs(userID string, types, libraryIDs []string, maxRating, limit, start int) ([]string, int, error) {
+// parentID 用变参保持旧调用兼容：库内「继续观看」必须按父级过滤，
+// 否则会把其它库的进度混进来。
+func (d *DB) ResumeItemIDs(userID string, types, libraryIDs []string, maxRating, limit, start int, parentID ...string) ([]string, int, error) {
 	where := []string{"p.user_id = ?", "p.played = 0", "p.position_ticks > 0"}
 	args := []any{userID}
 	if len(types) > 0 {
@@ -232,6 +234,27 @@ func (d *DB) ResumeItemIDs(userID string, types, libraryIDs []string, maxRating,
 		where = append(where, "(i.rating_score = 0 OR i.rating_score <= ?)")
 		args = append(args, maxRating)
 	}
+	if len(parentID) > 0 && parentID[0] != "" {
+		pid := parentID[0]
+		if it, err := d.GetItem(pid); err == nil {
+			switch it.Type {
+			case TypeSeries:
+				where = append(where, "i.series_id = ?")
+			case TypeSeason:
+				where = append(where, "i.season_id = ?")
+			default:
+				where = append(where, "i.parent_id = ?")
+			}
+			args = append(args, it.ID)
+		} else if _, err := d.GetLibrary(pid); err == nil {
+			where = append(where, "i.library_id = ?")
+			args = append(args, pid)
+		} else {
+			// 未知父级返回空，不能退化成全量列表。
+			return []string{}, 0, nil
+		}
+	}
+
 	cond := strings.Join(where, " AND ")
 
 	var total int

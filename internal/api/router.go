@@ -120,6 +120,7 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	// 观看状态：标记已看 / 取消已看 / 收藏
 	mux.HandleFunc("POST /Users/{userId}/PlayedItems/{itemId}", h.setPlayed)
 	mux.HandleFunc("DELETE /Users/{userId}/PlayedItems/{itemId}", h.setPlayed)
+	mux.HandleFunc("GET /Users/{userId}/FavoriteItems", h.favoriteItems)
 	mux.HandleFunc("POST /Users/{userId}/FavoriteItems/{itemId}", h.setFavorite)
 	mux.HandleFunc("DELETE /Users/{userId}/FavoriteItems/{itemId}", h.setFavorite)
 	mux.HandleFunc("POST /UserPlayedItems/{itemId}", h.setPlayed)
@@ -171,9 +172,9 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /Items/{itemId}/ThemeSongs", h.emptyQuery)
 	mux.HandleFunc("GET /Items/{itemId}/ThemeVideos", h.emptyQuery)
 	mux.HandleFunc("GET /Items/{itemId}/CriticReviews", h.emptyQuery)
-	mux.HandleFunc("GET /Movies/{itemId}/Similar", h.emptyQuery)
-	mux.HandleFunc("GET /Shows/{itemId}/Similar", h.emptyQuery)
-	mux.HandleFunc("GET /Trailers/{itemId}/Similar", h.emptyQuery)
+	mux.HandleFunc("GET /Movies/{itemId}/Similar", h.similarItems)
+	mux.HandleFunc("GET /Shows/{itemId}/Similar", h.similarItems)
+	mux.HandleFunc("GET /Trailers/{itemId}/Similar", h.similarItems)
 	mux.HandleFunc("POST /Items/{itemId}", h.updateItem)
 	mux.HandleFunc("GET /Items/{itemId}", h.getItem)
 	mux.HandleFunc("GET /Items/{itemId}/Images/{imageType}", h.itemImage)
@@ -195,6 +196,8 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /Items/{itemId}/PlaybackInfo", h.playbackInfo)
 	// 用整段通配再接 "stream"/"stream.mp4"，Go 的 mux 不允许段内混合字面量和通配。
 	mux.HandleFunc("GET /Videos/{itemId}/{action}", h.videoStream)
+	// Emby 风格：媒体源 ID 在路径里，Jellyfin 风格走 ?MediaSourceId=。
+	mux.HandleFunc("GET /Videos/{itemId}/{mediaSourceId}/{action}", h.videoStream)
 	mux.HandleFunc("GET /Videos/{itemId}/{mediaSourceId}/Subtitles/{index}/{action}", h.subtitleStream)
 	mux.HandleFunc("GET /Videos/{itemId}/Subtitles/{index}/{action}", h.subtitleStream)
 	// Emby 客户端会在序号后面再带一段起始位置：/Subtitles/{index}/0/Stream.srt。
@@ -202,6 +205,7 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	// ServeMux 会判定两条互不更具体而 panic。
 	mux.HandleFunc("GET /Videos/{itemId}/{mediaSourceId}/Subtitles/{index}/{positionTicks}/{action}", h.subtitleStream)
 	mux.HandleFunc("GET /Audio/{itemId}/{action}", h.audioStream)
+	mux.HandleFunc("GET /Audio/{itemId}/{mediaSourceId}/{action}", h.audioStream)
 
 	// 播放状态上报（M5 续播的数据基础）
 	mux.HandleFunc("POST /Sessions/Playing", h.sessionPlaying)
@@ -213,5 +217,5 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /Sessions", h.listSessions)
 
 	return withGzip(withCORS(withLogging(h.log, h.cfg.HTTPLog,
-		withQueryAliases(stripEmbyPrefix(mux)))))
+		withRecovery(h.log, withQueryAliases(stripEmbyPrefix(mux))))))
 }

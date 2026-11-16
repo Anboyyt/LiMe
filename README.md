@@ -148,7 +148,7 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 | VidHub | ✅ | 多版本列表、进度上报正常 |
 | 爆米花（Filmly） | ✅ | 登录 / 浏览 / 播放正常 |
 | Infuse | ✅ | 兼容性好，可作对照组 |
-| Jellyfin 官方 Android / Android TV | ⚠️ 基础可用 | 浏览 / 播放 / 续播正常；片头跳过按钮需服务端 ≥ 10.10，LiMe 仍报 10.9.11，按钮暂不显示 |
+| Jellyfin 官方 Android / Android TV | ⚠️ 基础可用 | 浏览 / 播放 / 续播正常；服务端报 10.10.7，片头跳过按钮可显示 |
 | jellyfin-web | ❌ | 浏览器播不了 mkv / H.265，服务端不转码，属架构固有边界 |
 
 已针对性补齐的兼容点：
@@ -229,8 +229,8 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
   - `POST /web/api/segments` 手动写入片段（`ItemId` + `Segments[]`，会标记为手动来源）
   - `POST /web/api/segments/reset?itemId=` 清掉片段和分析状态后重新排队
 
-> 官方客户端播放器里的「跳过片头」按钮依赖服务端版本号 ≥ 10.10，
-> LiMe 目前仍报 10.9.11，按钮暂不显示；接口和原生 Web UI 的数据都正常。
+> 官方客户端播放器里的「跳过片头」按钮依赖服务端版本号 ≥ 10.10。
+> LiMe 上报 10.10.7，接口返回 `MediaSegments` 后按钮即可显示。
 
 ## 媒体库管理
 

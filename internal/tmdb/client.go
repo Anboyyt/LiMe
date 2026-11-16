@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	PosterSize   = "w780" // 卡片用不到这么大，但详情页/客户端按 maxWidth 请求，服务端会缩放并缓存
+	PosterSize   = "w780"     // 卡片用不到这么大，但详情页/客户端按 maxWidth 请求，服务端会缩放并缓存
 	BackdropSize = "original" // 详情页大图按原始分辨率取，w780 会被放大得发糊
 	StillSize    = "w185"
 	ProfileSize  = "w185"

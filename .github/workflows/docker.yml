@@ -16,7 +16,26 @@ env:
   IMAGE: docker.io/${{ secrets.DOCKERHUB_USERNAME }}/lime
 
 jobs:
+  # 测试门禁：构建镜像前先跑 vet + 单测，回归不靠本地自觉。
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./internal/... -count=1 -timeout 10m
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:

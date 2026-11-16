@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -100,22 +101,33 @@ func (h *Handler) streamLocation(r *http.Request, raw string) string {
 
 // safeLocation 保证 Location 头是合法的 ASCII URI。
 // PanSave 的 file_name 参数偶尔带未编码中文，直接放进头会导致部分客户端解析失败。
+//
+// 只做逐字节百分号转义，绝不 url.Parse + ParseQuery/Encode：
+//   - Encode 会把参数按字母排序、把 %20 改成 +，带签名的地址会直接失效；
+//   - ParseQuery 会按 & 拆分，未编码的 file_name=A&B.mkv 会被切成两个参数。
 func safeLocation(raw string) string {
+	needEscape := false
 	for i := 0; i < len(raw); i++ {
-		if raw[i] > 127 {
-			u, err := url.Parse(raw)
-			if err != nil {
-				return raw
-			}
-			if u.RawQuery != "" {
-				if q, err := url.ParseQuery(u.RawQuery); err == nil {
-					u.RawQuery = q.Encode()
-				}
-			}
-			return u.String()
+		if c := raw[i]; c <= 0x20 || c >= 0x7f {
+			needEscape = true
+			break
 		}
 	}
-	return raw
+	if !needEscape {
+		return raw
+	}
+	var b strings.Builder
+	b.Grow(len(raw) + 32)
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		// 保留已有的 %XX 编码：% 本身不转义，只转非 ASCII 和非法可见字符。
+		if c <= 0x20 || c >= 0x7f || strings.IndexByte("\"<>\\^`{|}", c) >= 0 {
+			fmt.Fprintf(&b, "%%%02X", c)
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 // rewriteTarget 判断当前客户端应使用哪个地址：局域网用 local，公网用 public。

@@ -9,7 +9,10 @@ import (
 )
 
 // DefaultVersion 伪装成 Jellyfin 版本号，部分客户端会做最低版本校验。
-const DefaultVersion = "10.9.11"
+//
+// 报 10.10.x 是因为官方 Android 2.6.3+ / Android TV 0.18+ 只在服务端
+// ≥10.10 时才显示片头片尾跳过按钮。MediaSegments 已经实现，报低了等于白做。
+const DefaultVersion = "10.10.7"
 
 type Config struct {
 	ServerName string

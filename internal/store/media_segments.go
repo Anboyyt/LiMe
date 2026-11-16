@@ -122,6 +122,46 @@ FROM media_segments WHERE item_id = ?`
 	return out, rows.Err()
 }
 
+// MediaSegmentsByItems 批量返回多个条目的片段，用于列表接口。
+// 列表带 Fields=Chapters 时逐条查询会变成一页几百条 SQL。
+func (d *DB) MediaSegmentsByItems(itemIDs []string) (map[string][]MediaSegment, error) {
+	out := make(map[string][]MediaSegment, len(itemIDs))
+	// 分批，避免超过 SQLite 的绑定变量上限。
+	const chunk = 400
+	for start := 0; start < len(itemIDs); start += chunk {
+		end := start + chunk
+		if end > len(itemIDs) {
+			end = len(itemIDs)
+		}
+		part := itemIDs[start:end]
+		args := make([]any, 0, len(part))
+		for _, id := range part {
+			args = append(args, id)
+		}
+		rows, err := d.Query(
+			`SELECT id, item_id, type, start_ticks, end_ticks, source, confidence
+FROM media_segments WHERE item_id IN (`+placeholders(len(part))+`)
+ORDER BY item_id, start_ticks`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var s MediaSegment
+			if err := rows.Scan(&s.ID, &s.ItemID, &s.Type, &s.StartTicks, &s.EndTicks, &s.Source, &s.Confidence); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[s.ItemID] = append(out[s.ItemID], s)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // segmentScopeWhere 生成片段回填的范围条件。args 会按顺序追加。
 // primaryOnly 限定每个条目只取一个主片源，避免多版本重复分析。
 func (d *DB) segmentScopeWhere(mode string, since int64, args *[]any) string {

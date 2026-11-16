@@ -131,8 +131,22 @@ func (h *Handler) fillCacheFile(ctx context.Context, raw, ua string, from, to in
 		return err
 	}
 	defer resp.Body.Close()
+	// 尾部请求必须拿到 206。上游忽略 Range 返回 200 时说明它要吐整个文件，
+	// 绝不能整份写进缓存目录（几十 GB 的片子会直接撑爆数据盘）。
+	if from > 0 && resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("range not honored: status %d", resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusPartialContent && resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	// 206 的起始偏移必须是我们要的那段，跳转链/多段后端可能回错范围。
+	if resp.StatusCode == http.StatusPartialContent {
+		if cr := resp.Header.Get("Content-Range"); cr != "" {
+			var gotStart int64
+			if _, err := fmt.Sscanf(cr, "bytes %d-", &gotStart); err == nil && gotStart != from {
+				return fmt.Errorf("content-range start %d, want %d", gotStart, from)
+			}
+		}
 	}
 
 	tmp := path + ".tmp"
@@ -140,7 +154,9 @@ func (h *Handler) fillCacheFile(ctx context.Context, raw, ua string, from, to in
 	if err != nil {
 		return err
 	}
-	n, cerr := io.Copy(f, resp.Body)
+	want := to - from + 1
+	// 多读 1 字节就够判定「上游给多了」，不用把整个文件读完再报错。
+	n, cerr := io.Copy(f, io.LimitReader(resp.Body, want+1))
 	if err := f.Close(); err != nil && cerr == nil {
 		cerr = err
 	}
@@ -148,9 +164,9 @@ func (h *Handler) fillCacheFile(ctx context.Context, raw, ua string, from, to in
 		_ = os.Remove(tmp)
 		return cerr
 	}
-	if n != to-from+1 {
+	if n != want {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("short read %d/%d", n, to-from+1)
+		return fmt.Errorf("short read %d/%d", n, want)
 	}
 	return os.Rename(tmp, path)
 }

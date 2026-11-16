@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -159,5 +160,47 @@ func TestStreamCacheContinuesUpstream(t *testing.T) {
 	if len(body) != 4<<20 || !bytes.HasPrefix(body, bytes.Repeat([]byte("A"), 1<<20)) ||
 		!strings.HasPrefix(string(body[1<<20:1<<20+8]), "CCCCCCCC") {
 		t.Fatalf("body len = %d", len(body))
+	}
+}
+
+// 上游忽略 Range 返回 200 时，尾部请求必须拒绝——
+// 否则几十 GB 的片子会被整份写进缓存目录。
+func TestFillCacheRejectsFullBodyForTail(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 4<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	h := &Handler{}
+	path := filepath.Join(t.TempDir(), "tail.bin")
+	size := int64(len(payload))
+	err := h.fillCacheFile(context.Background(), srv.URL, "test", size-1024, size-1, path)
+	if err == nil {
+		t.Fatal("expected error when upstream ignores Range")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatal("tail cache file should not exist")
+	}
+}
+
+// 头部请求遇到 200 也不能把整份内容写进缓存。
+func TestFillCacheLimitsHeadBytes(t *testing.T) {
+	payload := bytes.Repeat([]byte("x"), 4<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	defer srv.Close()
+
+	h := &Handler{}
+	path := filepath.Join(t.TempDir(), "head.bin")
+	err := h.fillCacheFile(context.Background(), srv.URL, "test", 0, 1023, path)
+	if err == nil {
+		t.Fatal("expected short-read error when upstream sends the full file")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Fatal("head cache file should not exist")
 	}
 }

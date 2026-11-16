@@ -141,6 +141,16 @@ func TestSafeLocationEncodesNonASCII(t *testing.T) {
 	}
 }
 
+// 未编码文件名里的 & 不能被当成参数分隔符，已有 %XX 不能被重新编码，
+// 参数顺序也不能被重排（带签名的地址会因此失效）。
+func TestSafeLocationKeepsQueryVerbatim(t *testing.T) {
+	raw := "http://h:1/p?sign=abc%20def&file_name=测试&A.mkv&z=1"
+	want := "http://h:1/p?sign=abc%20def&file_name=%E6%B5%8B%E8%AF%95&A.mkv&z=1"
+	if got := safeLocation(raw); got != want {
+		t.Fatalf("got  %q\nwant %q", got, want)
+	}
+}
+
 func TestStreamLocationDisabled(t *testing.T) {
 	h := &Handler{cfg: config.Config{RewriteEnabled: false}}
 	req := httptest.NewRequest("GET", "http://192.168.1.133:886/Videos/x/stream", nil)

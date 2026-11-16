@@ -233,9 +233,6 @@ func (h *Handler) itemToDto(it *store.Item, ps *store.Playstate, fields ...itemF
 		v := it.CommunityRating
 		d.CommunityRating = &v
 	}
-	if f.has("Chapters") {
-		d.Chapters = h.chaptersForItem(it)
-	}
 	return d
 }
 
@@ -246,7 +243,15 @@ func (h *Handler) chaptersForItem(it *store.Item) []dto.ChapterInfoDto {
 		return nil
 	}
 	segs, err := h.db.MediaSegmentsForItem(it.ID, nil)
-	if err != nil || len(segs) == 0 {
+	if err != nil {
+		return nil
+	}
+	return segmentsToChapters(segs)
+}
+
+// segmentsToChapters 是纯转换，列表接口批量查到片段后直接复用。
+func segmentsToChapters(segs []store.MediaSegment) []dto.ChapterInfoDto {
+	if len(segs) == 0 {
 		return nil
 	}
 	out := make([]dto.ChapterInfoDto, 0, len(segs)*2)
@@ -268,6 +273,23 @@ func (h *Handler) chaptersForItem(it *store.Item) []dto.ChapterInfoDto {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartPositionTicks < out[j].StartPositionTicks })
 	return out
+}
+
+// clampListLimit 给列表端点兜底：0/负数取默认值，超大值截到 MaxItems。
+// /Items 有自己的上限逻辑，这里给 Episodes / Latest 这类同样直传 Limit 的端点用，
+// 避免 Limit=0 时 SQL 不带 LIMIT 把整库读进内存。
+func (h *Handler) clampListLimit(v, def int) int {
+	if v <= 0 {
+		v = def
+	}
+	max := h.cfg.MaxItems
+	if max <= 0 {
+		max = 20000
+	}
+	if v > max {
+		v = max
+	}
+	return v
 }
 
 // maxListStreamSources 限制列表响应里带轨道的片源数量。
@@ -468,12 +490,28 @@ func (h *Handler) itemsToDto(r *http.Request, user *store.User, items []*store.I
 		streamsBy = h.streamsForSources(sourcesByItem)
 	}
 
+	// Fields=Chapters：整页一次查完，避免一页几百条 SQL。
+	var chaptersByItem map[string][]dto.ChapterInfoDto
+	if f.has("Chapters") {
+		if segsByItem, err := h.db.MediaSegmentsByItems(ids); err != nil {
+			h.log.Warn("load media segments", "err", err)
+		} else {
+			chaptersByItem = make(map[string][]dto.ChapterInfoDto, len(segsByItem))
+			for id, segs := range segsByItem {
+				chaptersByItem[id] = segmentsToChapters(segs)
+			}
+		}
+	}
+
 	for _, it := range items {
 		var ps *store.Playstate
 		if s, ok := states[it.ID]; ok {
 			ps = &s
 		}
 		d := h.itemToDto(it, ps, f)
+		if f.has("Chapters") {
+			d.Chapters = chaptersByItem[it.ID]
+		}
 
 		// 剧集/季本身没有进度，用下属集的未看数量撑起角标。
 		switch it.Type {
@@ -514,6 +552,47 @@ func (h *Handler) itemsToDto(r *http.Request, user *store.User, items []*store.I
 		out = append(out, d)
 	}
 	return out
+}
+
+// favoriteItems 返回收藏列表。Jellyfin/Emby 客户端的「收藏」页走这个 GET，
+// 早先只实现了 POST/DELETE 开关，读侧会 404。
+func (h *Handler) favoriteItems(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	if uid := r.PathValue("userId"); uid != "" && uid != user.ID && !user.IsAdmin {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	q := parseItemQuery(r)
+	q.UserID = user.ID
+	q.FavoriteOnly = true
+	q.Limit = h.clampListLimit(q.Limit, 100)
+
+	allowed, all, aerr := h.allowedLibraries(user)
+	if aerr != nil {
+		h.log.Error("load library access", "err", aerr)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !all {
+		q.LibraryIDs = allowed
+	}
+	applyRatingLimit(user, &q)
+
+	items, total, err := h.db.QueryItems(q)
+	if err != nil {
+		h.log.Error("query favorites", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, dto.QueryResult{
+		Items:            h.itemsToDto(r, user, items, parseItemFields(r)),
+		TotalRecordCount: total,
+		StartIndex:       q.StartIndex,
+	})
 }
 
 func applyAggregate(ud *dto.UserItemDataDto, p store.WatchProgress) {
@@ -591,7 +670,8 @@ func (h *Handler) queryItems(w http.ResponseWriter, r *http.Request) {
 	// 对齐 Jellyfin：没有 ParentId 时父级是用户根目录，非递归只返回它的
 	// 子项（媒体库视图），而不是把整个库铺平。爆米花等客户端正是靠这个
 	// 请求拿首页，旧逻辑会一次吐出 26 万条（实测 15s / 179MB）。
-	if q.ParentID == "" && !q.Recursive && q.SearchTerm == "" && len(q.Persons) == 0 {
+	if q.ParentID == "" && !q.Recursive && q.SearchTerm == "" && len(q.Persons) == 0 &&
+		len(q.IDs) == 0 && q.NameStartsWith == "" {
 		views, err := h.libraryViews()
 		if err != nil {
 			h.log.Error("load library views", "err", err)
@@ -1089,7 +1169,7 @@ func (h *Handler) queryByParent(w http.ResponseWriter, r *http.Request, parentID
 		Types:      types,
 		SeasonID:   r.URL.Query().Get("SeasonId"),
 		StartIndex: atoiDefault(r.URL.Query().Get("StartIndex"), 0),
-		Limit:      atoiDefault(r.URL.Query().Get("Limit"), 0),
+		Limit:      h.clampListLimit(atoiDefault(r.URL.Query().Get("Limit"), 0), 1000),
 	}
 	applyRatingLimit(user, &q)
 
@@ -1121,7 +1201,7 @@ func (h *Handler) latestItems(w http.ResponseWriter, r *http.Request) {
 	}
 
 	v := r.URL.Query()
-	limit := atoiDefault(v.Get("Limit"), 20)
+	limit := h.clampListLimit(atoiDefault(v.Get("Limit"), 20), 20)
 	types := normalizeTypes(splitCSV(v.Get("IncludeItemTypes")))
 	parentID := v.Get("ParentId")
 	groupItems := !strings.EqualFold(v.Get("GroupItems"), "false")
@@ -1251,7 +1331,8 @@ func (h *Handler) resumeItems(w http.ResponseWriter, r *http.Request) {
 	}
 	// 权限/分级过滤下推到 SQL：既避免分页后过滤导致页不满，
 	// 也保证 TotalRecordCount 是过滤后的真实总数。
-	ids, total, err := h.db.ResumeItemIDs(user.ID, types, libIDs, maxRatingOf(user), limit, start)
+	// ParentId 下推：库内「继续观看」不应该混进别的库。
+	ids, total, err := h.db.ResumeItemIDs(user.ID, types, libIDs, maxRatingOf(user), limit, start, v.Get("ParentId"))
 	if err != nil {
 		h.log.Error("resume items", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -1328,6 +1409,8 @@ func parseItemQuery(r *http.Request) store.ItemQuery {
 	v := r.URL.Query()
 	filters := splitCSV(v.Get("Filters"))
 	return store.ItemQuery{
+		IDs:             splitCSV(v.Get("Ids")),
+		NameStartsWith:  v.Get("NameStartsWith"),
 		ParentID:        v.Get("ParentId"),
 		Recursive:       strings.EqualFold(v.Get("Recursive"), "true"),
 		Types:           normalizeTypes(splitCSV(v.Get("IncludeItemTypes"))),

@@ -31,7 +31,9 @@ type OpenOptions struct {
 }
 
 func Open(path string, opts ...OpenOptions) (*DB, error) {
-	cacheMB, mmapMB := 64, 256
+	// 页缓存按连接叠加：8 连接 × 64MB = 512MB，是容器 RSS 的大头。
+	// 默认降到 32MB（总 256MB），需要更快时用 LIME_SQLITE_CACHE_MB 调回。
+	cacheMB, mmapMB := 32, 256
 	if len(opts) > 0 {
 		if opts[0].CacheMB > 0 {
 			cacheMB = opts[0].CacheMB
@@ -56,6 +58,9 @@ func Open(path string, opts ...OpenOptions) (*DB, error) {
 	// 不会出现扫描期间所有 API 排队几十秒的情况。写事务仍由 SQLite 串行化。
 	// 客户端首页会一次并发十几个库的查询，4 个连接会排队；8 个足够。
 	sqlDB.SetMaxOpenConns(8)
+	// 空闲连接与最大连接数对齐：默认 2 会让其余连接用后即关，
+	// 每次重连都要重跑 PRAGMA、页缓存从冷开始，首页查询延迟抖动明显。
+	sqlDB.SetMaxIdleConns(8)
 	sqlDB.SetConnMaxLifetime(0)
 
 	if err := sqlDB.Ping(); err != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -162,7 +163,12 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 		h.prober.Enqueue(s)
 	}
 
-	src := pickMediaSource(sources, queryAny(r, "MediaSourceId", "mediaSourceId", "MediaSourceID"))
+	// Emby 风格的 /Videos/{id}/{mediaSourceId}/stream 把源 ID 放在路径里。
+	sourceID := queryAny(r, "MediaSourceId", "mediaSourceId", "MediaSourceID")
+	if sourceID == "" {
+		sourceID = r.PathValue("mediaSourceId")
+	}
+	src := pickMediaSource(sources, sourceID)
 	if src == nil {
 		writeError(w, http.StatusNotFound, "media source not found")
 		return
@@ -183,6 +189,11 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 		// 否则 PanSave 按 LiMe 的 UA 生成链接，播放器拿到会 403 invalid signature。
 		if final, err := cachedResolveRedirect(r.Context(), location, r.UserAgent()); err != nil {
 			h.log.Warn("resolve redirect failed", "item", itemID, "err", err)
+			var se upstreamStatusError
+			if errors.As(err, &se) {
+				writeError(w, http.StatusBadGateway, "upstream unavailable")
+				return
+			}
 		} else if final != "" {
 			location = safeLocation(final)
 		}
@@ -201,6 +212,16 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusFound)
 }
 
+// upstreamStatusError 表示上游明确回了错误状态（不是网络超时）。
+// 网络层失败仍可退回 PanSave 原始地址让客户端自己跟跳，这一种不行。
+type upstreamStatusError struct {
+	status int
+}
+
+func (e upstreamStatusError) Error() string {
+	return fmt.Sprintf("upstream status %d", e.status)
+}
+
 // redirectResolver 只跟一跳，用来把 PanSave 的 302 换成最终 CDN 地址。
 // 不读取响应体，Range 只要 1 字节，避免碰视频数据。
 var redirectResolver = &http.Client{
@@ -215,8 +236,13 @@ var redirectResolver = &http.Client{
 // 过期或解析失败都会回退到实时解析，不影响正确性。
 const resolvedLinkTTL = 10 * time.Minute
 
+// resolveFailTTL 是解析失败（上游 4xx/5xx、超时）的负缓存时间。
+// 没有它，PanSave 挂掉时每个列表请求都会重新打一遍。
+const resolveFailTTL = 30 * time.Second
+
 type resolvedLinkEntry struct {
 	url     string
+	err     error
 	expires time.Time
 }
 
@@ -225,6 +251,19 @@ var resolvedLinks = struct {
 	m map[string]resolvedLinkEntry
 }{m: make(map[string]resolvedLinkEntry)}
 
+// resolveInflight 合并同一 (URL, UA) 的并发解析。
+// 冷缓存时多人同时打开同一部剧，否则每个请求各打一次 PanSave。
+type resolveCall struct {
+	done chan struct{}
+	url  string
+	err  error
+}
+
+var resolveInflight = struct {
+	sync.Mutex
+	m map[string]*resolveCall
+}{m: make(map[string]*resolveCall)}
+
 func cachedResolveRedirect(ctx context.Context, raw, userAgent string) (string, error) {
 	key := raw + "\x00" + userAgent
 	now := time.Now()
@@ -232,7 +271,7 @@ func cachedResolveRedirect(ctx context.Context, raw, userAgent string) (string, 
 	resolvedLinks.Lock()
 	if e, ok := resolvedLinks.m[key]; ok && now.Before(e.expires) {
 		resolvedLinks.Unlock()
-		return e.url, nil
+		return e.url, e.err
 	}
 	// 顺带清理过期项，避免 map 随片源无限增长。
 	for k, e := range resolvedLinks.m {
@@ -242,15 +281,39 @@ func cachedResolveRedirect(ctx context.Context, raw, userAgent string) (string, 
 	}
 	resolvedLinks.Unlock()
 
-	final, err := resolveRedirect(ctx, raw, userAgent)
-	if err != nil || final == "" {
-		return "", err
+	// 已有同 key 在解析：等它的结果，不重复回源。
+	resolveInflight.Lock()
+	if c, ok := resolveInflight.m[key]; ok {
+		resolveInflight.Unlock()
+		select {
+		case <-c.done:
+			return c.url, c.err
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
 	}
+	c := &resolveCall{done: make(chan struct{})}
+	resolveInflight.m[key] = c
+	resolveInflight.Unlock()
+
+	final, err := resolveRedirect(ctx, raw, userAgent)
+
+	// 先写结果再 close，等待方靠 channel 建立 happens-before。
+	c.url, c.err = final, err
+	close(c.done)
+	resolveInflight.Lock()
+	delete(resolveInflight.m, key)
+	resolveInflight.Unlock()
 
 	resolvedLinks.Lock()
-	resolvedLinks.m[key] = resolvedLinkEntry{url: final, expires: now.Add(resolvedLinkTTL)}
+	switch {
+	case err != nil:
+		resolvedLinks.m[key] = resolvedLinkEntry{err: err, expires: now.Add(resolveFailTTL)}
+	case final != "":
+		resolvedLinks.m[key] = resolvedLinkEntry{url: final, expires: now.Add(resolvedLinkTTL)}
+	}
 	resolvedLinks.Unlock()
-	return final, nil
+	return final, err
 }
 
 func resolveRedirect(ctx context.Context, raw, userAgent string) (string, error) {
@@ -270,12 +333,18 @@ func resolveRedirect(ctx context.Context, raw, userAgent string) (string, error)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 300 || resp.StatusCode >= 400 {
+	// 2xx 表示上游直接回了内容（例如 STRM 里已经是 CDN 直链），没有跳转可跟。
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return "", nil
+	}
+	// 4xx/5xx 是上游明确拒绝（PanSave 挂了、115 限流、鉴权失败）。
+	// 必须让调用方知道，否则会把一个必然失败的地址 302 给客户端，日志里还什么都没有。
+	if resp.StatusCode >= 400 {
+		return "", upstreamStatusError{status: resp.StatusCode}
 	}
 	loc := resp.Header.Get("Location")
 	if loc == "" {
-		return "", nil
+		return "", errors.New("redirect without location")
 	}
 	u, err := resp.Request.URL.Parse(loc)
 	if err != nil {
