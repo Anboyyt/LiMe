@@ -324,6 +324,9 @@ main {
   gap: 8px;
   font-size: 13px;
   cursor: pointer;
+  /* 阈值/延迟这类标签不能被挤成两行（「批量阈」+「值」） */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .check-field input[type="checkbox"] {
   width: 16px;
@@ -667,22 +670,47 @@ table:has(td:last-child button) th:last-child { text-align: right; }
     overflow: visible;
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    padding: 10px 12px;
+    padding: 10px 12px 8px;
   }
-  .side .brand { font-size: 16px; margin-bottom: 8px; }
-  .side .brand span { display: inline; margin-left: 6px; }
-  #nav { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
-  #nav .nav-title { display: none; }
-  #nav a { white-space: nowrap; margin: 0; padding: 6px 10px; }
-  #navLibs { display: flex; gap: 6px; }
+  /* 手机端顶部只留品牌和主功能标签；库快捷入口从「媒体库管理」进。 */
+  .side .brand { gap: 8px; margin-bottom: 10px; }
+  .side .brand .brand-logo { width: 28px; height: 28px; border-radius: 8px; }
+  .side .brand-text b { display: none; }
+  .side .brand-text span { display: inline; margin-left: 0; font-size: 12px; letter-spacing: 0; }
+  #nav {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 2px;
+    padding-bottom: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  #nav::-webkit-scrollbar { display: none; }
+  #nav .nav-title,
+  #navLibs { display: none; }
+  #nav a { flex: 0 0 auto; white-space: nowrap; margin: 0; padding: 7px 11px; font-size: 13px; }
   .side-foot { display: none; }
   main { overflow: visible; }
-  .topbar { flex-wrap: wrap; padding: 10px 12px; gap: 8px; }
+  .topbar {
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 10px 12px;
+    gap: 8px 10px;
+  }
+  .topbar .crumb { flex: 1 1 100%; font-size: 15px; }
+  .topbar #scanBtn { display: none; }
+  .topbar .back-media { order: 2; }
+  .topbar #themeBtn,
+  .topbar #logout { order: 3; }
   .topbar #search { order: 9; flex: 1 1 100%; max-width: none; }
   .topbar #userName { display: none; }
   #view { padding: 14px; overflow: visible; }
+  .panel { padding: 14px; }
   table { display: block; overflow-x: auto; white-space: nowrap; -webkit-overflow-scrolling: touch; }
-  .row { flex-wrap: wrap; }
+  .row { flex-wrap: wrap; gap: 8px 10px; }
+  .row > input { flex: 1 1 100%; max-width: none !important; }
   .path-row,
   .path-item { flex-wrap: wrap; }
   .dir-list { max-height: 45vh; }
