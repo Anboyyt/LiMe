@@ -1078,7 +1078,6 @@
     const infoRows = [
       ['服务器名', info.ServerName],
       ['LiMe 版本', stats.ProductVersion || 'dev'],
-      ['Jellyfin 兼容版本', info.Version],
       ['服务器 ID', info.Id],
       ['地址', info.LocalAddress],
       ['数据目录', info.ProgramDataPath],

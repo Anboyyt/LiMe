@@ -503,7 +503,9 @@ table:has(td:last-child button) th:last-child { text-align: right; }
 .kv { font-size: 13px; }
 .kv div { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px dashed var(--line); }
 .kv div:last-child { border: none; }
-.kv b { min-width: 78px; color: var(--muted); font-weight: 400; }
+.kv b { min-width: 78px; color: var(--muted); font-weight: 400; flex: 0 0 auto; }
+/* 服务器 ID / 地址这类长值在手机窄屏上必须能折行，否则整行撑出卡片。 */
+.kv span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 
 .sources td { font-size: 12px; }
 
