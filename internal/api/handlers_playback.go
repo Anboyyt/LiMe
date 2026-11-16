@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"lime/internal/dto"
 	"lime/internal/probe"
 	"lime/internal/store"
+	"lime/internal/strm"
 )
 
 // playbackInfo 返回可直连的 MediaSource。我们不转码，
@@ -46,6 +48,9 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 	if len(sources) == 0 {
 		writeError(w, http.StatusNotFound, "no media source")
 		return
+	}
+	for _, s := range sources {
+		h.refreshSourceFromSTRM(s)
 	}
 
 	// 首次播放时短暂等待 ffprobe，让客户端一次就拿到完整轨道信息。
@@ -174,6 +179,7 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "media source not found")
 		return
 	}
+	h.refreshSourceFromSTRM(src)
 	if strings.TrimSpace(src.URL) == "" {
 		writeError(w, http.StatusNotFound, "empty media url")
 		return
@@ -377,6 +383,67 @@ func resolveRedirect(ctx context.Context, raw, userAgent string) (string, error)
 		return "", err
 	}
 	return u.String(), nil
+}
+
+// refreshSourceFromSTRM 在播放前读一次磁盘上的 .strm。
+// PanSave 重新生成 STRM 时通常只换 pickcode，文件大小不变；如果实时监控
+// 漏掉这次写入，数据库里会留下旧地址。长剧（航海王这类）被批量重生成时
+// 会出现几百集旧 pickcode，客户端就随机播不了。播放时顺手校验并更新，
+// 保证用的是当前文件里的地址。
+func (h *Handler) refreshSourceFromSTRM(src *store.MediaSource) {
+	if src == nil || src.StrmPath == "" {
+		return
+	}
+	info, err := strm.ParseFile(src.StrmPath)
+	if err != nil || info.RawURL == "" {
+		return
+	}
+	st, err := os.Stat(src.StrmPath)
+	if err != nil {
+		return
+	}
+	oldURL := src.URL
+	mtime, size := st.ModTime().Unix(), st.Size()
+	changed := oldURL != info.RawURL ||
+		(info.Cloud != "" && info.Cloud != src.Cloud) ||
+		(info.FileID != "" && info.FileID != src.CloudFileID) ||
+		(info.SHA1ETag != "" && info.SHA1ETag != src.SHA1ETag) ||
+		(info.Size > 0 && info.Size != src.Size) ||
+		(info.FileName != "" && info.FileName != src.FileName) ||
+		mtime != src.StrmMtime || size != src.StrmSize
+	if !changed {
+		return
+	}
+
+	src.URL = info.RawURL
+	if info.Cloud != "" {
+		src.Cloud = info.Cloud
+	}
+	if info.DriveID != "" {
+		src.DriveID = info.DriveID
+	}
+	if info.FileID != "" {
+		src.CloudFileID = info.FileID
+	}
+	if info.SHA1ETag != "" {
+		src.SHA1ETag = info.SHA1ETag
+	}
+	if info.Size > 0 {
+		src.Size = info.Size
+	}
+	if info.FileName != "" {
+		src.FileName = info.FileName
+	}
+	src.StrmMtime = mtime
+	src.StrmSize = size
+
+	if err := h.db.UpsertMediaSource(src); err != nil {
+		h.log.Warn("refresh strm source failed", "item", src.ItemID, "source", src.ID, "err", err)
+		return
+	}
+	if oldURL != src.URL {
+		h.log.Info("strm source refreshed", "item", src.ItemID, "source", src.ID)
+	}
 }
 
 func pickMediaSource(sources []*store.MediaSource, id string) *store.MediaSource {
