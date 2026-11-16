@@ -626,10 +626,11 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.50**。
+当前版本 **v1.0.51**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.51 | PanSave 直链解析改用独立短连接（禁用 keep-alive），避免复用被上游静默关闭的空闲连接导致 8 秒超时；超时负缓存从 30 秒降到 5 秒，客户端取消不再缓存 |
 | v1.0.50 | 播放起播只预热 2 集，避免一次性把整部未探测剧压给 PanSave 导致直链解析超时；单集看满 10 分钟后的整剧补探测限制为 50 集/次 |
 | v1.0.49 | 片头片尾回填：整季缺失自动跑音频指纹、新集指纹采样失败自动整季重试、失败记录 7 天内不重复扫；默认只回填最近 14 天看到 ≥10 分钟的剧，老剧等观看到 10 分钟后再补；整季采样上限 16 集；运维面板新增「补齐缺失指纹」 |
 | v1.0.43 | Infuse 8.x 兼容：补齐 `/UserViews`、`/UserViews/GroupingOptions`、`/Users/{id}/GroupingOptions`、`/UserItems/Resume`、`/Items/Latest`、`/UserItems/{id}/UserData`、`/UserFavoriteItems` 等接口；登录支持 query/form；Views 补 `DateCreated`；`DisplayPreferences` 字段类型修正；支持 camelCase 查询参数、`/Users/{id}/Items/` 尾斜杠、库 ID 当 item 查询；新增 `/Packages`；通知页待分析计数改后台缓存 |

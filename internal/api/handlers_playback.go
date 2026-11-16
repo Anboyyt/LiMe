@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -224,8 +225,20 @@ func (e upstreamStatusError) Error() string {
 
 // redirectResolver 只跟一跳，用来把 PanSave 的 302 换成最终 CDN 地址。
 // 不读取响应体，Range 只要 1 字节，避免碰视频数据。
+//
+// 不走默认 Transport 的连接池：PanSave 偶尔会静默丢弃空闲 keep-alive 连接，
+// 复用旧连接时表现成 8 秒超时，冷门剧起播就会随机失败。每次重新建连，
+// 本地回环开销可以忽略，换来的是不会卡在坏连接上。
 var redirectResolver = &http.Client{
-	Timeout: 8 * time.Second,
+	Timeout: 10 * time.Second,
+	Transport: &http.Transport{
+		Proxy:                 nil,
+		DisableKeepAlives:     true,
+		ForceAttemptHTTP2:     false,
+		MaxIdleConns:          0,
+		DialContext:           (&net.Dialer{Timeout: 3 * time.Second}).DialContext,
+		ResponseHeaderTimeout: 9 * time.Second,
+	},
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
@@ -308,7 +321,20 @@ func cachedResolveRedirect(ctx context.Context, raw, userAgent string) (string, 
 	resolvedLinks.Lock()
 	switch {
 	case err != nil:
-		resolvedLinks.m[key] = resolvedLinkEntry{err: err, expires: now.Add(resolveFailTTL)}
+		// 客户端自己取消的请求不缓存，否则会把一次取消放大成 30 秒不可用。
+		if !errors.Is(err, context.Canceled) {
+			ttl := resolveFailTTL
+			// 超时/连接失败只负缓存 5 秒，给瞬时网络抖动留恢复空间。
+			if errors.Is(err, context.DeadlineExceeded) {
+				ttl = 5 * time.Second
+			} else {
+				var ne net.Error
+				if errors.As(err, &ne) && (ne.Timeout() || ne.Temporary()) {
+					ttl = 5 * time.Second
+				}
+			}
+			resolvedLinks.m[key] = resolvedLinkEntry{err: err, expires: now.Add(ttl)}
+		}
 	case final != "":
 		resolvedLinks.m[key] = resolvedLinkEntry{url: final, expires: now.Add(resolvedLinkTTL)}
 	}
