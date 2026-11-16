@@ -1,9 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -27,9 +30,32 @@ type authenticateRequest struct {
 
 func (h *Handler) authenticateByName(w http.ResponseWriter, r *http.Request) {
 	var req authenticateRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	if len(bytes.TrimSpace(body)) > 0 {
+		if err := json.Unmarshal(body, &req); err != nil {
+			// 少数客户端（旧版 Infuse / 第三方脚本）把用户名密码放在
+			// x-www-form-urlencoded 请求体里，而不是 JSON。
+			if vals, perr := url.ParseQuery(string(body)); perr == nil {
+				req.Username = firstNonEmpty(vals.Get("Username"), vals.Get("username"))
+				req.Pw = firstNonEmpty(vals.Get("Pw"), vals.Get("pw"))
+				req.Password = firstNonEmpty(vals.Get("Password"), vals.Get("password"))
+			}
+		}
+	}
+	// 也有客户端直接放在 query 上，完全不发 body。
+	q := r.URL.Query()
+	if req.Username == "" {
+		req.Username = firstNonEmpty(q.Get("Username"), q.Get("username"))
+	}
+	if req.Pw == "" {
+		req.Pw = firstNonEmpty(q.Get("Pw"), q.Get("pw"))
+	}
+	if req.Password == "" {
+		req.Password = firstNonEmpty(q.Get("Password"), q.Get("password"))
 	}
 
 	username := strings.TrimSpace(req.Username)
@@ -119,6 +145,15 @@ func (h *Handler) authenticateByName(w http.ResponseWriter, r *http.Request) {
 
 	h.log.Info("login ok", "user", user.Name, "client", a.Client, "device", deviceName)
 	writeJSON(w, http.StatusOK, item)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func clientIP(r *http.Request) string {

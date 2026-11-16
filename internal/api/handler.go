@@ -54,6 +54,13 @@ type Handler struct {
 	healthMu      sync.Mutex
 	healthAlertAt map[string]time.Time
 
+	// SegmentPendingCount 会扫 26 万条目；设置页每次打开都查会卡 1-2 秒。
+	// 缓存 5 分钟，过期后后台刷新，页面先拿旧值。
+	segmentPendingMu       sync.Mutex
+	segmentPending         int
+	segmentPendingAt       time.Time
+	segmentPendingInflight bool
+
 	serverID  string
 	startedAt time.Time
 
@@ -134,6 +141,7 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	go h.runHealthMonitor()
 	h.prober.SetSegmentsEnabled(h.segmentExtractEnabled())
 	go h.refreshProbeCounts()
+	go h.refreshSegmentPending()
 
 	appFS, err := webui.AppFS()
 	if err != nil {

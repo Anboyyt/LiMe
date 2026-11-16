@@ -44,6 +44,31 @@ func sortNameOf(it *store.Item) string {
 	return it.SortName
 }
 
+// normalizeDateTime 把日期统一成 Jellyfin 的完整 ISO 8601 时间。
+// 库里的 PremiereDate 来自 TMDB，只有 YYYY-MM-DD；Infuse 8.x 解码 Items
+// 时按 DateTime 严格解析，date-only 会让整个响应失败（页面报「未知服务器响应」）。
+// 解析不了的值直接丢掉，避免把非法时间再发给客户端。
+func normalizeDateTime(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05Z0700",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			// 与 Jellyfin (.NET DateTime) 一致：7 位小数 + Z。
+			return t.UTC().Format("2006-01-02T15:04:05.0000000Z")
+		}
+	}
+	return ""
+}
+
 func imageTags(path string) map[string]string {
 	if path == "" {
 		return map[string]string{}
@@ -157,7 +182,7 @@ func (h *Handler) itemToDto(it *store.Item, ps *store.Playstate, fields ...itemF
 		SortName:          sortNameOf(it),
 		OriginalTitle:     it.OriginalTitle,
 		ProductionYear:    it.ProductionYear,
-		PremiereDate:      it.PremiereDate,
+		PremiereDate:      normalizeDateTime(it.PremiereDate),
 		TmdbId:            it.TmdbID,
 		ProviderIds:       providerIds(it.TmdbID),
 		RunTimeTicks:      it.RunTimeTicks,
@@ -635,6 +660,16 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("itemId")
 	it, err := h.db.GetItem(id)
 	if err != nil {
+		// 媒体库本身也是 Jellyfin 的 CollectionFolder。Infuse 打开库时会
+		// 请求 /Users/{id}/Items/{libraryId}，不能只查 items 表。
+		if lib, lerr := h.db.GetLibrary(id); lerr == nil {
+			if !h.canAccessLibrary(user, lib.ID) {
+				writeError(w, http.StatusNotFound, "item not found")
+				return
+			}
+			writeJSON(w, http.StatusOK, h.libraryViewDto(lib))
+			return
+		}
 		// 演员不是 media item；客户端点演员时可能直接请求 /Items/{personId}。
 		if looksLikePersonID(id) {
 			if p, perr := h.db.PersonImageByID(id); perr == nil {
@@ -910,6 +945,31 @@ func (h *Handler) userViews(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// userViewGroupingOptions 是 Jellyfin 新客户端（Infuse 8.x）连接时探测的
+// 库分组选项。LiMe 不用服务端分组，返回空数组即可，但必须是 200/[] 而不是 404。
+func (h *Handler) userViewGroupingOptions(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.requireUser(w, r)
+	if !ok {
+		return
+	}
+	allowed, all, err := h.allowedLibraries(user)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	views, err := h.libraryViews()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	views = filterViewsByAccess(views, allowed, all)
+	out := make([]map[string]string, 0, len(views))
+	for _, v := range views {
+		out = append(out, map[string]string{"Name": v.Name, "Id": v.Id})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // libraryViews 把媒体库映射成 Jellyfin 的 CollectionFolder。
 // Jellyfin 在没有 ParentId 时会把查询落在 UserRootFolder 上，非递归返回的
 // 就是这些视图；不能退回「全库无过滤」，否则 26 万条会一次性返回。
@@ -921,36 +981,48 @@ func (h *Handler) libraryViews() ([]*dto.BaseItemDto, error) {
 
 	items := make([]*dto.BaseItemDto, 0, len(libs))
 	for _, lib := range libs {
-		_, primaryTag, _, backdropTag := h.libraryArtwork(lib)
-		imageTags := map[string]string{}
-		if primaryTag != "" {
-			imageTags["Primary"] = primaryTag
-		}
-		backdrops := []string{}
-		if backdropTag != "" {
-			backdrops = append(backdrops, backdropTag)
-		}
-		items = append(items, &dto.BaseItemDto{
-			Name:               lib.Name,
-			ServerId:           h.serverID,
-			Id:                 lib.ID,
-			SortName:           lib.Name,
-			ImageTags:          imageTags,
-			PrimaryImageTag:    primaryTag,
-			PrimaryImageItemId: lib.ID,
-			BackdropImageTags:  backdrops,
-			ImageBlurHashes:    map[string]any{},
-			// Emby 客户端按数组解析，null 会导致部分客户端渲染中断。
-			Genres:         []string{},
-			People:         []dto.PersonDto{},
-			LocationType:   "Remote",
-			Type:           "CollectionFolder",
-			IsFolder:       true,
-			CollectionType: collectionType(lib.Kind),
-			UserData:       &dto.UserItemDataDto{Key: lib.ID, ItemId: lib.ID},
-		})
+		items = append(items, h.libraryViewDto(lib))
 	}
 	return items, nil
+}
+
+// libraryViewDto 把媒体库转成 Jellyfin 的 CollectionFolder。
+func (h *Handler) libraryViewDto(lib *store.Library) *dto.BaseItemDto {
+	_, primaryTag, _, backdropTag := h.libraryArtwork(lib)
+	imageTags := map[string]string{}
+	if primaryTag != "" {
+		imageTags["Primary"] = primaryTag
+	}
+	backdrops := []string{}
+	if backdropTag != "" {
+		backdrops = append(backdrops, backdropTag)
+	}
+	// Infuse 解析 Views 时要求 DateCreated 是有效时间；缺字段会直接
+	// 停止后续请求，表现为登录成功但一直“无法连接服务器”。
+	createdAt := lib.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	return &dto.BaseItemDto{
+		Name:               lib.Name,
+		ServerId:           h.serverID,
+		Id:                 lib.ID,
+		SortName:           lib.Name,
+		DateCreated:        createdAt.UTC().Format(time.RFC3339Nano),
+		ImageTags:          imageTags,
+		PrimaryImageTag:    primaryTag,
+		PrimaryImageItemId: lib.ID,
+		BackdropImageTags:  backdrops,
+		ImageBlurHashes:    map[string]any{},
+		// Emby 客户端按数组解析，null 会导致部分客户端渲染中断。
+		Genres:         []string{},
+		People:         []dto.PersonDto{},
+		LocationType:   "Remote",
+		Type:           "CollectionFolder",
+		IsFolder:       true,
+		CollectionType: collectionType(lib.Kind),
+		UserData:       &dto.UserItemDataDto{Key: lib.ID, ItemId: lib.ID},
+	}
 }
 
 func (h *Handler) showSeasons(w http.ResponseWriter, r *http.Request) {

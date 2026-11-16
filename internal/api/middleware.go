@@ -148,6 +148,63 @@ func withLogging(log *slog.Logger, verbose bool, next http.Handler) http.Handler
 	})
 }
 
+// queryAliases 把 Jellyfin 官方的 camelCase 查询参数补一份 PascalCase 别名。
+// LiMe 内部大量 handler 按 PascalCase 读取；Infuse 8.x 发的是 parentId、
+// includeItemTypes、fields 这类 camelCase，不补会退化成全库查询（很慢）
+// 甚至忽略分页/筛选条件。
+var queryAliases = map[string]string{
+	"parentId":               "ParentId",
+	"recursive":              "Recursive",
+	"includeItemTypes":       "IncludeItemTypes",
+	"excludeItemTypes":       "ExcludeItemTypes",
+	"limit":                  "Limit",
+	"startIndex":             "StartIndex",
+	"sortBy":                 "SortBy",
+	"sortOrder":              "SortOrder",
+	"searchTerm":             "SearchTerm",
+	"fields":                 "Fields",
+	"filters":                "Filters",
+	"isFavorite":             "IsFavorite",
+	"isPlayed":               "IsPlayed",
+	"isResumable":            "IsResumable",
+	"genres":                 "Genres",
+	"years":                  "Years",
+	"officialRatings":        "OfficialRatings",
+	"person":                 "Person",
+	"personIds":              "PersonIds",
+	"seasonId":               "SeasonId",
+	"seriesId":               "SeriesId",
+	"groupItems":             "GroupItems",
+	"mediaTypes":             "MediaTypes",
+	"enableImages":           "EnableImages",
+	"imageTypeLimit":         "ImageTypeLimit",
+	"enableImageTypes":       "EnableImageTypes",
+	"enableUserData":         "EnableUserData",
+	"enableTotalRecordCount": "EnableTotalRecordCount",
+	"mediaSourceId":          "MediaSourceId",
+	"includeExternalContent": "IncludeExternalContent",
+}
+
+func withQueryAliases(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		changed := false
+		for camel, pascal := range queryAliases {
+			if q.Get(pascal) != "" {
+				continue
+			}
+			if v := q.Get(camel); v != "" {
+				q.Set(pascal, v)
+				changed = true
+			}
+		}
+		if changed {
+			r.URL.RawQuery = q.Encode()
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // loggableQuery 只保留排障需要的查询参数，避免把 api_key / token 写进日志。
 func loggableQuery(r *http.Request) string {
 	keys := []string{

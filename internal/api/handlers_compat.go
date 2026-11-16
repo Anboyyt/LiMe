@@ -311,10 +311,29 @@ func (h *Handler) danmuRaw(w http.ResponseWriter, r *http.Request) {
 
 // displayPreferences 客户端会保存排序/视图偏好；LiMe 不做持久化。
 func (h *Handler) displayPreferences(w http.ResponseWriter, r *http.Request) {
+	// Infuse 会在 Views 之后解析这个对象；字段太少时部分版本会直接停止
+	// 后续请求。这里返回 Jellyfin DisplayPreferencesDto 的完整默认壳。
+	client := r.URL.Query().Get("client")
+	if client == "" {
+		client = "emby"
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"Id":          r.PathValue("displayPreferencesId"),
-		"SortBy":      []string{},
-		"CustomPrefs": map[string]string{},
+		"Id":       r.PathValue("displayPreferencesId"),
+		"ViewType": "",
+		// SortBy 在 Jellyfin 的 DisplayPreferencesDto 里是字符串，
+		// 不是数组；Infuse 会按 String 解码，类型不匹配会直接中断连接。
+		"SortBy":             "SortName",
+		"IndexBy":            "",
+		"RememberIndexing":   false,
+		"PrimaryImageHeight": 250,
+		"PrimaryImageWidth":  250,
+		"CustomPrefs":        map[string]string{},
+		"ScrollDirection":    "Horizontal",
+		"ShowBackdrop":       true,
+		"RememberSorting":    false,
+		"SortOrder":          "Ascending",
+		"ShowSidebar":        false,
+		"Client":             client,
 	})
 }
 
@@ -328,6 +347,16 @@ func (h *Handler) systemPing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) plugins(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, []any{})
+}
+
+// packages / repositories 是 Infuse 在 Infuse-Library 模式下探测
+// InfuseSync 插件用的。LiMe 不提供插件商店，返回空列表而不是 404。
+func (h *Handler) packages(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, []any{})
+}
+
+func (h *Handler) repositories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, []any{})
 }
 

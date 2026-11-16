@@ -80,6 +80,8 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /System/Ext/ServerDomains", h.serverDomains)
 	mux.HandleFunc("GET /System/Ping", h.systemPing)
 	mux.HandleFunc("GET /Plugins", h.plugins)
+	mux.HandleFunc("GET /Packages", h.packages)
+	mux.HandleFunc("GET /Repositories", h.repositories)
 	mux.HandleFunc("GET /Devices", h.devices)
 	mux.HandleFunc("GET /DisplayPreferences/{displayPreferencesId}", h.displayPreferences)
 	mux.HandleFunc("POST /DisplayPreferences/{displayPreferencesId}", h.saveDisplayPreferences)
@@ -120,12 +122,27 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("DELETE /Users/{userId}/PlayedItems/{itemId}", h.setPlayed)
 	mux.HandleFunc("POST /Users/{userId}/FavoriteItems/{itemId}", h.setFavorite)
 	mux.HandleFunc("DELETE /Users/{userId}/FavoriteItems/{itemId}", h.setFavorite)
+	mux.HandleFunc("POST /UserPlayedItems/{itemId}", h.setPlayed)
+	mux.HandleFunc("DELETE /UserPlayedItems/{itemId}", h.setPlayed)
+	mux.HandleFunc("POST /UserFavoriteItems/{itemId}", h.setFavorite)
+	mux.HandleFunc("DELETE /UserFavoriteItems/{itemId}", h.setFavorite)
+	mux.HandleFunc("GET /UserItems/{itemId}/UserData", h.getItemUserData)
+	mux.HandleFunc("POST /UserItems/{itemId}/UserData", h.updateItemUserData)
 
 	// 媒体库视图
 	mux.HandleFunc("GET /Users/{userId}/Views", h.userViews)
+	mux.HandleFunc("GET /Users/{userId}/GroupingOptions", h.userViewGroupingOptions)
+	// Infuse 8.x / Jellyfin 新客户端使用不带 userId 路径的新接口。
+	mux.HandleFunc("GET /UserViews", h.userViews)
+	mux.HandleFunc("GET /UserViews/GroupingOptions", h.userViewGroupingOptions)
 	mux.HandleFunc("GET /Users/{userId}/Items", h.queryItems)
+	// Infuse 会请求 /Users/{id}/Items/（末尾斜杠）作为根列表。
+	mux.HandleFunc("GET /Users/{userId}/Items/", h.queryItems)
 	mux.HandleFunc("GET /Users/{userId}/Items/Latest", h.latestItems)
 	mux.HandleFunc("GET /Users/{userId}/Items/Resume", h.resumeItems)
+	mux.HandleFunc("GET /Items/Latest", h.latestItems)
+	mux.HandleFunc("GET /Items/Resume", h.resumeItems)
+	mux.HandleFunc("GET /UserItems/Resume", h.resumeItems)
 	mux.HandleFunc("GET /Users/{userId}/Items/{itemId}", h.getItem)
 	mux.HandleFunc("POST /Library/Refresh", h.refreshLibrary)
 	mux.HandleFunc("POST /Library/Media/Updated", h.mediaUpdated)
@@ -195,5 +212,6 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /Sessions/Playing/Ping", h.sessionPing)
 	mux.HandleFunc("GET /Sessions", h.listSessions)
 
-	return withGzip(withCORS(withLogging(h.log, h.cfg.HTTPLog, stripEmbyPrefix(mux))))
+	return withGzip(withCORS(withLogging(h.log, h.cfg.HTTPLog,
+		withQueryAliases(stripEmbyPrefix(mux)))))
 }

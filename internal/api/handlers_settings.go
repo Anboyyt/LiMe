@@ -12,6 +12,36 @@ import (
 	"lime/internal/probe"
 )
 
+const segmentPendingCacheTTL = 5 * time.Minute
+
+// segmentPendingCached 返回缓存的待分析数量；过期时后台刷新，不阻塞设置页。
+func (h *Handler) segmentPendingCached() int {
+	h.segmentPendingMu.Lock()
+	v := h.segmentPending
+	stale := h.segmentPendingAt.IsZero() || time.Since(h.segmentPendingAt) >= segmentPendingCacheTTL
+	start := stale && !h.segmentPendingInflight
+	if start {
+		h.segmentPendingInflight = true
+	}
+	h.segmentPendingMu.Unlock()
+
+	if start {
+		go h.refreshSegmentPending()
+	}
+	return v
+}
+
+func (h *Handler) refreshSegmentPending() {
+	n, err := h.db.SegmentPendingCount()
+	h.segmentPendingMu.Lock()
+	h.segmentPendingInflight = false
+	if err == nil {
+		h.segmentPending = n
+		h.segmentPendingAt = time.Now()
+	}
+	h.segmentPendingMu.Unlock()
+}
+
 // webSettings 读取/更新运行时配置（目前是 TMDB Key 和代理）。
 func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {
@@ -54,10 +84,7 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		pendingTotal, pendingFav, pendingWatching := h.probeCountsSnapshot()
-		segmentPending := 0
-		if n, err := h.db.SegmentPendingCount(); err == nil {
-			segmentPending = n
-		}
+		segmentPending := h.segmentPendingCached()
 		tg := h.tgConfig()
 		ingestTG := h.ingestTGConfig()
 		ingestCfg := h.ingestNotifySettings()

@@ -617,10 +617,11 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.42**。
+当前版本 **v1.0.43**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.43 | Infuse 8.x 兼容：补齐 `/UserViews`、`/UserViews/GroupingOptions`、`/Users/{id}/GroupingOptions`、`/UserItems/Resume`、`/Items/Latest`、`/UserItems/{id}/UserData`、`/UserFavoriteItems` 等接口；登录支持 query/form；Views 补 `DateCreated`；`DisplayPreferences` 字段类型修正；支持 camelCase 查询参数、`/Users/{id}/Items/` 尾斜杠、库 ID 当 item 查询；新增 `/Packages`；通知页待分析计数改后台缓存 |
 | v1.0.42 | 新增 Telegram 入库通知：刮削完成后推送、同剧同季多集合并、电影逐部通知、16:9 海报降级、独立/共用 Bot、批量抑制与失败重试 |
 | v1.0.41 | Web UI：继续观看中的单集统一用剧集海报；新增 `SeriesPrimaryImageTag`；手机端重做顶栏/底部导航、详情页、筛选、播放器与安全区适配 |
 | v1.0.40 | 类型筛选/相似推荐改走 `item_genres`；筛选缓存过期后先返回旧值再后台刷新；新增磁盘/DB 延迟指标与 TG 健康告警；Random 排序改用随机窗口 |
@@ -695,8 +696,14 @@ GET  /Sessions
 
 # 续播 / 观看状态
 GET  /Users/{userId}/Items/Resume   ← 真实续播列表
+GET  /UserItems/Resume              ← Infuse 8.x 新接口
+GET  /Items/Latest                  ← Infuse 8.x 新接口
+GET  /UserViews                     ← Infuse 8.x 新接口
+GET  /UserItems/{itemId}/UserData
 POST|DELETE /Users/{userId}/PlayedItems/{itemId}
 POST|DELETE /Users/{userId}/FavoriteItems/{itemId}
+POST|DELETE /UserPlayedItems/{itemId}
+POST|DELETE /UserFavoriteItems/{itemId}
 
 # 用户与凭据
 POST   /Users/New                        ← 新建用户（管理员）
