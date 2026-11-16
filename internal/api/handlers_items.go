@@ -279,15 +279,25 @@ const maxListStreamSources = 500
 //
 // 客户端（SenPlayer 等）打开集详情时直接拿 Episodes 列表里这条渲染「媒体信息」，
 // 只给空 MediaStreams 会让剧集页永远没有视频/音频参数。
-func (h *Handler) listMediaSources(it *store.Item, srcs []*store.MediaSource, streamsBy map[string][]*store.MediaStream) []dto.MediaSourceDto {
+//
+// Path/DirectStreamUrl 必须是客户端能直接请求的 URL。VidHub 会优先读
+// DirectStreamUrl（拿不到就自己拼地址，起播前多探测几轮），这里以前回的是
+// 服务器本地 .strm 路径，播放器拿到没法用。
+func (h *Handler) listMediaSources(r *http.Request, it *store.Item, srcs []*store.MediaSource, streamsBy map[string][]*store.MediaStream) []dto.MediaSourceDto {
 	out := make([]dto.MediaSourceDto, 0, len(srcs))
 	for _, s := range srcs {
 		bitrate := sourceBitrate(s, it.RunTimeTicks)
 		ms, defaultAudio := h.mediaStreamDtos(nil, "", s, streamsBy[s.ID], bitrate, false)
+		streamURL := h.mediaStreamURL(r, it.ID, s.ID)
+		directURL := streamURL
+		if u := directURLFor(r.Context(), s.ID); u != "" {
+			directURL = u
+		}
 		out = append(out, dto.MediaSourceDto{
 			Protocol:                "Http",
 			Id:                      s.ID,
-			Path:                    s.StrmPath,
+			Path:                    streamURL,
+			DirectStreamUrl:         directURL,
 			Type:                    "Default",
 			Name:                    sourceDisplayName(s, streamsBy[s.ID], bitrate),
 			Container:               s.Container,
@@ -381,7 +391,7 @@ func parsePeople(raw string) []dto.PersonDto {
 }
 
 // itemsToDto 批量转换，一次查完本页所有条目的播放状态，避免 N+1。
-func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...itemFields) []*dto.BaseItemDto {
+func (h *Handler) itemsToDto(r *http.Request, user *store.User, items []*store.Item, fields ...itemFields) []*dto.BaseItemDto {
 	out := make([]*dto.BaseItemDto, 0, len(items))
 	if len(items) == 0 {
 		return out
@@ -493,12 +503,12 @@ func (h *Handler) itemsToDto(user *store.User, items []*store.Item, fields ...it
 			}
 			if srcs := sourcesByItem[it.ID]; len(srcs) > 0 {
 				d.MediaSourceCount = len(srcs)
-				d.MediaSources = h.listMediaSources(it, srcs, streamsBy)
+				d.MediaSources = h.listMediaSources(r, it, srcs, streamsBy)
 			}
 		case store.TypeMovie:
 			if srcs := sourcesByItem[it.ID]; len(srcs) > 0 {
 				d.MediaSourceCount = len(srcs)
-				d.MediaSources = h.listMediaSources(it, srcs, streamsBy)
+				d.MediaSources = h.listMediaSources(r, it, srcs, streamsBy)
 			}
 		}
 		out = append(out, d)
@@ -616,7 +626,7 @@ func (h *Handler) queryItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := h.itemsToDto(user, items, parseItemFields(r))
+	out := h.itemsToDto(r, user, items, parseItemFields(r))
 
 	writeJSON(w, http.StatusOK, dto.QueryResult{
 		Items:            out,
@@ -685,7 +695,7 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	d := h.itemsToDto(user, []*store.Item{it}, parseItemFields(r))[0]
+	d := h.itemsToDto(r, user, []*store.Item{it}, parseItemFields(r))[0]
 	// 单集详情总是带 Emby 章节标记：SenPlayer 不传 Fields=Chapters 也要能拿到。
 	d.Chapters = h.chaptersForItem(it)
 
@@ -721,11 +731,28 @@ func sourceBitrate(s *store.MediaSource, runtimeTicks int64) int64 {
 	return int64(float64(s.Size) * 8 / seconds)
 }
 
+// isPictureStream 判断 Video 轨道其实是内嵌封面。
+// ffprobe 对 attached picture 常报 avg_frame_rate=90000/1，不能只看帧率为 0。
+func isPictureStream(st *store.MediaStream) bool {
+	if st.Type != "Video" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(st.Codec)) {
+	case "mjpeg", "png", "bmp", "gif", "webp":
+	default:
+		return false
+	}
+	if st.FrameRate <= 0 || st.FrameRate >= 1000 {
+		return true
+	}
+	return strings.HasPrefix(strings.ToLower(st.PixelFormat), "yuvj")
+}
+
 // sourceDisplayName 生成多版本片源的展示名：DV/HDR/SDR · 分辨率 · 码率。
 func sourceDisplayName(s *store.MediaSource, streams []*store.MediaStream, bitrate int64) string {
 	var video *store.MediaStream
 	for _, st := range streams {
-		if st.Type == "Video" {
+		if st.Type == "Video" && !isPictureStream(st) {
 			video = st
 			break
 		}
@@ -814,12 +841,13 @@ func (h *Handler) mediaSourceDto(r *http.Request, itemID string, s *store.MediaS
 	ms, defaultAudio := h.mediaStreamDtos(r, itemID, s, streams, bitrate, true)
 
 	name := sourceDisplayName(s, streams, bitrate)
+	streamURL := h.mediaStreamURL(r, itemID, s.ID)
 
 	return dto.MediaSourceDto{
 		Protocol:                   "Http",
 		Id:                         s.ID,
-		Path:                       h.absoluteStreamURL(r, itemID, s.ID),
-		DirectStreamUrl:            h.absoluteStreamURL(r, itemID, s.ID),
+		Path:                       streamURL,
+		DirectStreamUrl:            streamURL,
 		Type:                       "Default",
 		Name:                       name,
 		Container:                  s.Container,
@@ -844,8 +872,14 @@ func (h *Handler) mediaStreamDtos(r *http.Request, itemID string, s *store.Media
 	var defaultAudio *int
 
 	for _, st := range streams {
+		typ := st.Type
+		// 内嵌封面不是可播放轨道。部分客户端（Yamby）会把它算进视频轨道，
+		// 从而报「有视频轨道但都不可播放」，这里直接不返回。
+		if typ == "EmbeddedImage" || (typ == "Video" && isPictureStream(st)) {
+			continue
+		}
 		d := dto.MediaStreamDto{
-			Type:                   st.Type,
+			Type:                   typ,
 			Index:                  st.Index,
 			Codec:                  st.Codec,
 			Width:                  st.Width,
@@ -864,17 +898,17 @@ func (h *Handler) mediaStreamDtos(r *http.Request, itemID string, s *store.Media
 			PixelFormat:            st.PixelFormat,
 			SampleRate:             st.SampleRate,
 			ChannelLayout:          st.ChannelLayout,
-			IsDefault:              st.IsDefault || st.Index == 0,
+			IsDefault:              typ != "EmbeddedImage" && (st.IsDefault || st.Index == 0),
 			IsForced:               st.IsForced,
 			IsExternal:             false,
-			IsTextSubtitleStream:   st.Type == "Subtitle",
-			SupportsExternalStream: st.Type == "Subtitle",
+			IsTextSubtitleStream:   typ == "Subtitle",
+			SupportsExternalStream: typ == "Subtitle",
 			DeliveryMethod:         "File",
 			DisplayTitle:           streamDisplayTitle(st),
 			Language:               st.Language,
 			Title:                  st.Title,
 		}
-		if st.Type == "Video" {
+		if typ == "Video" {
 			// 视频轨道常常没有单独码率，用文件大小/时长估算兜底。
 			if d.BitRate <= 0 {
 				d.BitRate = bitrate
@@ -1065,8 +1099,16 @@ func (h *Handler) queryByParent(w http.ResponseWriter, r *http.Request, parentID
 		return
 	}
 
+	// VidHub 起播时会直接拿 Episodes 列表里的 DirectStreamUrl，不再调
+	// PlaybackInfo；这里预解析成 CDN 直链，省掉播放时每次探测回源 LiMe。
+	if recursive && len(types) == 1 && types[0] == store.TypeEpisode {
+		if direct := h.resolveDirectURLs(r, items); len(direct) > 0 {
+			r = r.WithContext(withDirectURLs(r.Context(), direct))
+		}
+	}
+
 	writeJSON(w, http.StatusOK, dto.QueryResult{
-		Items:            h.itemsToDto(user, items, parseItemFields(r)),
+		Items:            h.itemsToDto(r, user, items, parseItemFields(r)),
 		TotalRecordCount: total,
 		StartIndex:       q.StartIndex,
 	})
@@ -1114,7 +1156,7 @@ func (h *Handler) latestItems(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusInternalServerError, "internal error")
 					return
 				}
-				writeJSON(w, http.StatusOK, h.itemsToDto(user, filterByRating(user, items), parseItemFields(r)))
+				writeJSON(w, http.StatusOK, h.itemsToDto(r, user, filterByRating(user, items), parseItemFields(r)))
 				return
 			}
 		}
@@ -1146,13 +1188,13 @@ func (h *Handler) latestItems(w http.ResponseWriter, r *http.Request) {
 
 	// Jellyfin 的 /Items/Latest 返回裸数组，不是 QueryResult。
 	// 爆米花等客户端按数组解析，返回对象会导致首页各库横排空白。
-	writeJSON(w, http.StatusOK, h.latestToDto(user, items, parseItemFields(r)))
+	writeJSON(w, http.StatusOK, h.latestToDto(r, user, items, parseItemFields(r)))
 }
 
 // latestToDto 在 itemsToDto 基础上补单集的 SeriesName / SeasonName。
 // 首页单集卡片要靠这两个字段显示归属剧名，缺失时多数客户端不渲染。
-func (h *Handler) latestToDto(user *store.User, items []*store.Item, fields ...itemFields) []*dto.BaseItemDto {
-	out := h.itemsToDto(user, items, fields...)
+func (h *Handler) latestToDto(r *http.Request, user *store.User, items []*store.Item, fields ...itemFields) []*dto.BaseItemDto {
+	out := h.itemsToDto(r, user, items, fields...)
 	if len(items) == 0 {
 		return out
 	}
@@ -1231,8 +1273,13 @@ func (h *Handler) resumeItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 从「继续观看」直接点播放时，客户端也会用列表里的 DirectStreamUrl。
+	if direct := h.resolveDirectURLs(r, items); len(direct) > 0 {
+		r = r.WithContext(withDirectURLs(r.Context(), direct))
+	}
+
 	writeJSON(w, http.StatusOK, dto.QueryResult{
-		Items:            h.itemsToDto(user, items, parseItemFields(r)),
+		Items:            h.itemsToDto(r, user, items, parseItemFields(r)),
 		TotalRecordCount: total,
 		StartIndex:       start,
 	})
@@ -1266,8 +1313,12 @@ func (h *Handler) nextUp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if direct := h.resolveDirectURLs(r, items); len(direct) > 0 {
+		r = r.WithContext(withDirectURLs(r.Context(), direct))
+	}
+
 	writeJSON(w, http.StatusOK, dto.QueryResult{
-		Items:            h.itemsToDto(user, items, parseItemFields(r)),
+		Items:            h.itemsToDto(r, user, items, parseItemFields(r)),
 		TotalRecordCount: total,
 		StartIndex:       start,
 	})

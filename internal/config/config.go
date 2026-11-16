@@ -47,6 +47,22 @@ type Config struct {
 	// PanSave 直链域名的部署。
 	ResolveRedirect bool
 
+	// PlaybackInfo 里直接把解析后的 CDN 直链写进 DirectStreamUrl。
+	// VidHub 这类优先读 DirectStreamUrl 的播放器会跳过 LiMe 的 302 一跳，
+	// 起播少的是一次公网往返。115 直链和请求 UA 绑定、有效期约两周，
+	// 因此只对当前播放器 UA 解析，失败时保留 LiMe 地址。
+	PlaybackDirectURL bool
+
+	// Yamby 对 302 跳转兼容性差时，可把它的视频流改成服务端中转。
+	// 媒体轨道（尤其是内嵌封面）修正后 302 已能正常播放，默认关闭；
+	// 打开后视频流量会经过 NAS，外网上行不足时不要开。
+	ProxyYamby bool
+
+	// 代理播放时预取文件头/尾到本地，减少从 115 CDN 反复读索引的等待。
+	// StreamCacheMB 是每个片源的头部缓存大小，0 表示关闭；尾部固定 2MB。
+	StreamCacheMB    int
+	StreamCacheMaxMB int
+
 	Libraries []LibrarySpec
 	// 面板里新建库时允许的容器内根路径，默认 /strm。
 	LibraryRoots []string
@@ -134,6 +150,10 @@ func Load() Config {
 		MaxItems:           getint("LIME_MAX_ITEMS", 20000),
 		InternalURL:        strings.TrimRight(os.Getenv("LIME_INTERNAL_URL"), "/"),
 		ResolveRedirect:    getbool("LIME_RESOLVE_REDIRECT", false),
+		PlaybackDirectURL:  getbool("LIME_PLAYBACK_DIRECT_URL", false),
+		ProxyYamby:         getbool("LIME_YAMBY_PROXY", false),
+		StreamCacheMB:      getint("LIME_STREAM_CACHE_MB", 0),
+		StreamCacheMaxMB:   getint("LIME_STREAM_CACHE_MAX_MB", 4096),
 		Libraries:          parseLibraries(os.Getenv("LIME_LIBRARIES")),
 		LibraryRoots:       parseRoots(os.Getenv("LIME_LIBRARY_ROOTS")),
 		ScanOnStart:        getbool("LIME_SCAN_ON_START", true),

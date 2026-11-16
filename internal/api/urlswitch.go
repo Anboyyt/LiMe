@@ -57,6 +57,29 @@ func (h *Handler) streamPath(itemID, sourceID string) string {
 	return "/Videos/" + itemID + "/stream?static=true&MediaSourceId=" + url.QueryEscape(sourceID)
 }
 
+// mediaStreamURL 生成 MediaSources 里的播放地址。
+// 播放器不会带 Authorization 头，开启流鉴权时必须把 token 放进 api_key，
+// 否则拿 DirectStreamUrl 直连会 401。
+func (h *Handler) mediaStreamURL(r *http.Request, itemID, sourceID string) string {
+	u := h.streamPath(itemID, sourceID)
+	// Yamby 会把服务器地址和 DirectStreamUrl 直接拼接，给绝对地址会变成
+	// /embyhttps://cdn... 这种非法路径。对它只返回相对路径。
+	if !usesRelativeStreamURL(r) {
+		u = h.streamBase(r) + u
+	}
+	if h.cfg.StreamRequireAuth {
+		if tok := parseAuth(r).Token; tok != "" {
+			u += "&api_key=" + url.QueryEscape(tok)
+		}
+	}
+	return u
+}
+
+// usesRelativeStreamURL 判断客户端是否要求 MediaSources 里的播放地址是相对路径。
+func usesRelativeStreamURL(r *http.Request) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.UserAgent())), "yamby/")
+}
+
 // streamLocation 返回最终的 302 目标地址：STRM 里的原始 URL，
 // 按配置把 PanSave 的 host 改写成客户端可达的地址。
 func (h *Handler) streamLocation(r *http.Request, raw string) string {

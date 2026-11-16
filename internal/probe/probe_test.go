@@ -383,3 +383,35 @@ func TestPickFingerprintSources(t *testing.T) {
 		t.Fatalf("focus episodes missing: %v", ids(got))
 	}
 }
+
+// MKV 封面会以 attached_pic 的 mjpeg 轨道出现，必须标成 EmbeddedImage，
+// 否则客户端会认为「有视频轨道但都不可播放」。
+func TestConvertAttachedPicture(t *testing.T) {
+	var res ffprobeResult
+	raw := `{"streams":[
+      {"index":5,"codec_name":"mjpeg","codec_type":"video","width":640,"height":360,
+       "avg_frame_rate":"0/0","disposition":{"attached_pic":1}},
+      {"index":6,"codec_name":"mjpeg","codec_type":"video","width":640,"height":360,
+       "avg_frame_rate":"24/1","disposition":{"attached_pic":0}},
+      {"index":7,"codec_name":"mjpeg","codec_type":"video","width":640,"height":360,
+       "avg_frame_rate":"90000/1","disposition":{"attached_pic":0}}
+    ]}`
+	if err := json.Unmarshal([]byte(raw), &res); err != nil {
+		t.Fatal(err)
+	}
+	streams := convert(&res)
+	if len(streams) != 3 {
+		t.Fatalf("streams = %d", len(streams))
+	}
+	if streams[0].Type != "EmbeddedImage" {
+		t.Fatalf("attached pic type = %q", streams[0].Type)
+	}
+	// 有正常帧率的是真正的 MJPEG 视频，不能误判。
+	if streams[1].Type != "Video" {
+		t.Fatalf("mjpeg video type = %q", streams[1].Type)
+	}
+	// ffprobe 对封面常报 90000/1，也应按图片处理。
+	if streams[2].Type != "EmbeddedImage" {
+		t.Fatalf("90000fps cover type = %q", streams[2].Type)
+	}
+}

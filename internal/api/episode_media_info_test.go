@@ -52,8 +52,10 @@ func TestShowEpisodesCarriesMediaStreams(t *testing.T) {
 		Items []struct {
 			Id           string `json:"Id"`
 			MediaSources []struct {
-				Name         string `json:"Name"`
-				MediaStreams []struct {
+				Name            string `json:"Name"`
+				Path            string `json:"Path"`
+				DirectStreamUrl string `json:"DirectStreamUrl"`
+				MediaStreams    []struct {
 					Type      string   `json:"Type"`
 					Codec     string   `json:"Codec"`
 					Height    int      `json:"Height"`
@@ -90,5 +92,64 @@ func TestShowEpisodesCarriesMediaStreams(t *testing.T) {
 	// 有轨道时 Name 用「4K · 2160p …」这种描述，而不是 STRM 文件名。
 	if srcs[0].Name == "" || srcs[0].Name == "2160p" {
 		t.Fatalf("media source name = %q", srcs[0].Name)
+	}
+	// 列表里的 Path/DirectStreamUrl 必须是播放器能直接请求的 URL。
+	// VidHub 优先读 DirectStreamUrl，缺失时会自己拼地址并多探测几轮。
+	wantURL := "http://example.com/Videos/ep1/stream?static=true&MediaSourceId=src-ep1"
+	if srcs[0].Path != wantURL {
+		t.Fatalf("Path = %q, want %q", srcs[0].Path, wantURL)
+	}
+	if srcs[0].DirectStreamUrl != wantURL {
+		t.Fatalf("DirectStreamUrl = %q, want %q", srcs[0].DirectStreamUrl, wantURL)
+	}
+}
+
+// Yamby 会把服务器地址和 DirectStreamUrl 直接拼接；绝对地址会变成
+// /embyhttps://cdn... 导致 404，所以这两个接口对它必须返回相对路径。
+func TestYambyGetsRelativeStreamURL(t *testing.T) {
+	f := newUserFixture(t)
+
+	lib, err := f.env.db.UpsertLibrary("电影", "/strm/电影", "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "m1", LibraryID: lib.ID, ParentID: lib.ID,
+		Type: store.TypeMovie, Name: "电影", SortName: "电影",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
+		ID: "src1", ItemID: "m1", StrmPath: "/strm/电影/m1.strm", URL: "http://example",
+		Container: "mkv", FileName: "m1.mkv",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	const yambyUA = "Yamby/2.1.0.11(Android 16)"
+	want := "/Videos/m1/stream?static=true&MediaSourceId=src1"
+
+	for _, path := range []string{
+		"/Items/m1/PlaybackInfo",
+		"/Items/m1?Fields=MediaSources",
+	} {
+		rr := f.doUA(http.MethodGet, path, nil, yambyUA, f.adminTok)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s status = %d: %s", path, rr.Code, rr.Body.String())
+		}
+		var res struct {
+			MediaSources []struct {
+				DirectStreamUrl string `json:"DirectStreamUrl"`
+			} `json:"MediaSources"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		if len(res.MediaSources) != 1 {
+			t.Fatalf("%s media sources = %d", path, len(res.MediaSources))
+		}
+		if got := res.MediaSources[0].DirectStreamUrl; got != want {
+			t.Fatalf("%s DirectStreamUrl = %q, want %q", path, got, want)
+		}
 	}
 }

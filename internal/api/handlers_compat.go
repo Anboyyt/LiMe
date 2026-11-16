@@ -143,7 +143,7 @@ func (h *Handler) similarItems(w http.ResponseWriter, r *http.Request) {
 	}
 	items = filterByRating(user, items)
 	writeJSON(w, http.StatusOK, dto.QueryResult{
-		Items:            h.itemsToDto(user, items, parseItemFields(r)),
+		Items:            h.itemsToDto(r, user, items, parseItemFields(r)),
 		TotalRecordCount: len(items),
 		StartIndex:       0,
 	})

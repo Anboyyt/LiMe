@@ -28,7 +28,7 @@ func Open(path string) (*DB, error) {
 	dsn := fmt.Sprintf(
 		"file:%s?_pragma=journal_mode(WAL)&_pragma=busy_timeout(15000)&_pragma=foreign_keys(1)"+
 			"&_pragma=synchronous(NORMAL)&_pragma=cache_size(-65536)&_pragma=temp_store(memory)"+
-			"&_pragma=journal_size_limit(67108864)&_pragma=wal_autocheckpoint(2000)",
+			"&_pragma=mmap_size(268435456)&_pragma=journal_size_limit(67108864)&_pragma=wal_autocheckpoint(2000)",
 		p,
 	)
 
@@ -38,7 +38,8 @@ func Open(path string) (*DB, error) {
 	}
 	// WAL 模式下读写不互斥：多留几个连接，扫描写入时首页查询仍能读，
 	// 不会出现扫描期间所有 API 排队几十秒的情况。写事务仍由 SQLite 串行化。
-	sqlDB.SetMaxOpenConns(4)
+	// 客户端首页会一次并发十几个库的查询，4 个连接会排队；8 个足够。
+	sqlDB.SetMaxOpenConns(8)
 	sqlDB.SetConnMaxLifetime(0)
 
 	if err := sqlDB.Ping(); err != nil {

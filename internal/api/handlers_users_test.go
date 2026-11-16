@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"lime/internal/config"
 	"lime/internal/store"
 )
 
@@ -19,8 +20,12 @@ type userFixture struct {
 }
 
 func newUserFixture(t *testing.T) *userFixture {
+	return newUserFixtureWithConfig(t, nil)
+}
+
+func newUserFixtureWithConfig(t *testing.T, mutate func(*config.Config)) *userFixture {
 	t.Helper()
-	env := newTestEnv(t)
+	env := newTestEnvWithConfig(t, mutate)
 
 	adminHash, _ := store.HashPassword("admin-pw")
 	admin, err := env.db.CreateUser("admin", adminHash, true)
@@ -46,12 +51,19 @@ func newUserFixture(t *testing.T) *userFixture {
 }
 
 func (f *userFixture) do(method, path string, body any, token string) *httptest.ResponseRecorder {
+	return f.doUA(method, path, body, "", token)
+}
+
+func (f *userFixture) doUA(method, path string, body any, ua, token string) *httptest.ResponseRecorder {
 	var req *http.Request
 	if body != nil {
 		raw, _ := json.Marshal(body)
 		req = httptest.NewRequest(method, path, bytes.NewReader(raw))
 	} else {
 		req = httptest.NewRequest(method, path, nil)
+	}
+	if ua != "" {
+		req.Header.Set("User-Agent", ua)
 	}
 	if token != "" {
 		req.Header.Set("X-Emby-Token", token)

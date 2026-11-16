@@ -63,6 +63,18 @@ services:
       # LiMe 在 302 前先跟一跳 PanSave → 云盘 CDN，把最终地址给客户端。
       LIME_RESOLVE_REDIRECT: "true"
 
+      # 可选：PlaybackInfo 直接把解析后的 CDN 直链写进 DirectStreamUrl。
+      # VidHub 这类对 302+Range 处理不稳的播放器会因此少一次跳转。
+      # 115 直链和 UA 绑定、有效期约两周；解析失败自动回退 LiMe 地址。
+      LIME_PLAYBACK_DIRECT_URL: "${LIME_PLAYBACK_DIRECT_URL:-false}"
+
+      # Yamby 跟 302 不稳时才需要打开：服务端中转它的视频流（会走 NAS 上行）。
+      LIME_YAMBY_PROXY: "${LIME_YAMBY_PROXY:-false}"
+      # 代理播放时预取每个片源的头部到本地（MB，0=关闭），尾部固定 2MB。
+      # 先只在 Yamby 的 PlaybackInfo 上触发，用于减少起播前读 MKV 索引的等待。
+      LIME_STREAM_CACHE_MB: "${LIME_STREAM_CACHE_MB:-0}"
+      LIME_STREAM_CACHE_MAX_MB: "${LIME_STREAM_CACHE_MAX_MB:-4096}"
+
       # 临时排查第三方集成：记录 API 请求路径（不记录图片/静态资源）
       LIME_HTTP_LOG: "true"
 

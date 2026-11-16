@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"lime/internal/config"
@@ -73,6 +74,29 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 		out = append(out, h.playbackSourceDto(r, itemID, s, it.RunTimeTicks))
 	}
 
+	preferred := sources[0]
+	if wantSource != "" {
+		if s := pickMediaSource(sources, wantSource); s != nil {
+			preferred = s
+		}
+	}
+
+	// 可选：把第一个片源解析成 CDN 直链，客户端（VidHub）拿 DirectStreamUrl
+	// 就能直接连云盘，少一次经 Cloudflare 回到 LiMe 的 302。多版本时只解析
+	// 客户端实际要播的那个，避免串行等待多次 PanSave 探测。
+	if h.cfg.PlaybackDirectURL && h.cfg.ResolveRedirect && len(out) > 0 && !usesRelativeStreamURL(r) {
+		if final, err := cachedResolveRedirect(r.Context(), preferred.URL, r.UserAgent()); err != nil {
+			h.log.Warn("resolve playback direct url", "item", itemID, "err", err)
+		} else if final != "" {
+			out[0].DirectStreamUrl = safeLocation(final)
+		}
+	}
+
+	// 代理播放器（Yamby）起播前会反复读文件头/尾，这里提前预取到本地。
+	if h.cfg.ProxyYamby && usesRelativeStreamURL(r) && h.streamCacheHeadBytes() > 0 {
+		h.warmStreamCache(r, preferred, h.streamLocation(r, preferred.URL))
+	}
+
 	writeJSON(w, http.StatusOK, dto.PlaybackInfoResponse{
 		MediaSources:  out,
 		PlaySessionId: store.MustRandomHex(16),
@@ -82,7 +106,7 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) playbackSourceDto(r *http.Request, itemID string, s *store.MediaSource, runtimeTicks int64) dto.MediaSourceDto {
 	d := h.mediaSourceDto(r, itemID, s, runtimeTicks)
 	// PlaybackInfo 里 Path 指向本服务的 302 端点，客户端据此播放。
-	d.Path = h.streamBase(r) + h.streamPath(itemID, s.ID)
+	d.Path = h.mediaStreamURL(r, itemID, s.ID)
 	return d
 }
 
@@ -149,10 +173,15 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	location := h.streamLocation(r, src.URL)
+	// 开启 LIME_YAMBY_PROXY 时，由 LiMe 中转 Yamby 的视频流。
+	if h.cfg.ProxyYamby && usesRelativeStreamURL(r) {
+		h.proxyStream(w, r, src, location)
+		return
+	}
 	if h.cfg.ResolveRedirect {
 		// 115 的直链签名和请求 UA 有关，必须透传客户端 UA，
 		// 否则 PanSave 按 LiMe 的 UA 生成链接，播放器拿到会 403 invalid signature。
-		if final, err := resolveRedirect(r.Context(), location, r.UserAgent()); err != nil {
+		if final, err := cachedResolveRedirect(r.Context(), location, r.UserAgent()); err != nil {
 			h.log.Warn("resolve redirect failed", "item", itemID, "err", err)
 		} else if final != "" {
 			location = safeLocation(final)
@@ -162,6 +191,7 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 		"item", itemID,
 		"source", src.ID,
 		"cloud", src.Cloud,
+		"range", r.Header.Get("Range"),
 		"remote", r.RemoteAddr,
 	)
 
@@ -178,6 +208,49 @@ var redirectResolver = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
+}
+
+// 115 直链和请求 UA 绑定，链接有效期约两周（t 参数）。按
+// (原始地址, UA) 缓存十分钟：同一集连续起播/切集不用重复问 PanSave，
+// 过期或解析失败都会回退到实时解析，不影响正确性。
+const resolvedLinkTTL = 10 * time.Minute
+
+type resolvedLinkEntry struct {
+	url     string
+	expires time.Time
+}
+
+var resolvedLinks = struct {
+	sync.Mutex
+	m map[string]resolvedLinkEntry
+}{m: make(map[string]resolvedLinkEntry)}
+
+func cachedResolveRedirect(ctx context.Context, raw, userAgent string) (string, error) {
+	key := raw + "\x00" + userAgent
+	now := time.Now()
+
+	resolvedLinks.Lock()
+	if e, ok := resolvedLinks.m[key]; ok && now.Before(e.expires) {
+		resolvedLinks.Unlock()
+		return e.url, nil
+	}
+	// 顺带清理过期项，避免 map 随片源无限增长。
+	for k, e := range resolvedLinks.m {
+		if now.After(e.expires) {
+			delete(resolvedLinks.m, k)
+		}
+	}
+	resolvedLinks.Unlock()
+
+	final, err := resolveRedirect(ctx, raw, userAgent)
+	if err != nil || final == "" {
+		return "", err
+	}
+
+	resolvedLinks.Lock()
+	resolvedLinks.m[key] = resolvedLinkEntry{url: final, expires: now.Add(resolvedLinkTTL)}
+	resolvedLinks.Unlock()
+	return final, nil
 }
 
 func resolveRedirect(ctx context.Context, raw, userAgent string) (string, error) {

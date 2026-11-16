@@ -807,18 +807,27 @@ type ItemQuery struct {
 func (d *DB) QueryItems(q ItemQuery) ([]*Item, int, error) {
 	where, args := d.buildItemWhere(q)
 
-	total := 0
-	if !q.SkipTotal {
+	order := buildOrderBy(q)
+
+	// 随机排序要先知道总数才能算出随机窗口；SkipTotal 只负责普通分页，
+	// 这里必须补 COUNT，否则 total=0 会让 offset 恒为 0，每次都返回
+	// rowid 最前面的同一批条目（结果看起来「不随机」）。
+	counted := 0
+	if !q.SkipTotal || (q.Limit > 0 && strings.Contains(order, "RANDOM()")) {
 		countSQL := `SELECT COUNT(*) FROM items`
 		if len(where) > 0 {
 			countSQL += " WHERE " + strings.Join(where, " AND ")
 		}
-		if err := d.QueryRow(countSQL, args...).Scan(&total); err != nil {
+		if err := d.QueryRow(countSQL, args...).Scan(&counted); err != nil {
 			return nil, 0, err
 		}
 	}
+	// SkipTotal 的契约是「不返回总数」；上面为了随机窗口补的 COUNT 只内部用。
+	total := counted
+	if q.SkipTotal {
+		total = 0
+	}
 
-	order := buildOrderBy(q)
 	sqlText := `SELECT ` + itemColumns + ` FROM items`
 	if len(where) > 0 {
 		sqlText += " WHERE " + strings.Join(where, " AND ")
@@ -834,8 +843,8 @@ func (d *DB) QueryItems(q ItemQuery) ([]*Item, int, error) {
 			cand = 10000
 		}
 		offset := "0"
-		if total > cand {
-			offset = fmt.Sprintf("(abs(random()) %% %d)", total-cand)
+		if counted > cand {
+			offset = fmt.Sprintf("(abs(random()) %% %d)", counted-cand)
 		}
 		inner := `SELECT ` + itemColumns + ` FROM items`
 		if len(where) > 0 {

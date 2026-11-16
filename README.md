@@ -383,6 +383,10 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token | `false` |
 | `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
 | `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端；公网直连建议开 | `false`（compose 模板里为 `true`） |
+| `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链（按客户端 UA 解析并缓存 10 分钟），VidHub 等优先读该字段的客户端少一跳 | `false` |
+| `LIME_YAMBY_PROXY` | Yamby 跟 302 不稳时，把它的视频流改成服务端中转；会占用 NAS 上行 | `false` |
+| `LIME_STREAM_CACHE_MB` | 仅代理模式：每个片源预取的头部长度的 MB 数，`0` 关闭（尾部固定 2MB） | `0` |
+| `LIME_STREAM_CACHE_MAX_MB` | 头/尾缓存总上限 | `4096` |
 | `LIME_TMDB_API_KEY` | TMDB v3 API Key，留空则关闭刮削 | 空 |
 | `LIME_TMDB_LANGUAGE` | 刮削语言 | `zh-CN` |
 | `LIME_TMDB_PROXY` | 访问 TMDB 的 HTTP 代理（国内需要） | 空 |

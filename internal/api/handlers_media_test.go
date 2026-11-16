@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"lime/internal/config"
 	"lime/internal/dto"
 	"lime/internal/store"
 )
@@ -42,6 +44,65 @@ func TestSourceBitrateFallback(t *testing.T) {
 	s.DurationTicks = 10 * 60 * 10_000_000
 	if got := sourceBitrate(s, 60*60*10_000_000); got != 13_333_333 {
 		t.Fatalf("bitrate with source duration = %d", got)
+	}
+}
+
+// Yamby 跟 302 不稳，视频流要由 LiMe 中转；其他客户端保持 302。
+func TestYambyStreamIsProxied(t *testing.T) {
+	var gotRange, gotUA string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRange = r.Header.Get("Range")
+		gotUA = r.UserAgent()
+		w.Header().Set("Content-Range", "bytes 0-3/100")
+		w.Header().Set("Content-Type", "video/x-matroska")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("data"))
+	}))
+	defer upstream.Close()
+
+	f := newUserFixtureWithConfig(t, func(c *config.Config) { c.ProxyYamby = true })
+	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "m1", LibraryID: lib.ID, ParentID: lib.ID,
+		Type: store.TypeMovie, Name: "电影", SortName: "电影",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
+		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm",
+		URL: upstream.URL + "/movie.mkv", Container: "mkv", FileName: "movie.mkv",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	const path = "/Videos/m1/stream?static=true&MediaSourceId=src1"
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("X-Emby-Token", f.adminTok)
+	req.Header.Set("User-Agent", "Yamby/2.1.0.11(Android 16)")
+	req.Header.Set("Range", "bytes=0-3")
+	rr := httptest.NewRecorder()
+	f.env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusPartialContent {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	if rr.Body.String() != "data" {
+		t.Fatalf("body = %q", rr.Body.String())
+	}
+	if gotRange != "bytes=0-3" || !strings.HasPrefix(gotUA, "Yamby/") {
+		t.Fatalf("upstream range/ua = %q / %q", gotRange, gotUA)
+	}
+
+	// 非 Yamby 仍然走 302。
+	req = httptest.NewRequest(http.MethodGet, path, nil)
+	req.Header.Set("X-Emby-Token", f.adminTok)
+	req.Header.Set("User-Agent", "VidHub/3.0.3")
+	rr = httptest.NewRecorder()
+	f.env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusFound {
+		t.Fatalf("VidHub status = %d, want 302", rr.Code)
 	}
 }
 
@@ -169,5 +230,59 @@ func TestSourceDisplayNameFallback(t *testing.T) {
 	s := &store.MediaSource{VersionName: "2160p · HDR · HEVC · 5.6GB"}
 	if got := sourceDisplayName(s, nil, 0); got != s.VersionName {
 		t.Fatalf("fallback = %q", got)
+	}
+}
+
+// MKV 内嵌封面不能作为 Video 轨道返回，否则客户端会报
+// "none are playable by this device"（Yamby/ExoPlayer）。
+func TestEmbeddedCoverNotReturnedAsVideo(t *testing.T) {
+	f := newUserFixture(t)
+	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "m1", LibraryID: lib.ID, ParentID: lib.ID,
+		Type: store.TypeMovie, Name: "电影", SortName: "电影",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
+		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm",
+		URL: "http://example", Container: "mkv", FileName: "m1.mkv",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.ReplaceMediaStreams("src1", []store.MediaStream{
+		{Index: 0, Type: "Video", Codec: "h264", Width: 1920, Height: 1080, FrameRate: 24},
+		{Index: 1, Type: "Audio", Codec: "aac", Channels: 2},
+		{Index: 2, Type: "Video", Codec: "mjpeg", Width: 640, Height: 360},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := f.do(http.MethodPost, "/Items/m1/PlaybackInfo", map[string]any{}, f.adminTok)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	var info dto.PlaybackInfoResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if len(info.MediaSources) != 1 {
+		t.Fatalf("sources = %d", len(info.MediaSources))
+	}
+	streams := info.MediaSources[0].MediaStreams
+	// 封面轨道直接不返回，只留真正的视频/音频。
+	if len(streams) != 2 {
+		t.Fatalf("streams = %+v", streams)
+	}
+	if streams[0].Type != "Video" || streams[0].Codec != "h264" {
+		t.Fatalf("main video = %+v", streams[0])
+	}
+	for _, st := range streams {
+		if st.Type == "Video" && st.Codec == "mjpeg" {
+			t.Fatalf("cover leaked into video tracks: %+v", st)
+		}
 	}
 }

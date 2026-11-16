@@ -879,6 +879,7 @@ type ffStream struct {
 		Default         int `json:"default"`
 		Forced          int `json:"forced"`
 		HearingImpaired int `json:"hearing_impaired"`
+		AttachedPic     int `json:"attached_pic"`
 	} `json:"disposition"`
 	SideDataList []struct {
 		SideDataType string `json:"side_data_type"`
@@ -959,6 +960,13 @@ func convert(res *ffprobeResult) []store.MediaStream {
 			if st.FrameRate == 0 {
 				st.FrameRate = parseRate(s.RFrameRate)
 			}
+			// MKV 的封面图会以 mjpeg/png 轨道出现，并带 attached_pic 标记。
+			// 当成 Video 发给客户端会让它们以为「有视频轨道但都放不了」。
+			// ffprobe 对封面常报 avg_frame_rate=90000/1，所以不能只看 0。
+			if s.Disposition.AttachedPic != 0 ||
+				(isPictureCodec(st.Codec) && (st.FrameRate <= 0 || st.FrameRate >= 1000)) {
+				st.Type = "EmbeddedImage"
+			}
 			st.VideoRange = videoRange(s)
 			st.AspectRatio = aspectRatio(s)
 			st.IsInterlaced = isInterlaced(s.FieldOrder)
@@ -979,6 +987,15 @@ func convert(res *ffprobeResult) []store.MediaStream {
 		out = append(out, st)
 	}
 	return out
+}
+
+// isPictureCodec 判断视频轨道是否其实是内嵌封面/图片。
+func isPictureCodec(codec string) bool {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "mjpeg", "png", "bmp", "gif", "webp":
+		return true
+	}
+	return false
 }
 
 func videoBitDepth(s ffStream) int {
