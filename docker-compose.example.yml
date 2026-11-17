@@ -27,7 +27,10 @@ services:
       LIME_LIBRARY_ROOTS: "/media"
       # 服务端先跟掉 PanSave 一跳，直接把最终 CDN 地址交给客户端
       LIME_RESOLVE_REDIRECT: "true"
+      # 数据库每日备份输出目录，默认写到 /data；放到独立挂载点更安全
+      LIME_BACKUP_DIR: "/backup"
 
     volumes:
       - ./data:/data
+      - ./backup:/backup
       - /path/to/your/strm:/media:ro

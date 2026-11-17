@@ -106,8 +106,10 @@ services:
       LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
       LIME_LIBRARY_ROOTS: "/media"
       LIME_RESOLVE_REDIRECT: "true"
+      LIME_BACKUP_DIR: "/backup"        # 数据库每日备份目录
     volumes:
       - ./data:/data
+      - ./backup:/backup
       - /path/to/your/strm:/media:ro    # ← 你的 PanSave STRM 目录
 ```
 
@@ -129,12 +131,14 @@ docker run -d --name lime \
   --restart unless-stopped \
   -p 886:886 \
   -v /path/to/data:/data \
+  -v /path/to/backup:/backup \
   -v /path/to/strm:/media:ro \
   -e LIME_ADMIN_USER=admin \
   -e LIME_ADMIN_PASSWORD=change-me \
   -e LIME_LIBRARIES="电影|/media/电影|movies;剧集|/media/剧集|tvshows" \
   -e LIME_LIBRARY_ROOTS=/media \
   -e LIME_RESOLVE_REDIRECT=true \
+  -e LIME_BACKUP_DIR=/backup \
   lixxh/lime:latest
 ```
 
@@ -387,6 +391,8 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_ADMIN_PASSWORD` | 初始管理员密码（仅首次生效） | `password` |
 | `LIME_HTTP_ADDR` | 监听地址 | `:886` |
 | `LIME_DATA_DIR` | 数据目录（SQLite、缓存） | `./data` |
+| `LIME_BACKUP_DIR` | 数据库每日快照输出目录，留空写数据目录；可指到独立挂载点 | 空 |
+| `LIME_BACKUP_KEEP` | 数据库备份保留份数（1-30） | `3` |
 | `LIME_MAX_ITEMS` | 单次列表查询最大返回条数，防大库一次性返回；客户端传 `EnableTotalRecordCount=false` 时跳过 COUNT | `20000` |
 | `LIME_LIBRARIES` | 首次启动时的媒体库种子配置，见下 | 自动探测 `/strm` |
 | `LIME_LIBRARY_ROOTS` | 面板里新建库允许的容器内根路径 | `/strm` |

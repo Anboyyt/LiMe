@@ -65,8 +65,10 @@ services:
       LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
       LIME_LIBRARY_ROOTS: "/media"
       LIME_RESOLVE_REDIRECT: "true"
+      LIME_BACKUP_DIR: "/backup"        # 数据库每日备份目录
     volumes:
       - ./data:/data
+      - ./backup:/backup
       - /path/to/your/strm:/media:ro    # ← 你的 PanSave STRM 目录
 ```
 
@@ -83,12 +85,14 @@ docker run -d --name lime \
   --restart unless-stopped \
   -p 886:886 \
   -v /path/to/data:/data \
+  -v /path/to/backup:/backup \
   -v /path/to/strm:/media:ro \
   -e LIME_ADMIN_USER=admin \
   -e LIME_ADMIN_PASSWORD=change-me \
   -e LIME_LIBRARIES="电影|/media/电影|movies;剧集|/media/剧集|tvshows" \
   -e LIME_LIBRARY_ROOTS=/media \
   -e LIME_RESOLVE_REDIRECT=true \
+  -e LIME_BACKUP_DIR=/backup \
   lixxh/lime:latest
 ```
 
@@ -101,6 +105,8 @@ docker run -d --name lime \
 | `LIME_ADMIN_USER` | 初始管理员 | `admin` |
 | `LIME_ADMIN_PASSWORD` | 初始密码（仅首次生效） | `password` |
 | `LIME_LIBRARIES` | 媒体库定义：`名称\|容器内路径\|类型` | 自动探测 `/strm` |
+| `LIME_BACKUP_DIR` | 数据库每日快照目录，留空写数据目录 | 空 |
+| `LIME_BACKUP_KEEP` | 备份保留份数 | `3` |
 | `LIME_LIBRARY_ROOTS` | 面板新建库允许的根路径 | `/strm` |
 | `LIME_SCAN_ON_START` | 启动时全量扫描 | `true` |
 | `LIME_SCAN_DAILY_AT` | 每日增量扫描时间 `HH:MM`，留空关闭 | 空（面板默认 03:30） |
