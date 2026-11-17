@@ -8,6 +8,7 @@ on:
       - "**.md"
       - "LICENSE"
       - "docs/**"
+      - "docker-compose*.yml"
       - "tools/dockerhub_sync.py"
       - ".github/workflows/dockerhub-overview.yml"
   workflow_dispatch:

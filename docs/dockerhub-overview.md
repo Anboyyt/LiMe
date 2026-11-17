@@ -48,6 +48,8 @@
 
 ### Docker Compose（推荐）
 
+新建 `docker-compose.yml` 粘贴即可，只改 STRM 路径：
+
 ```yaml
 services:
   lime:
@@ -60,14 +62,12 @@ services:
       TZ: Asia/Shanghai
       LIME_ADMIN_USER: "admin"
       LIME_ADMIN_PASSWORD: "change-me"
-      # 名称|容器内路径|类型，多个库用分号分隔
       LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
       LIME_LIBRARY_ROOTS: "/media"
-      # 公网直连建议开启：服务端跟掉 PanSave 一跳，直接 302 到 CDN
       LIME_RESOLVE_REDIRECT: "true"
     volumes:
       - ./data:/data
-      - /path/to/your/strm:/media:ro
+      - /path/to/your/strm:/media:ro    # ← 你的 PanSave STRM 目录
 ```
 
 ```bash
@@ -83,10 +83,11 @@ docker run -d --name lime \
   --restart unless-stopped \
   -p 886:886 \
   -v /path/to/data:/data \
-  -v /path/to/strm:/strm:ro \
-  -e LIME_LIBRARIES="电影|/strm/电影|movies;剧集|/strm/剧集|tvshows" \
+  -v /path/to/strm:/media:ro \
   -e LIME_ADMIN_USER=admin \
   -e LIME_ADMIN_PASSWORD=change-me \
+  -e LIME_LIBRARIES="电影|/media/电影|movies;剧集|/media/剧集|tvshows" \
+  -e LIME_LIBRARY_ROOTS=/media \
   -e LIME_RESOLVE_REDIRECT=true \
   lixxh/lime:latest
 ```

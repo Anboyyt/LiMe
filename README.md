@@ -89,23 +89,37 @@
 
 ### 方式一：Docker Compose（推荐）
 
-```bash
-curl -fsSLO https://raw.githubusercontent.com/Anboyyt/LiMe/main/docker-compose.example.yml
-mv docker-compose.example.yml docker-compose.yml
-```
-
-打开 `docker-compose.yml`，改两个地方：
+新建 `docker-compose.yml`，粘贴下面这段，只改 `volumes` 里的 STRM 路径：
 
 ```yaml
-LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
-volumes:
-  - /path/to/your/strm:/media:ro    # ← 你的 PanSave STRM 目录
+services:
+  lime:
+    image: lixxh/lime:latest
+    container_name: lime
+    restart: unless-stopped
+    ports:
+      - "886:886"
+    environment:
+      TZ: Asia/Shanghai
+      LIME_ADMIN_USER: "admin"
+      LIME_ADMIN_PASSWORD: "change-me"
+      LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
+      LIME_LIBRARY_ROOTS: "/media"
+      LIME_RESOLVE_REDIRECT: "true"
+    volumes:
+      - ./data:/data
+      - /path/to/your/strm:/media:ro    # ← 你的 PanSave STRM 目录
 ```
-
-然后启动：
 
 ```bash
 docker compose up -d
+```
+
+也可以直接下载模板：
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/Anboyyt/LiMe/main/docker-compose.example.yml
+mv docker-compose.example.yml docker-compose.yml
 ```
 
 ### 方式二：docker run
@@ -115,10 +129,12 @@ docker run -d --name lime \
   --restart unless-stopped \
   -p 886:886 \
   -v /path/to/data:/data \
-  -v /path/to/strm:/strm:ro \
-  -e LIME_LIBRARIES="电影|/strm/电影|movies;剧集|/strm/剧集|tvshows" \
+  -v /path/to/strm:/media:ro \
   -e LIME_ADMIN_USER=admin \
   -e LIME_ADMIN_PASSWORD=change-me \
+  -e LIME_LIBRARIES="电影|/media/电影|movies;剧集|/media/剧集|tvshows" \
+  -e LIME_LIBRARY_ROOTS=/media \
+  -e LIME_RESOLVE_REDIRECT=true \
   lixxh/lime:latest
 ```
 
