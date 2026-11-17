@@ -68,6 +68,12 @@ services:
       # 国内访问 TMDB 需要代理；容器内不能用 127.0.0.1
       LIME_TMDB_PROXY: "${LIME_TMDB_PROXY:-}"
 
+      # ---- 数据库备份 ----
+      # 每天 04:30 做一次 SQLite 快照（大小约等于库），保留 3 份；面板里可改时间/份数/目录
+      # 留空 = 写在 /data；换个挂载点时改成容器内路径，例如 /backup
+      LIME_BACKUP_DIR: ""
+      LIME_BACKUP_KEEP: "3"
+
       # ---- 媒体信息探测（ffprobe 读远程元数据，结果缓存）----
       LIME_PROBE_ENABLED: "true"
       LIME_PROBE_WORKERS: "2"
@@ -76,6 +82,8 @@ services:
     volumes:
       # SQLite 数据库、海报缓存、日志
       - ./data:/data
+      # 可选：数据库备份单独放一块盘/目录，容器内路径要和 LIME_BACKUP_DIR 一致
+      # - /path/to/backups/lime:/backup
       # 改成你自己的 STRM 目录。只读即可
       - /path/to/your/strm:/media:ro
 

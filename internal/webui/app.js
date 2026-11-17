@@ -1135,7 +1135,7 @@
         <div class="kv">
           <div><b>每日增量扫描</b><span>${settings.ScanDailyAt ? esc(settings.ScanDailyAt) : '未启用'}</span></div>
           <div><b>每日刮削</b><span>${settings.ScrapeDailyAt ? esc(settings.ScrapeDailyAt) : '未启用'}</span></div>
-          <div><b>数据库备份</b><span>${settings.BackupDailyAt ? `每天 ${esc(settings.BackupDailyAt)}，保留 ${settings.BackupKeep} 份` : '未启用'}</span></div>
+          <div><b>数据库备份</b><span>${settings.BackupDailyAt ? `每天 ${esc(settings.BackupDailyAt)}，保留 ${settings.BackupKeep} 份，存放于 ${esc(settings.BackupDirEffective || '')}` : '未启用'}</span></div>
         </div>
         <div class="row" style="margin-top:12px">
           <input id="scanDailyAt" placeholder="扫描 HH:MM，留空关闭" style="max-width:200px"
@@ -1146,12 +1146,14 @@
             value="${esc(settings.BackupDailyAt || 'off')}">
           <input id="backupKeep" type="number" min="1" max="30" placeholder="保留份数" style="max-width:120px"
             value="${settings.BackupKeep || 3}">
+          <input id="backupDir" placeholder="备份目录（默认 ${esc(settings.BackupDirEffective || '')}）" style="min-width:260px"
+            value="${esc(settings.BackupDir || '')}">
           <button class="primary" data-action="save-settings">保存</button>
         </div>
         <div class="row" style="margin-top:12px">
           <button data-action="backup-now">立即备份</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">扫描和刮削互不联动，按各自时间独立执行；数据库每天自动备份，保留最近几份。</p>
+        <p class="muted" style="margin:8px 0 0">扫描和刮削互不联动，按各自时间独立执行；数据库每天自动备份，保留最近几份。备份目录留空则写在数据目录（/data），改到别的挂载点前先确认容器里已挂载该路径。</p>
       </div>
       <div class="panel"><h3>实时监控</h3>
         <div class="row">
@@ -1456,6 +1458,8 @@
         if (backupAtEl) {
           body.BackupDailyAt = (backupAtEl.value || 'off').trim();
           body.BackupKeep = parseInt($('#backupKeep').value || '3', 10);
+          const backupDirEl = $('#backupDir');
+          if (backupDirEl) body.BackupDir = (backupDirEl.value || '').trim();
         }
         const tgEnabledEl = $('#tgEnabled');
         if (tgEnabledEl) {
@@ -1572,7 +1576,7 @@
       }
       case 'backup-now': {
         const r = await api('/web/api/backup', { method: 'POST' });
-        toast(`备份完成：${r.File}（${r.MB} MB）`);
+        toast(`备份完成：${r.File}（${r.MB} MB）→ ${r.Dir || ''}`);
         break;
       }
       case 'scan': {

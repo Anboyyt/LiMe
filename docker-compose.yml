@@ -105,6 +105,12 @@ services:
       LIME_TG_NOTIFY: "${LIME_TG_NOTIFY:-}"
       LIME_TG_EVENTS: "start,pause,resume,stop,stall,health"
 
+      # ---- 数据库备份 ----
+      # 每天 VACUUM INTO 一份快照（约等于库大小），保留 LIME_BACKUP_KEEP 份。
+      # 目录可写到独立挂载点，避免备份和库抢同一块盘；面板里也能改。
+      LIME_BACKUP_DIR: "${LIME_BACKUP_DIR:-/backup}"
+      LIME_BACKUP_KEEP: "3"
+
       # ---- 媒体信息探测（ffprobe 远程读取 HEAD/元数据，结果缓存）----
       LIME_PROBE_ENABLED: "true"
       LIME_PROBE_WORKERS: "2"
@@ -114,6 +120,8 @@ services:
 
     volumes:
       - ./data:/data
+      # 数据库备份独立放 vol2，不和库抢 vol1 的空间
+      - /vol2/1000/备份/lime:/backup
       # 大库（约 29 万 STRM）；测试库 /vol1/1000/飞牛影视/影视
       - /vol1/1000/影视:/strm:ro
 

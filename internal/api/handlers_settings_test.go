@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -254,5 +255,69 @@ func TestWebSettingsBackupSchedule(t *testing.T) {
 	}
 	if code := put(`{"BackupKeep":0}`); code != http.StatusBadRequest {
 		t.Fatalf("invalid keep status = %d", code)
+	}
+}
+
+func TestWebSettingsBackupDir(t *testing.T) {
+	env := newTestEnv(t)
+	hash, _ := store.HashPassword("pw")
+	admin, err := env.db.CreateUser("admin5", hash, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := env.db.CreateToken(admin.ID, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	put := func(body string) int {
+		req := httptest.NewRequest(http.MethodPut, "/web/api/settings", bytes.NewBufferString(body))
+		req.Header.Set("X-Emby-Token", tok)
+		rr := httptest.NewRecorder()
+		env.handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	if code := put(`{"BackupDir":"relative/backups"}`); code != http.StatusBadRequest {
+		t.Fatalf("relative dir status = %d, want 400", code)
+	}
+
+	dir := t.TempDir()
+	if code := put(fmt.Sprintf(`{"BackupDir":%q}`, dir)); code != http.StatusNoContent {
+		t.Fatalf("valid dir status = %d", code)
+	}
+	if v, _ := env.db.GetSetting("backup_dir"); v != dir {
+		t.Fatalf("backup_dir = %q, want %q", v, dir)
+	}
+
+	// 手动备份应落在新目录，并从新目录做保留份数清理。
+	req := httptest.NewRequest(http.MethodPost, "/web/api/backup", nil)
+	req.Header.Set("X-Emby-Token", tok)
+	rr := httptest.NewRecorder()
+	env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("backup = %d: %s", rr.Code, rr.Body.String())
+	}
+	var out map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := out["Dir"].(string); got != dir {
+		t.Fatalf("response Dir = %q, want %q", got, dir)
+	}
+	name, _ := out["File"].(string)
+	if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+		t.Fatalf("backup file missing in custom dir: %v", err)
+	}
+
+	// 清空 = 回到默认目录。
+	if code := put(`{"BackupDir":""}`); code != http.StatusNoContent {
+		t.Fatalf("clear dir status = %d", code)
+	}
+	if v, _ := env.db.GetSetting("backup_dir"); v != "" {
+		t.Fatalf("backup_dir after clear = %q", v)
+	}
+	if got := env.api.backupDir(); got != env.cfg.DataDir {
+		t.Fatalf("effective dir = %q, want %q", got, env.cfg.DataDir)
 	}
 }

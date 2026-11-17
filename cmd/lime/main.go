@@ -529,36 +529,48 @@ func runBackupScheduler(cfg config.Config, db *store.DB, log *slog.Logger) {
 				keep = n
 			}
 		}
+		// 备份目录：面板设置 > LIME_BACKUP_DIR > 数据目录
+		dir := cfg.BackupDir
+		if v, err := db.GetSetting("backup_dir"); err == nil && strings.TrimSpace(v) != "" {
+			dir = strings.TrimSpace(v)
+		}
+		if dir == "" {
+			dir = cfg.DataDir
+		}
 
 		now := time.Now()
 		if at != "" && now.Format("15:04") == at {
 			key := now.Format("2006-01-02") + " " + at
 			if lastRun != key {
 				lastRun = key
-				runBackupOnce(cfg.DataDir, db, keep, log)
+				runBackupOnce(dir, db, keep, log)
 			}
 		}
 		time.Sleep(time.Minute)
 	}
 }
 
-func runBackupOnce(dataDir string, db *store.DB, keep int, log *slog.Logger) {
+func runBackupOnce(dir string, db *store.DB, keep int, log *slog.Logger) {
 	name := "lime.db.bak-" + time.Now().Format("20060102-150405")
-	dest := filepath.Join(dataDir, name)
-	start := time.Now()
-	if err := db.BackupTo(dest); err != nil {
-		log.Error("database backup failed", "err", err)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Error("database backup failed", "dir", dir, "err", err)
 		return
 	}
-	if removed, err := store.PruneBackups(dataDir, keep); err != nil {
-		log.Warn("prune old backups failed", "err", err)
+	dest := filepath.Join(dir, name)
+	start := time.Now()
+	if err := db.BackupTo(dest); err != nil {
+		log.Error("database backup failed", "dir", dir, "err", err)
+		return
+	}
+	if removed, err := store.PruneBackups(dir, keep); err != nil {
+		log.Warn("prune old backups failed", "dir", dir, "err", err)
 	} else if removed > 0 {
-		log.Info("old database backups pruned", "removed", removed)
+		log.Info("old database backups pruned", "dir", dir, "removed", removed)
 	}
 	var size int64
 	if st, err := os.Stat(dest); err == nil {
 		size = st.Size()
 	}
 	log.Info("database backup created",
-		"file", name, "mb", size>>20, "dur", time.Since(start).Round(time.Second).String())
+		"file", name, "dir", dir, "mb", size>>20, "dur", time.Since(start).Round(time.Second).String())
 }

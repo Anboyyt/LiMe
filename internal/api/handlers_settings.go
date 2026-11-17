@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +85,8 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 				backupKeep = n
 			}
 		}
+		backupDir, _ := h.db.GetSetting("backup_dir")
+		backupDir = strings.TrimSpace(backupDir)
 		pendingTotal, pendingFav, pendingWatching := h.probeCountsSnapshot()
 		segmentPending := h.segmentPendingCached()
 		tg := h.tgConfig()
@@ -132,6 +136,8 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			"SegmentPending":        segmentPending,
 			"BackupDailyAt":         backupAt,
 			"BackupKeep":            backupKeep,
+			"BackupDir":             backupDir,
+			"BackupDirEffective":    h.backupDir(),
 			"TGEnabled":             tg.Enabled,
 			"TGReady":               tg.Token != "" && tg.ChatID != "",
 			"TGBotTokenSet":         tg.Token != "",
@@ -172,6 +178,7 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			SegmentAutoAfter     *string `json:"SegmentAutoAfter"`
 			BackupDailyAt        *string `json:"BackupDailyAt"`
 			BackupKeep           *int    `json:"BackupKeep"`
+			BackupDir            *string `json:"BackupDir"`
 			TGBotToken           *string `json:"TGBotToken"`
 			TGChatID             *string `json:"TGChatID"`
 			TGProxy              *string `json:"TGProxy"`
@@ -389,6 +396,31 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err := h.db.SetSetting("backup_keep", strconv.Itoa(*p.BackupKeep)); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+		}
+		if p.BackupDir != nil {
+			v := strings.TrimSpace(*p.BackupDir)
+			if v != "" {
+				if !filepath.IsAbs(v) {
+					writeError(w, http.StatusBadRequest, "备份目录必须是容器内的绝对路径")
+					return
+				}
+				if err := os.MkdirAll(v, 0o755); err != nil {
+					writeError(w, http.StatusBadRequest, "无法创建备份目录: "+err.Error())
+					return
+				}
+				f, err := os.CreateTemp(v, ".lime-write-test-*")
+				if err != nil {
+					writeError(w, http.StatusBadRequest, "备份目录不可写: "+err.Error())
+					return
+				}
+				name := f.Name()
+				f.Close()
+				os.Remove(name)
+			}
+			if err := h.db.SetSetting("backup_dir", v); err != nil {
 				writeError(w, http.StatusInternalServerError, "save setting failed")
 				return
 			}

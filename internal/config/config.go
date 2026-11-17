@@ -115,6 +115,8 @@ type Config struct {
 	// 每日数据库备份时间（HH:MM，空表示关闭）与保留份数
 	BackupDailyAt string
 	BackupKeep    int
+	// 备份输出目录，空表示写在 DataDir 下。面板里的 backup_dir 设置优先。
+	BackupDir string
 
 	// ---- TMDB 刮削（M4）----
 	TMDBAPIKey    string
@@ -187,6 +189,7 @@ func Load() Config {
 		BackdropWorkers:    getint("LIME_BACKDROP_WORKERS", 5),
 		BackupDailyAt:      getenv("LIME_BACKUP_DAILY_AT", "04:30"),
 		BackupKeep:         getint("LIME_BACKUP_KEEP", 3),
+		BackupDir:          strings.TrimSpace(os.Getenv("LIME_BACKUP_DIR")),
 		TMDBAPIKey:         strings.TrimSpace(os.Getenv("LIME_TMDB_API_KEY")),
 		TMDBAPIKeys:        parseKeys(os.Getenv("LIME_TMDB_API_KEYS")),
 		TMDBLanguage:       getenv("LIME_TMDB_LANGUAGE", "zh-CN"),
