@@ -103,8 +103,8 @@ a:hover { text-decoration: underline; }
 }
 
 .login-card {
-  width: 320px;
-  padding: 32px 28px;
+  width: 336px;
+  padding: 34px 30px 30px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: 14px;
@@ -119,12 +119,25 @@ a:hover { text-decoration: underline; }
 .logo {
   display: flex;
   justify-content: center;
+  margin: 0 0 2px;
 }
 .logo img {
   display: block;
-  width: 76px;
-  height: 76px;
-  border-radius: 20px;
+}
+/* 横向字标：高度统一，宽度自适应，不再套方形圆角 */
+.logo img.wordmark {
+  height: 48px;
+  width: auto;
+}
+
+/* 登录页副标题：与 logo 同轴居中，字距略放大以平衡字标 */
+.tagline {
+  margin: -2px 0 8px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 2px;
+  color: var(--muted);
 }
 
 input, select {
@@ -197,23 +210,23 @@ a.back-media:hover { border-color: var(--accent); }
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 18px;
+  gap: 9px;
+  margin-bottom: 20px;
 }
 .brand-logo {
   display: block;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 32px;
+  height: 32px;
   flex: none;
 }
 .brand-text { min-width: 0; }
 .brand span {
   display: block;
+  margin-top: 1px;
   font-size: 11px;
   font-weight: 400;
   color: var(--muted);
-  letter-spacing: 1px;
+  letter-spacing: 1.5px;
 }
 
 nav a {

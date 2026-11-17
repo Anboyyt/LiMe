@@ -93,6 +93,8 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	// 注意大小写：canonicalAPIPath 会把首段 branding 规范成 Branding，
 	// 注册成小写永远匹配不到，表现为 404。
 	mux.HandleFunc("GET /Branding/logo.png", h.brandingLogo)
+	mux.HandleFunc("GET /Branding/brand-icon.png", h.brandingIcon)
+	mux.HandleFunc("GET /Branding/brand-wordmark.png", h.brandingWordmark)
 	mux.HandleFunc("GET /api/danmu/{itemId}/raw", h.danmuRaw)
 
 	// 认证

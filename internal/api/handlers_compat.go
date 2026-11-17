@@ -157,7 +157,7 @@ func (h *Handler) serverDomains(w http.ResponseWriter, r *http.Request) {
 // userImage 没有用户头像，统一返回 LiMe logo。
 // 图片请求可能不带 token（浏览器 img / 客户端图片加载），所以不强制鉴权。
 func (h *Handler) userImage(w http.ResponseWriter, r *http.Request) {
-	serveLogo(w, r)
+	servePNG(w, logoPNG)
 }
 
 func (h *Handler) studios(w http.ResponseWriter, r *http.Request) {

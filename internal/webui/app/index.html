@@ -6,8 +6,8 @@
   <meta name="theme-color" content="#070c09">
   <meta name="color-scheme" content="dark light">
   <title>LiMe</title>
-  <link rel="icon" href="/Branding/logo.png">
-  <link rel="stylesheet" href="/app/app.css?v=6">
+  <link rel="icon" href="/Branding/brand-icon.png">
+  <link rel="stylesheet" href="/app/app.css?v=7">
 </head>
 <body>
   <div id="loadingBar" class="loading-bar"></div>
@@ -15,8 +15,8 @@
   <!-- 登录 -->
   <div id="login" class="login hidden">
     <form class="login-card" id="loginForm">
-      <div class="logo"><img src="/Branding/logo.png" alt="LiMe"></div>
-      <p class="muted">登录媒体库</p>
+      <div class="logo"><img class="wordmark" src="/Branding/brand-wordmark.png" alt="LiMe"></div>
+      <p class="tagline">登录媒体库</p>
       <input id="luser" placeholder="用户名" autocomplete="username" required>
       <input id="lpass" type="password" placeholder="密码" autocomplete="current-password" required>
       <button class="btn primary" type="submit">登录</button>
@@ -27,7 +27,7 @@
   <!-- 主界面 -->
   <div id="app" class="app hidden">
     <header class="topbar">
-      <a class="brand" href="#/"><img src="/Branding/logo.png" alt="">LiMe<span id="brandVer" class="muted"></span></a>
+      <a class="brand" href="#/"><img src="/Branding/brand-icon.png" alt="">LiMe<span id="brandVer" class="muted"></span></a>
       <nav id="nav"></nav>
       <div class="spacer"></div>
       <input id="search" type="search" placeholder="搜索电影、剧集" enterkeyhint="search" inputmode="search">
