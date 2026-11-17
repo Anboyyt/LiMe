@@ -31,6 +31,11 @@ type Prober struct {
 	timeout    time.Duration
 	queue      chan probeJob
 
+	// 指纹分析的默认参数；面板设置（segment_concurrency /
+	// segment_prefer_low_bitrate）运行时优先。
+	segConcurrency int
+	segPreferLow   bool
+
 	mu       sync.Mutex
 	inflight map[string]chan struct{}
 
@@ -60,14 +65,16 @@ type probeJob struct {
 
 func New(cfg config.Config, db *store.DB, log *slog.Logger) *Prober {
 	p := &Prober{
-		db:            db,
-		log:           log,
-		timeout:       cfg.ProbeTimeout,
-		queue:         make(chan probeJob, 256),
-		inflight:      make(map[string]chan struct{}),
-		segTriggers:   make(map[string]time.Time),
-		fpSeasonLast:  make(map[string]time.Time),
-		fpSeasonFocus: make(map[string]map[string]bool),
+		db:             db,
+		log:            log,
+		timeout:        cfg.ProbeTimeout,
+		queue:          make(chan probeJob, 256),
+		inflight:       make(map[string]chan struct{}),
+		segTriggers:    make(map[string]time.Time),
+		fpSeasonLast:   make(map[string]time.Time),
+		fpSeasonFocus:  make(map[string]map[string]bool),
+		segConcurrency: cfg.SegmentConcurrency,
+		segPreferLow:   cfg.SegmentPreferLowBitrate,
 	}
 	p.segmentsOn.Store(cfg.SegmentExtract)
 	if !cfg.ProbeEnabled {
@@ -235,6 +242,9 @@ func (p *Prober) StartWarmup(cfg WarmupConfig) {
 	if err := p.db.ResetStaleFingerprintRuns(); err != nil {
 		p.log.Warn("reset stale fingerprint runs failed", "err", err)
 	}
+	if err := p.db.ResetStaleSegmentTargets(); err != nil {
+		p.log.Warn("reset stale segment targets failed", "err", err)
+	}
 	p.SetWarmupConfig(cfg)
 
 	p.warmupMu.Lock()
@@ -246,6 +256,7 @@ func (p *Prober) StartWarmup(cfg WarmupConfig) {
 	}
 	go p.runWarmup()
 	go p.runFingerprintBackfill()
+	go p.runSegmentTargets()
 }
 
 // runFingerprintBackfill 在预热时间窗内慢速补齐「整季都没有片头片尾」的收藏/在追剧。
@@ -266,12 +277,69 @@ func (p *Prober) runFingerprintBackfill() {
 	}
 }
 
+// runSegmentTargets 消费面板「精准提取」排进来的季。队列落库，
+// 重启后继续跑；同一时间只跑一季，和夜间回填共用全局锁。
+func (p *Prober) runSegmentTargets() {
+	time.Sleep(30 * time.Second)
+	for {
+		if !p.enabled || !p.segmentsOn.Load() || p.FingerprintRunning() {
+			time.Sleep(20 * time.Second)
+			continue
+		}
+		t, err := p.db.NextQueuedSegmentTarget()
+		if err != nil {
+			p.log.Warn("segment target query failed", "err", err)
+			time.Sleep(time.Minute)
+			continue
+		}
+		if t == nil {
+			time.Sleep(time.Minute)
+			continue
+		}
+		if !p.startSeasonFingerprint(t.SeriesID, t.Season, nil) {
+			// 可能撞上 30 分钟去重或已有别的季在跑，保持 queued 下轮再试。
+			time.Sleep(20 * time.Second)
+			continue
+		}
+		_ = p.db.SetSegmentTargetStatus(t.SeriesID, t.Season, "running", "")
+		p.log.Info("segment target started", "series", t.SeriesID, "season", t.Season)
+		time.Sleep(10 * time.Second)
+	}
+}
+
 // SetSegmentsEnabled 运行中开关片头片尾提取。
 func (p *Prober) SetSegmentsEnabled(on bool) {
 	if p == nil {
 		return
 	}
 	p.segmentsOn.Store(on)
+}
+
+// segmentConcurrency 返回指纹分析并发数：面板设置优先，其次环境变量，范围 1-8。
+func (p *Prober) segmentConcurrency() int {
+	n := p.segConcurrency
+	if v, err := p.db.GetSetting("segment_concurrency"); err == nil && v != "" {
+		if x, err := strconv.Atoi(v); err == nil {
+			n = x
+		}
+	}
+	if n < 1 {
+		n = 1
+	}
+	if n > 8 {
+		n = 8
+	}
+	return n
+}
+
+// segmentPreferLowBitrate 表示同一集有多版本时是否优先选体积最小的片源。
+func (p *Prober) segmentPreferLowBitrate() bool {
+	if v, err := p.db.GetSetting("segment_prefer_low_bitrate"); err == nil && v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return p.segPreferLow
 }
 
 // SetWarmupConfig 运行中更新预热参数，下一轮调度生效。

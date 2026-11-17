@@ -406,7 +406,14 @@ type SeasonEpisodeSource struct {
 }
 
 // SeasonSources 返回某部剧某一季每个条目（单集）的主片源，按集号排序。
-func (d *DB) SeasonSources(seriesID string, season int) ([]SeasonEpisodeSource, error) {
+// preferLowBitrate 为 true 时同一集有多版本就选体积最小的片源：
+// 指纹分析只需要听音频，低码率版本能省下几倍流量。
+func (d *DB) SeasonSources(seriesID string, season int, preferLowBitrate bool) ([]SeasonEpisodeSource, error) {
+	order := "ORDER BY ms2.sort_rank, ms2.size DESC, ms2.id"
+	if preferLowBitrate {
+		// size = 0 表示大小未知，排到已知体积的后面。
+		order = "ORDER BY CASE WHEN ms2.size = 0 THEN 1 ELSE 0 END, ms2.size ASC, ms2.sort_rank, ms2.id"
+	}
 	rows, err := d.Query(`
 SELECT e.id, e.index_number, e.run_time_ticks, ms.url
 FROM items e
@@ -415,7 +422,7 @@ WHERE e.type = 'Episode' AND e.series_id = ? AND e.parent_index_number = ?
   AND ms.url <> ''
   AND ms.id = (SELECT ms2.id FROM media_sources ms2
                WHERE ms2.item_id = e.id AND ms2.url <> ''
-               ORDER BY ms2.sort_rank, ms2.size DESC, ms2.id LIMIT 1)
+               `+order+` LIMIT 1)
 ORDER BY e.index_number`, seriesID, season)
 	if err != nil {
 		return nil, err

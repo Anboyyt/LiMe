@@ -1198,6 +1198,9 @@
           <div><b>回填范围</b><span>${probeScopeLabel(settings.SegmentScope)}</span></div>
           <div><b>自动触发</b><span>${settings.SegmentAutoAfter === '0' ? '关闭' : '单集观看 ' + esc(settings.SegmentAutoAfter) + ' 后补齐整剧'}</span></div>
           <div><b>待分析</b><span>${settings.SegmentPending || 0} 个条目</span></div>
+          <div><b>并发数</b><span>${settings.SegmentConcurrency || 2}（1-8）</span></div>
+          <div><b>片源选择</b><span>${settings.SegmentPreferLowBitrate ? '低码率优先' : '按默认排序'}</span></div>
+          <div><b>精准队列</b><span id="segmentTargetSummary">${settings.SegmentTargetQueued || 0} 待跑 · ${settings.SegmentTargetDone || 0} 完成 · ${settings.SegmentTargetFailed || 0} 失败</span></div>
         </div>
         <div class="row" style="margin-top:12px">
           <label class="check-field">
@@ -1213,11 +1216,26 @@
           </select>
           <input id="segmentAutoAfter" placeholder="自动触发，如 5m、0=关闭" style="max-width:200px"
             value="${esc(settings.SegmentAutoAfter || '10m')}">
+          <label class="check-field" title="同时下载几集头尾音频；越小越省带宽">
+            <span>并发</span>
+            <input type="number" id="segmentConcurrency" min="1" max="8" step="1" style="width:64px"
+              value="${settings.SegmentConcurrency || 2}">
+          </label>
+          <label class="check-field">
+            <input type="checkbox" id="segmentPreferLowBitrate" ${settings.SegmentPreferLowBitrate ? 'checked' : ''}>
+            <span>低码率优先</span>
+          </label>
           <button class="primary" data-action="save-settings">保存</button>
           <button data-action="scan-segments">立即提取一批</button>
           <button data-action="scan-fingerprints">补齐缺失指纹</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">章节随预热探测顺手获取，零额外流量；没有标准章节的剧会在预热时间窗内自动跑音频指纹，一次只跑一季。默认只处理最近 14 天内看到 10 分钟以上的剧；老剧等再看 10 分钟后才开始提取。单集看到设定时长后自动补齐整部剧，20 分钟时再补一次。</p>
+        <div class="row" style="margin-top:12px">
+          <input id="segmentSearch" placeholder="搜索剧名关键词，如 庆余年" style="max-width:280px">
+          <button data-action="segment-search">搜索剧集</button>
+          <button data-action="segment-add">加入提取</button>
+        </div>
+        <div id="segmentSearchResults" class="muted" style="margin-top:8px"></div>
+        <p class="muted" style="margin:8px 0 0">章节随预热探测顺手获取，零额外流量；没有标准章节的剧会在预热时间窗内自动跑音频指纹，一次只跑一季。并发数控制同时下载几集头尾音频，低码率优先会挑体积最小的片源做指纹。精准提取可搜索剧名，把整部剧缺片头片尾的季直接排进队列。</p>
       </div>
       <div class="panel"><h3>背景图清晰度</h3>
         <div class="kv">
@@ -1453,6 +1471,10 @@
           body.SegmentExtract = segmentExtractEl.checked;
           body.SegmentScope = $('#segmentScope').value;
           body.SegmentAutoAfter = ($('#segmentAutoAfter').value || '0').trim();
+          const segmentConcEl = $('#segmentConcurrency');
+          if (segmentConcEl) body.SegmentConcurrency = parseInt(segmentConcEl.value || '2', 10);
+          const segmentLowEl = $('#segmentPreferLowBitrate');
+          if (segmentLowEl) body.SegmentPreferLowBitrate = segmentLowEl.checked;
         }
         const backupAtEl = $('#backupDailyAt');
         if (backupAtEl) {
@@ -1510,6 +1532,44 @@
         if (r.Started) toast('已开始分析一季缺失的片头片尾，完成后会自动继续下一季');
         else if (r.Running) toast('已有指纹分析在跑，稍后再试');
         else toast('没有待补的季');
+        break;
+      }
+      case 'segment-search': {
+        const q = ($('#segmentSearch')?.value || '').trim();
+        const box = $('#segmentSearchResults');
+        if (!q) { toast('先输入剧名关键词'); break; }
+        if (box) box.textContent = '搜索中…';
+        const r = await api('/web/api/segments/series?q=' + encodeURIComponent(q) + '&limit=30');
+        const list = r.Series || [];
+        if (!box) break;
+        if (list.length === 0) {
+          box.innerHTML = '<span>没有匹配的剧集</span>';
+          break;
+        }
+        box.innerHTML = list.map((s) => `
+          <label class="check-field" style="display:flex;margin:2px 0">
+            <input type="checkbox" class="seg-series" value="${esc(s.Id)}">
+            <span>${esc(s.Name)}${s.Year ? ' (' + s.Year + ')' : ''} · ${s.Seasons || 0} 季 / ${s.Episodes || 0} 集</span>
+          </label>`).join('');
+        break;
+      }
+      case 'segment-add': {
+        const ids = Array.from(document.querySelectorAll('.seg-series:checked')).map((el) => el.value);
+        if (ids.length === 0) { toast('先勾选要提取的剧集'); break; }
+        const r = await api('/web/api/segments/targets', {
+          method: 'POST',
+          body: JSON.stringify({ SeriesIds: ids }),
+        });
+        if (r.Enabled) {
+          toast(`已加入 ${r.Added || 0} 季（${r.Series || 0} 部剧），后台会按顺序分析`);
+        } else {
+          toast(`已加入 ${r.Added || 0} 季（${r.Series || 0} 部剧），需先勾选「启用提取」才会开始`);
+        }
+        try {
+          const c = await api('/web/api/segments/targets');
+          const el = $('#segmentTargetSummary');
+          if (el) el.textContent = `${c.Queued || 0} 待跑 · ${c.Done || 0} 完成 · ${c.Failed || 0} 失败`;
+        } catch (_) { /* 队列计数刷新失败不影响入队 */ }
         break;
       }
       case 'export-logs': {

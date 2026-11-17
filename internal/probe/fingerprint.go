@@ -85,10 +85,12 @@ func (p *Prober) startSeasonFingerprint(seriesID string, season int, focus []str
 		}
 		if err != nil {
 			_ = p.db.MarkFingerprintRun(seriesID, season, "failed", firstLine(err.Error()))
+			_ = p.db.SetSegmentTargetStatus(seriesID, season, "failed", firstLine(err.Error()))
 			p.log.Warn("fingerprint season failed", "series", seriesID, "season", season, "err", err)
 			return
 		}
 		_ = p.db.MarkFingerprintRun(seriesID, season, "done", fmt.Sprintf("saved=%d", saved))
+		_ = p.db.SetSegmentTargetStatus(seriesID, season, "done", fmt.Sprintf("saved=%d", saved))
 	}()
 	return true
 }
@@ -219,7 +221,8 @@ func pickFingerprintSources(srcs []store.SeasonEpisodeSource, focus []string, li
 }
 
 func (p *Prober) analyzeSeason(seriesID string, season int, focus []string) (int, error) {
-	srcs, err := p.db.SeasonSources(seriesID, season)
+	preferLow := p.segmentPreferLowBitrate()
+	srcs, err := p.db.SeasonSources(seriesID, season, preferLow)
 	if err != nil {
 		return 0, err
 	}
@@ -233,7 +236,11 @@ func (p *Prober) analyzeSeason(seriesID string, season int, focus []string) (int
 	srcs = pickFingerprintSources(srcs, focus, limit)
 
 	eps := make([]*fpEpisode, len(srcs))
-	sem := make(chan struct{}, 3)
+	concurrency := p.segmentConcurrency()
+	p.log.Info("fingerprint season analyzing",
+		"series", seriesID, "season", season, "episodes", len(srcs),
+		"concurrency", concurrency, "low_bitrate", preferLow)
+	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	for i, src := range srcs {

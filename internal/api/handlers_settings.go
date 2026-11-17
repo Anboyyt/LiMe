@@ -89,6 +89,7 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 		backupDir = strings.TrimSpace(backupDir)
 		pendingTotal, pendingFav, pendingWatching := h.probeCountsSnapshot()
 		segmentPending := h.segmentPendingCached()
+		targetCounts, _ := h.db.SegmentTargetCounts()
 		tg := h.tgConfig()
 		ingestTG := h.ingestTGConfig()
 		ingestCfg := h.ingestNotifySettings()
@@ -113,38 +114,44 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			scrapeTimeout = int(h.scraper.Timeout().Seconds())
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"TMDBKeySet":            len(keys) > 0,
-			"TMDBKeyHint":           firstHint,
-			"TMDBKeyHints":          hints,
-			"TMDBKeyCount":          len(keys),
-			"TMDBProxy":             proxy,
-			"ScrapeEnabled":         h.scraper != nil && h.scraper.Enabled(),
-			"ScrapeTimeoutSeconds":  scrapeTimeout,
-			"ScanDailyAt":           scanDaily,
-			"ScrapeDailyAt":         scrapeDaily,
-			"RealtimeMonitor":       h.realtime != nil && h.realtime.Enabled(),
-			"ProbeWarmup":           warm.Enabled,
-			"ProbeScope":            warm.Scope,
-			"ProbeWindow":           warmupWindowLabel(warm),
-			"ProbeMaxRun":           shortDuration(warm.MaxRun),
-			"ProbePendingTotal":     pendingTotal,
-			"ProbePendingFavorites": pendingFav,
-			"ProbePendingWatching":  pendingWatching,
-			"SegmentExtract":        h.segmentExtractEnabled(),
-			"SegmentScope":          h.segmentScopeValue(),
-			"SegmentAutoAfter":      shortDuration(h.segmentAutoAfter()),
-			"SegmentPending":        segmentPending,
-			"BackupDailyAt":         backupAt,
-			"BackupKeep":            backupKeep,
-			"BackupDir":             backupDir,
-			"BackupDirEffective":    h.backupDir(),
-			"TGEnabled":             tg.Enabled,
-			"TGReady":               tg.Token != "" && tg.ChatID != "",
-			"TGBotTokenSet":         tg.Token != "",
-			"TGBotTokenHint":        maskKey(tg.Token),
-			"TGChatID":              tg.ChatID,
-			"TGProxy":               tg.Proxy,
-			"TGEvents":              notify.EventsString(tg.Events),
+			"TMDBKeySet":              len(keys) > 0,
+			"TMDBKeyHint":             firstHint,
+			"TMDBKeyHints":            hints,
+			"TMDBKeyCount":            len(keys),
+			"TMDBProxy":               proxy,
+			"ScrapeEnabled":           h.scraper != nil && h.scraper.Enabled(),
+			"ScrapeTimeoutSeconds":    scrapeTimeout,
+			"ScanDailyAt":             scanDaily,
+			"ScrapeDailyAt":           scrapeDaily,
+			"RealtimeMonitor":         h.realtime != nil && h.realtime.Enabled(),
+			"ProbeWarmup":             warm.Enabled,
+			"ProbeScope":              warm.Scope,
+			"ProbeWindow":             warmupWindowLabel(warm),
+			"ProbeMaxRun":             shortDuration(warm.MaxRun),
+			"ProbePendingTotal":       pendingTotal,
+			"ProbePendingFavorites":   pendingFav,
+			"ProbePendingWatching":    pendingWatching,
+			"SegmentExtract":          h.segmentExtractEnabled(),
+			"SegmentScope":            h.segmentScopeValue(),
+			"SegmentAutoAfter":        shortDuration(h.segmentAutoAfter()),
+			"SegmentConcurrency":      h.segmentConcurrencyValue(),
+			"SegmentPreferLowBitrate": h.segmentPreferLowValue(),
+			"SegmentPending":          segmentPending,
+			"SegmentTargetQueued":     targetCounts["queued"],
+			"SegmentTargetRunning":    targetCounts["running"],
+			"SegmentTargetDone":       targetCounts["done"],
+			"SegmentTargetFailed":     targetCounts["failed"],
+			"BackupDailyAt":           backupAt,
+			"BackupKeep":              backupKeep,
+			"BackupDir":               backupDir,
+			"BackupDirEffective":      h.backupDir(),
+			"TGEnabled":               tg.Enabled,
+			"TGReady":                 tg.Token != "" && tg.ChatID != "",
+			"TGBotTokenSet":           tg.Token != "",
+			"TGBotTokenHint":          maskKey(tg.Token),
+			"TGChatID":                tg.ChatID,
+			"TGProxy":                 tg.Proxy,
+			"TGEvents":                notify.EventsString(tg.Events),
 
 			"IngestTGEnabled":      h.ingestEnabled(),
 			"IngestTGMode":         ingestMode,
@@ -167,23 +174,25 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			ScanDailyAt   *string `json:"ScanDailyAt"`
 			ScrapeDailyAt *string `json:"ScrapeDailyAt"`
 			// 单次刮削时长上限（秒），0 表示不限。
-			ScrapeTimeoutSeconds *int    `json:"ScrapeTimeoutSeconds"`
-			RealtimeMonitor      *bool   `json:"RealtimeMonitor"`
-			ProbeWarmup          *bool   `json:"ProbeWarmup"`
-			ProbeScope           *string `json:"ProbeScope"`
-			ProbeWindow          *string `json:"ProbeWindow"`
-			ProbeMaxRun          *string `json:"ProbeMaxRun"`
-			SegmentExtract       *bool   `json:"SegmentExtract"`
-			SegmentScope         *string `json:"SegmentScope"`
-			SegmentAutoAfter     *string `json:"SegmentAutoAfter"`
-			BackupDailyAt        *string `json:"BackupDailyAt"`
-			BackupKeep           *int    `json:"BackupKeep"`
-			BackupDir            *string `json:"BackupDir"`
-			TGBotToken           *string `json:"TGBotToken"`
-			TGChatID             *string `json:"TGChatID"`
-			TGProxy              *string `json:"TGProxy"`
-			TGEnabled            *bool   `json:"TGEnabled"`
-			TGEvents             *string `json:"TGEvents"`
+			ScrapeTimeoutSeconds    *int    `json:"ScrapeTimeoutSeconds"`
+			RealtimeMonitor         *bool   `json:"RealtimeMonitor"`
+			ProbeWarmup             *bool   `json:"ProbeWarmup"`
+			ProbeScope              *string `json:"ProbeScope"`
+			ProbeWindow             *string `json:"ProbeWindow"`
+			ProbeMaxRun             *string `json:"ProbeMaxRun"`
+			SegmentExtract          *bool   `json:"SegmentExtract"`
+			SegmentScope            *string `json:"SegmentScope"`
+			SegmentAutoAfter        *string `json:"SegmentAutoAfter"`
+			SegmentConcurrency      *int    `json:"SegmentConcurrency"`
+			SegmentPreferLowBitrate *bool   `json:"SegmentPreferLowBitrate"`
+			BackupDailyAt           *string `json:"BackupDailyAt"`
+			BackupKeep              *int    `json:"BackupKeep"`
+			BackupDir               *string `json:"BackupDir"`
+			TGBotToken              *string `json:"TGBotToken"`
+			TGChatID                *string `json:"TGChatID"`
+			TGProxy                 *string `json:"TGProxy"`
+			TGEnabled               *bool   `json:"TGEnabled"`
+			TGEvents                *string `json:"TGEvents"`
 
 			IngestTGEnabled   *bool   `json:"IngestTGEnabled"`
 			IngestTGMode      *string `json:"IngestTGMode"`
@@ -363,6 +372,27 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 				v = d.String()
 			}
 			if err := h.db.SetSetting("segment_auto_after", v); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			segmentChanged = true
+		}
+		if p.SegmentConcurrency != nil {
+			v := *p.SegmentConcurrency
+			if v < 1 {
+				v = 1
+			}
+			if v > 8 {
+				v = 8
+			}
+			if err := h.db.SetSetting("segment_concurrency", strconv.Itoa(v)); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+			segmentChanged = true
+		}
+		if p.SegmentPreferLowBitrate != nil {
+			if err := h.db.SetSetting("segment_prefer_low_bitrate", strconv.FormatBool(*p.SegmentPreferLowBitrate)); err != nil {
 				writeError(w, http.StatusInternalServerError, "save setting failed")
 				return
 			}
@@ -683,6 +713,33 @@ func (h *Handler) segmentScopeValue() string {
 		}
 	}
 	return h.cfg.SegmentScope
+}
+
+// segmentConcurrencyValue 返回指纹分析并发数（面板优先，1-8）。
+func (h *Handler) segmentConcurrencyValue() int {
+	n := h.cfg.SegmentConcurrency
+	if v, err := h.db.GetSetting("segment_concurrency"); err == nil && v != "" {
+		if x, err := strconv.Atoi(v); err == nil {
+			n = x
+		}
+	}
+	if n < 1 {
+		n = 1
+	}
+	if n > 8 {
+		n = 8
+	}
+	return n
+}
+
+// segmentPreferLowValue 返回是否优先用低码率片源做指纹。
+func (h *Handler) segmentPreferLowValue() bool {
+	if v, err := h.db.GetSetting("segment_prefer_low_bitrate"); err == nil && v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
+		}
+	}
+	return h.cfg.SegmentPreferLowBitrate
 }
 
 func (h *Handler) segmentAutoAfter() time.Duration {
