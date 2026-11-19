@@ -27,6 +27,10 @@ services:
       LIME_LIBRARY_ROOTS: "/media"
       # 服务端先跟掉 PanSave 一跳，直接把最终 CDN 地址交给客户端
       LIME_RESOLVE_REDIRECT: "true"
+      # 【起播优化】PlaybackInfo 的 DirectStreamUrl 直接返回 CDN 直链，
+      # VidHub / SenPlayer 等优先读该字段的客户端起播少一次 302 往返。
+      # 依赖上面的 LIME_RESOLVE_REDIRECT，关掉解析后本项自动失效。
+      LIME_PLAYBACK_DIRECT_URL: "true"
       # 数据库每日备份输出目录，默认写到 /data；放到独立挂载点更安全
       LIME_BACKUP_DIR: "/backup"
 

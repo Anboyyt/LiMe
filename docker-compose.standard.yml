@@ -51,6 +51,14 @@ services:
       # 监听媒体目录，PanSave 写入新 .strm 后自动入库
       LIME_REALTIME_MONITOR: "true"
 
+      # 【起播优化】LiMe 在服务端跟掉 PanSave 一跳，并把这个最终 CDN 地址
+      # 直接写进 PlaybackInfo 的 DirectStreamUrl。VidHub / SenPlayer 等
+      # 优先读该字段的客户端起播少一次 302 往返；不读该字段的客户端
+      # 仍走 /Videos/{id}/stream，行为不变。
+      # PanSave 有公网域名、想让客户端自己跟 302 时，把这两行都删掉。
+      LIME_RESOLVE_REDIRECT: "true"
+      LIME_PLAYBACK_DIRECT_URL: "true"
+
     volumes:
       # SQLite 数据库、海报/Logo 缓存、备份
       - ./data:/data
@@ -81,9 +89,11 @@ services:
 #   LIME_TMDB_API_KEY: "${LIME_TMDB_API_KEY:-}"
 #   LIME_TMDB_PROXY: "${LIME_TMDB_PROXY:-}"   # 容器内不能用 127.0.0.1
 #
-# PanSave 只暴露反向代理端口、没有云盘直链时：
+# PanSave 只暴露反向代理端口、没有云盘直链时（另一种替代方案）：
 #   LIME_INTERNAL_URL: "http://192.168.1.100:886"
-#   LIME_RESOLVE_REDIRECT: "true"
+#   注意：LIME_INTERNAL_URL 非空会把 PlaybackInfo 的 Path / DirectStreamUrl
+#   改成这个内网地址，外网客户端会拿到不可达地址；能用上面的
+#   RESOLVE_REDIRECT + PLAYBACK_DIRECT_URL 组合就不要开它。
 #
 # 其余默认值：
 #   LIME_DATA_DIR=/data  LIME_ADMIN_USER=admin  LIME_SERVER_NAME=LiMe

@@ -13,6 +13,8 @@
 
 开启 `LIME_RESOLVE_REDIRECT` 后，LiMe 在服务端就把 PanSave 那一跳跟掉，
 直接把最终 CDN 地址交给客户端 —— PanSave 的反代端口完全不用暴露到公网。
+再叠加 `LIME_PLAYBACK_DIRECT_URL`，PlaybackInfo 的 `DirectStreamUrl` 会直接
+写成最终 CDN 直链，客户端起播再少一次 302 往返。
 
 > 服务端不接触视频字节、不转码、不缓存 URL。播放大库时 LiMe 几乎不占上传带宽。
 
@@ -65,6 +67,7 @@ services:
       LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
       LIME_LIBRARY_ROOTS: "/media"
       LIME_RESOLVE_REDIRECT: "true"
+      LIME_PLAYBACK_DIRECT_URL: "true"  # 起播优化：PlaybackInfo 直接给 CDN 直链，少一次 302 往返
       LIME_BACKUP_DIR: "/backup"        # 数据库每日备份目录
     volumes:
       - ./data:/data
@@ -92,6 +95,7 @@ docker run -d --name lime \
   -e LIME_LIBRARIES="电影|/media/电影|movies;剧集|/media/剧集|tvshows" \
   -e LIME_LIBRARY_ROOTS=/media \
   -e LIME_RESOLVE_REDIRECT=true \
+  -e LIME_PLAYBACK_DIRECT_URL=true \
   -e LIME_BACKUP_DIR=/backup \
   lixxh/lime:latest
 ```
@@ -113,6 +117,7 @@ docker run -d --name lime \
 | `LIME_REALTIME_MONITOR` | 实时监控媒体目录 | `true` |
 | `LIME_REALTIME_RECONCILE` | 启动时磁盘与数据库对账 | `true` |
 | `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，直接给 CDN 地址 | `false` |
+| `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo 的 `DirectStreamUrl` 直接给 CDN 直链，客户端起播少一跳；需配合 `LIME_RESOLVE_REDIRECT=true` | `false` |
 | `LIME_INTERNAL_URL` | PanSave 反代用的内网上游地址 | 空 |
 | `LIME_REWRITE_ENABLED` | 改写 STRM 里的 302 地址 | `false` |
 | `LIME_REWRITE_FROM` / `LOCAL` / `PUBLIC` | 地址改写规则 | — |

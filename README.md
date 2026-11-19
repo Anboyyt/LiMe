@@ -408,7 +408,7 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token | `false` |
 | `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
 | `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端；公网直连建议开 | `false`（compose 模板里为 `true`） |
-| `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链（按客户端 UA 解析并缓存 10 分钟），VidHub 等优先读该字段的客户端少一跳 | `false` |
+| `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链（按客户端 UA 解析并缓存 10 分钟），VidHub 等优先读该字段的客户端少一跳。**需同时开 `LIME_RESOLVE_REDIRECT` 才生效** | `false` |
 | `LIME_YAMBY_PROXY` | Yamby 跟 302 不稳时，把它的视频流改成服务端中转；会占用 NAS 上行 | `false` |
 | `LIME_STREAM_CACHE_MB` | 仅代理模式：每个片源预取的头部长度的 MB 数，`0` 关闭（尾部固定 2MB） | `0` |
 | `LIME_STREAM_CACHE_MAX_MB` | 头/尾缓存总上限 | `4096` |
@@ -463,6 +463,23 @@ environment:
 - CDN 直链的签名与请求 UA 绑定，LiMe 会透传客户端 UA，否则会 403 `invalid signature`
 - `RunTimeTicks = 0` 时部分客户端进度条异常，属已知限制；有 TMDB 时长后会自动回填
 - 多版本默认按画质排序，客户端不指定 `MediaSourceId` 时播最高画质
+
+### 起播加速：`LIME_PLAYBACK_DIRECT_URL`
+
+在 `LIME_RESOLVE_REDIRECT=true` 的基础上再打开 `LIME_PLAYBACK_DIRECT_URL`，
+PlaybackInfo 的 `DirectStreamUrl` 会直接写最终 CDN 直链（按客户端 UA 解析，
+结果缓存 10 分钟），客户端起播少一次「回 LiMe 拿 302」的往返：
+
+```
+客户端 → PlaybackInfo（DirectStreamUrl = https://xxx.115cdn.net/...mp4）
+      → 直接连 CDN，跳过 LiMe 的 302
+```
+
+- 优先读 `DirectStreamUrl` 的客户端（VidHub、SenPlayer 等）生效；不读该字段的
+  客户端仍走 `/Videos/{id}/stream` 的 302，行为不变
+- 外部访问走 Cloudflare / 反向代理时收益更明显，省掉一次公网往返
+- 列表接口（`/Items`、`/Shows/{id}/Episodes`）也会预解析第一片源，最多等 600ms，
+  超时保持 LiMe 地址，不影响列表可用性
 
 ### 时长
 
