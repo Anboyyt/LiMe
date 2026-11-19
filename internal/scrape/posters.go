@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"lime/internal/store"
-	"lime/internal/tmdb"
 )
 
 // PosterStatus 返回当前海报回填进度。
@@ -103,7 +102,7 @@ func (s *Scraper) finishPoster(err error) {
 	s.backdropMu.Unlock()
 }
 
-// refreshPoster 重新取该条目当前语言的海报路径，按 w780 下载并替换旧图。
+// refreshPoster 重新取该条目当前语言的海报路径，按面板选择的尺寸下载并替换旧图。
 // 用详情接口的 poster_path（而不是图片列表里评分最高的那张），保证换的只是
 // 分辨率，海报本身和当初刮削时是同一张。
 func (s *Scraper) refreshPoster(ctx context.Context, it store.PosterItem) error {
@@ -129,7 +128,7 @@ func (s *Scraper) refreshPoster(ctx context.Context, it store.PosterItem) error 
 		_ = s.db.ClearScrapeFailure(it.ID, store.FailurePoster)
 		return nil
 	}
-	rel, err := s.client.DownloadImage(ctx, path, tmdb.PosterSize, s.cfg.DataDir)
+	rel, err := s.client.DownloadImage(ctx, path, s.PosterSize(), s.cfg.DataDir)
 	if err != nil {
 		_ = s.db.RecordScrapeFailure(it.ID, store.FailurePoster, err.Error())
 		return err

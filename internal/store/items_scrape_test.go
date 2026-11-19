@@ -183,37 +183,6 @@ func TestGenresAndPeopleSurviveRescan(t *testing.T) {
 	}
 }
 
-func TestMissingEpisodeStills(t *testing.T) {
-	db := newTestDB(t)
-	seedPlaybackFixture(t, db)
-
-	series, _ := db.GetItem("s1")
-	series.TmdbID = "123"
-	if err := db.UpsertItem(series); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.UpdateItemMetadata("s1", MetadataUpdate{Overview: "x"}); err != nil {
-		t.Fatal(err)
-	}
-	// e1 已刮削但还在共用季海报；e2 没刮过，不参与
-	if err := db.UpdateEpisodeMetadata("e1", "第一集", "", "", 0, "", "", ""); err != nil {
-		t.Fatal(err)
-	}
-
-	before := time.Now().Unix()
-	seasons, err := db.SeriesSeasonsMissingEpisodeStill(before)
-	if err != nil || len(seasons) != 1 || seasons[0].SeriesID != "s1" || seasons[0].Season != 1 {
-		t.Fatalf("missing stills = %+v %v", seasons, err)
-	}
-
-	if err := db.UpdateItemImage("e1", "images/still.jpg"); err != nil {
-		t.Fatal(err)
-	}
-	if seasons, err := db.SeriesSeasonsMissingEpisodeStill(before); err != nil || len(seasons) != 0 {
-		t.Fatalf("still still missing: %+v %v", seasons, err)
-	}
-}
-
 // TMDB 本身没有评分/类型/时长的条目，尝试一次后应退出补齐队列，
 // 不能每天重复请求。
 func TestMissingMetadataConverges(t *testing.T) {
@@ -271,7 +240,7 @@ func TestMissingMetadataConverges(t *testing.T) {
 	}
 }
 
-// 季级补缺（单集剧照/时长）同样要收敛，并带回季 ID 用于标记。
+// 季级补缺（单集时长）同样要收敛，并带回季 ID 用于标记。
 func TestMissingSeasonWorkConverges(t *testing.T) {
 	db := newTestDB(t)
 	seedPlaybackFixture(t, db)
@@ -284,31 +253,21 @@ func TestMissingSeasonWorkConverges(t *testing.T) {
 	if err := db.UpdateItemMetadata("s1", MetadataUpdate{Overview: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	// e1 已刮削但无剧照、无时长
+	// e1 已刮削但无时长
 	if err := db.UpdateEpisodeMetadata("e1", "第一集", "", "", 0, "", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
 	before := time.Now().Unix()
-	stillSeasons, err := db.SeriesSeasonsMissingEpisodeStill(before)
-	if err != nil || len(stillSeasons) != 1 || stillSeasons[0].SeasonID != "se1" {
-		t.Fatalf("missing stills = %+v %v", stillSeasons, err)
-	}
 	runtimeSeasons, err := db.SeriesSeasonsMissingEpisodeRuntime(before)
 	if err != nil || len(runtimeSeasons) != 1 || runtimeSeasons[0].SeasonID != "se1" {
 		t.Fatalf("missing runtime = %+v %v", runtimeSeasons, err)
 	}
 
-	if err := db.MarkSeasonStillsChecked("se1"); err != nil {
-		t.Fatal(err)
-	}
 	if err := db.MarkSeasonRuntimeChecked("se1"); err != nil {
 		t.Fatal(err)
 	}
 
-	if seasons, err := db.SeriesSeasonsMissingEpisodeStill(before); err != nil || len(seasons) != 0 {
-		t.Fatalf("stills not converged: %+v %v", seasons, err)
-	}
 	if seasons, err := db.SeriesSeasonsMissingEpisodeRuntime(before); err != nil || len(seasons) != 0 {
 		t.Fatalf("runtime not converged: %+v %v", seasons, err)
 	}
@@ -404,5 +363,106 @@ func TestScrapeProductionYearFromTMDB(t *testing.T) {
 	it, _ = db.GetItem("m1")
 	if it.ProductionYear != 2020 {
 		t.Fatalf("after metadata update year = %d, want 2020", it.ProductionYear)
+	}
+}
+
+// 单集封面继承剧集海报：旧的刮削剧照被批量改回剧集海报，
+// 面板上传的封面和本地海报不动。
+func TestRepointEpisodeImagesToSeriesPoster(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	if err := db.SetItemImage("s1", "primary", "images/series-poster.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateItemImage("e1", "images/old-still.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateItemImage("e2", "images/e2-primary-123.jpg"); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := db.RepointEpisodeImagesToSeriesPoster()
+	if err != nil || n != 1 {
+		t.Fatalf("repointed = %d, %v; want 1", n, err)
+	}
+
+	e1, _ := db.GetItem("e1")
+	e2, _ := db.GetItem("e2")
+	if e1.ImagePath != "images/series-poster.jpg" {
+		t.Fatalf("e1 image = %q, want series poster", e1.ImagePath)
+	}
+	if e2.ImagePath != "images/e2-primary-123.jpg" {
+		t.Fatalf("uploaded cover overwritten: %q", e2.ImagePath)
+	}
+}
+
+// 切回「单集封面=剧照」时，只挑还在共用剧集海报的单集去补，不碰自上传封面。
+func TestMissingEpisodeStillUsesSeriesPoster(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	series, _ := db.GetItem("s1")
+	series.TmdbID = "123"
+	if err := db.UpsertItem(series); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetItemImage("s1", "primary", "images/series-poster.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateEpisodeMetadata("e1", "第一集", "", "", 0, "images/series-poster.jpg", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	before := time.Now().Unix()
+	seasons, err := db.SeriesSeasonsMissingEpisodeStill(before)
+	if err != nil || len(seasons) != 1 || seasons[0].SeasonID != "se1" {
+		t.Fatalf("missing stills = %+v %v", seasons, err)
+	}
+
+	if err := db.UpdateItemImage("e1", "images/e1-primary-123.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if seasons, err := db.SeriesSeasonsMissingEpisodeStill(before); err != nil || len(seasons) != 0 {
+		t.Fatalf("uploaded cover should not be treated as missing still: %+v %v", seasons, err)
+	}
+}
+
+func TestSeriesSeasonsForStills(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	series, _ := db.GetItem("s1")
+	series.TmdbID = "123"
+	if err := db.UpsertItem(series); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateEpisodeMetadata("e1", "第一集", "", "", 0, "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	seasons, err := db.SeriesSeasonsForStills()
+	if err != nil || len(seasons) != 1 || seasons[0].SeasonID != "se1" || seasons[0].TmdbID != "123" {
+		t.Fatalf("seasons = %+v %v", seasons, err)
+	}
+}
+
+func TestEpisodeStillPaths(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	if err := db.SetItemImage("s1", "primary", "images/series-poster.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateItemImage("e1", "images/still-old.jpg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpdateItemImage("e2", "images/e2-primary-123.jpg"); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := db.EpisodeStillPaths()
+	if err != nil || len(paths) != 1 || paths[0] != "images/still-old.jpg" {
+		t.Fatalf("still paths = %v %v", paths, err)
 	}
 }

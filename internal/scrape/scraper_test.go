@@ -42,3 +42,35 @@ func TestYearFromDate(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizePosterSize(t *testing.T) {
+	for _, in := range []string{"w342", "w500", "w780", "original", "W780", " original "} {
+		if _, ok := normalizePosterSize(in); !ok {
+			t.Fatalf("normalizePosterSize(%q) rejected", in)
+		}
+	}
+	for _, in := range []string{"", "w185", "huge", "../x"} {
+		if _, ok := normalizePosterSize(in); ok {
+			t.Fatalf("normalizePosterSize(%q) accepted", in)
+		}
+	}
+	if v, ok := normalizePosterSize(" W780 "); !ok || v != "w780" {
+		t.Fatalf("normalizePosterSize = %q, %v; want w780", v, ok)
+	}
+}
+
+func TestNormalizeStillSize(t *testing.T) {
+	for _, in := range []string{"w92", "w185", "w300", "original", "W300"} {
+		if _, ok := normalizeStillSize(in); !ok {
+			t.Fatalf("normalizeStillSize(%q) rejected", in)
+		}
+	}
+	for _, in := range []string{"", "w500", "w780", "huge"} {
+		if _, ok := normalizeStillSize(in); ok {
+			t.Fatalf("normalizeStillSize(%q) accepted", in)
+		}
+	}
+	if v, ok := normalizeStillSize(" W300 "); !ok || v != "w300" {
+		t.Fatalf("normalizeStillSize = %q, %v; want w300", v, ok)
+	}
+}

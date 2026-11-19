@@ -110,8 +110,14 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			ingestMaxWait = shortDuration(d)
 		}
 		scrapeTimeout := 6 * 3600
+		posterSize := "w780"
+		stillSize := "w185"
+		episodeStills := false
 		if h.scraper != nil {
 			scrapeTimeout = int(h.scraper.Timeout().Seconds())
+			posterSize = h.scraper.PosterSize()
+			stillSize = h.scraper.StillSize()
+			episodeStills = h.scraper.EpisodeStills()
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"TMDBKeySet":              len(keys) > 0,
@@ -121,6 +127,9 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			"TMDBProxy":               proxy,
 			"ScrapeEnabled":           h.scraper != nil && h.scraper.Enabled(),
 			"ScrapeTimeoutSeconds":    scrapeTimeout,
+			"PosterSize":              posterSize,
+			"StillSize":               stillSize,
+			"EpisodeStills":           episodeStills,
 			"ScanDailyAt":             scanDaily,
 			"ScrapeDailyAt":           scrapeDaily,
 			"RealtimeMonitor":         h.realtime != nil && h.realtime.Enabled(),
@@ -174,7 +183,13 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			ScanDailyAt   *string `json:"ScanDailyAt"`
 			ScrapeDailyAt *string `json:"ScrapeDailyAt"`
 			// 单次刮削时长上限（秒），0 表示不限。
-			ScrapeTimeoutSeconds    *int    `json:"ScrapeTimeoutSeconds"`
+			ScrapeTimeoutSeconds *int `json:"ScrapeTimeoutSeconds"`
+			// 海报下载尺寸：w342 / w500 / w780 / original。
+			PosterSize *string `json:"PosterSize"`
+			// 单集剧照尺寸：w92 / w185 / w300 / original。
+			StillSize *string `json:"StillSize"`
+			// 单集是否单独刮削 TMDB 剧照；false 时封面继承剧集海报。
+			EpisodeStills           *bool   `json:"EpisodeStills"`
 			RealtimeMonitor         *bool   `json:"RealtimeMonitor"`
 			ProbeWarmup             *bool   `json:"ProbeWarmup"`
 			ProbeScope              *string `json:"ProbeScope"`
@@ -280,6 +295,36 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 					writeError(w, http.StatusInternalServerError, "save setting failed")
 					return
 				}
+			}
+		}
+		if p.PosterSize != nil {
+			if h.scraper == nil {
+				writeError(w, http.StatusBadRequest, "刮削未初始化")
+				return
+			}
+			if err := h.scraper.SetPosterSize(*p.PosterSize); err != nil {
+				writeError(w, http.StatusBadRequest, "海报尺寸只支持 w342 / w500 / w780 / original")
+				return
+			}
+		}
+		if p.StillSize != nil {
+			if h.scraper == nil {
+				writeError(w, http.StatusBadRequest, "刮削未初始化")
+				return
+			}
+			if err := h.scraper.SetStillSize(*p.StillSize); err != nil {
+				writeError(w, http.StatusBadRequest, "剧照尺寸只支持 w92 / w185 / w300 / original")
+				return
+			}
+		}
+		if p.EpisodeStills != nil {
+			if h.scraper == nil {
+				writeError(w, http.StatusBadRequest, "刮削未初始化")
+				return
+			}
+			if err := h.scraper.SetEpisodeStills(*p.EpisodeStills); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
 			}
 		}
 

@@ -1064,13 +1064,14 @@
   // ---------- 系统 ----------
   async function renderSystem() {
     $('#crumb').textContent = '系统';
-    const [info, cfg, scan, settings, backdrops, posters, failures, stats] = await Promise.all([
+    const [info, cfg, scan, settings, backdrops, posters, stills, failures, stats] = await Promise.all([
       api('/System/Info'),
       api('/System/Configuration'),
       api('/web/api/scan'),
       api('/web/api/settings'),
       api('/web/api/images/backdrops'),
       api('/web/api/images/posters'),
+      api('/web/api/images/stills'),
       api('/web/api/scrape/failures?limit=1'),
       api('/web/api/stats'),
     ]);
@@ -1253,6 +1254,7 @@
       </div>
       <div class="panel"><h3>海报清晰度</h3>
         <div class="kv">
+          <div><b>下载尺寸</b><span>${esc(settings.PosterSize || 'w780')}</span></div>
           <div><b>状态</b><span>${posters.Running
             ? `回填中 ${posters.Processed || 0}/${posters.Total || '?'}`
             : (posters.LastFinished
@@ -1261,9 +1263,46 @@
           ${posters.LastError ? `<div><b>上次错误</b><span>${esc(posters.LastError)}</span></div>` : ''}
         </div>
         <div class="row" style="margin-top:12px">
-          <button data-action="refresh-posters" ${posters.Running ? 'disabled' : ''}>重新下载海报（w780）</button>
+          <select id="posterSize" style="max-width:200px">
+            <option value="w342" ${settings.PosterSize === 'w342' ? 'selected' : ''}>w342（小，省空间）</option>
+            <option value="w500" ${settings.PosterSize === 'w500' ? 'selected' : ''}>w500（中）</option>
+            <option value="w780" ${(!settings.PosterSize || settings.PosterSize === 'w780') ? 'selected' : ''}>w780（大，推荐）</option>
+            <option value="original" ${settings.PosterSize === 'original' ? 'selected' : ''}>original（原图，最大）</option>
+          </select>
+          <button class="primary" data-action="save-settings">保存尺寸</button>
+          <button data-action="refresh-posters" ${posters.Running ? 'disabled' : ''}>重新下载海报（${esc(settings.PosterSize || 'w780')}）</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">把电影/剧集海报从 w500 升到 w780，换的是同一张图的高清版。约 2.2 万张，预计多占约 3GB；不会覆盖面板里手工上传的封面。</p>
+        <p class="muted" style="margin:8px 0 0">新刮削的电影/剧集/季海报按所选尺寸下载。改尺寸不会自动重下存量，点「重新下载海报」才会按新尺寸替换电影/剧集海报（季海报随整季刮削更新）；约 2.2 万张，w780 约 3GB，original 视原图大小可能几十 GB。不会覆盖面板里手工上传的封面。</p>
+      </div>
+      <div class="panel"><h3>单集封面</h3>
+        <div class="kv">
+          <div><b>当前方式</b><span>${settings.EpisodeStills ? 'TMDB 剧照（16:9）' : '继承剧集大海报'}</span></div>
+          <div><b>剧照尺寸</b><span>${esc(settings.StillSize || 'w185')}</span></div>
+          <div><b>下载状态</b><span>${stills.Running
+            ? `回填中 ${stills.Processed || 0}/${stills.Total || '?'} 季`
+            : (stills.LastFinished
+              ? `上次完成 ${fmtUnix(stills.LastFinished)}，处理 ${stills.Processed || 0} 季`
+              : '未运行')}</span></div>
+          ${stills.LastError ? `<div><b>上次错误</b><span>${esc(stills.LastError)}</span></div>` : ''}
+        </div>
+        <div class="row" style="margin-top:12px">
+          <select id="episodeStills" style="max-width:280px">
+            <option value="0" ${!settings.EpisodeStills ? 'selected' : ''}>继承剧集海报（不下载剧照）</option>
+            <option value="1" ${settings.EpisodeStills ? 'selected' : ''}>下载 TMDB 剧照</option>
+          </select>
+          <select id="stillSize" style="max-width:180px">
+            <option value="w92" ${settings.StillSize === 'w92' ? 'selected' : ''}>w92（小）</option>
+            <option value="w185" ${(!settings.StillSize || settings.StillSize === 'w185') ? 'selected' : ''}>w185（推荐）</option>
+            <option value="w300" ${settings.StillSize === 'w300' ? 'selected' : ''}>w300（清晰）</option>
+            <option value="original" ${settings.StillSize === 'original' ? 'selected' : ''}>original（原图）</option>
+          </select>
+          <button class="primary" data-action="save-settings">保存</button>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button data-action="refresh-stills" ${(!settings.EpisodeStills || stills.Running) ? 'disabled' : ''}>重新下载单集剧照（${esc(settings.StillSize || 'w185')}）</button>
+          <button data-action="cleanup-stills">清理单集封面</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">继承模式直接用剧集大海报，省空间也省 TMDB 请求。剧照模式按所选尺寸下载；重新下载会替换旧图并删除旧尺寸文件，每个单集只保留一个版本。清理会把存量单集改回剧集海报并删除剧照文件，面板上传的封面和本地 poster.jpg 不受影响。</p>
       </div>
       <div class="panel"><h3>刮削失败报告</h3>
         <div class="kv">
@@ -1457,6 +1496,12 @@
         if (scrapeDailyAt !== undefined) body.ScrapeDailyAt = scrapeDailyAt;
         const scrapeTimeoutEl = $('#scrapeTimeout');
         if (scrapeTimeoutEl) body.ScrapeTimeoutSeconds = parseInt(scrapeTimeoutEl.value || '21600', 10);
+        const posterSizeEl = $('#posterSize');
+        if (posterSizeEl) body.PosterSize = posterSizeEl.value;
+        const episodeStillsEl = $('#episodeStills');
+        if (episodeStillsEl) body.EpisodeStills = episodeStillsEl.value === '1';
+        const stillSizeEl = $('#stillSize');
+        if (stillSizeEl) body.StillSize = stillSizeEl.value;
         const realtimeEl = $('#realtimeMonitor');
         if (realtimeEl) body.RealtimeMonitor = realtimeEl.checked;
         const probeWarmupEl = $('#probeWarmup');
@@ -1613,10 +1658,36 @@
         break;
       }
       case 'refresh-posters': {
-        if (!confirm('重新下载约 2.2 万张海报（w500 → w780），预计多占约 3GB。确定开始？')) break;
+        const sizeEl = $('#posterSize');
+        const size = sizeEl ? sizeEl.value : 'w780';
+        if (!confirm(`按 ${size} 重新下载约 2.2 万张电影/剧集海报，确定开始？`)) break;
+        // 下拉框改了但没点保存时，以这次选择为准一起存下去。
+        if (sizeEl) {
+          await api('/web/api/settings', { method: 'PUT', body: JSON.stringify({ PosterSize: size }) });
+        }
         await api('/web/api/images/posters', { method: 'POST' });
         toast('已开始回填海报，稍后刷新本页查看进度');
         setTimeout(route, 1500);
+        break;
+      }
+      case 'refresh-stills': {
+        const sizeEl = $('#stillSize');
+        const size = sizeEl ? sizeEl.value : 'w185';
+        if (!confirm(`按 ${size} 重新下载单集剧照，旧尺寸文件会被删除，确定开始？`)) break;
+        await api('/web/api/settings', {
+          method: 'PUT',
+          body: JSON.stringify({ StillSize: size, EpisodeStills: true }),
+        });
+        await api('/web/api/images/stills', { method: 'POST' });
+        toast('已开始回填单集剧照，稍后刷新本页查看进度');
+        setTimeout(route, 1500);
+        break;
+      }
+      case 'cleanup-stills': {
+        if (!confirm('删除已下载的单集剧照文件，并把单集封面改回剧集海报？此操作不可撤销。')) break;
+        const res = await api('/web/api/images/stills', { method: 'DELETE' });
+        toast(`已清理 ${res.Removed || 0} 个剧照文件`);
+        await route();
         break;
       }
       case 'download-failures': {

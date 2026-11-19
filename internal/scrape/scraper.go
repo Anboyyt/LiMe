@@ -55,14 +55,20 @@ type Scraper struct {
 	paceInterval time.Duration
 	timeout      time.Duration
 	startAt      time.Time
-	pacMu        sync.Mutex
-	paceLast     time.Time
+
+	// 海报/剧照尺寸和单集封面策略都由面板设置，运行时生效。
+	posterSize    string
+	stillSize     string
+	episodeStills bool
+	pacMu         sync.Mutex
+	paceLast      time.Time
 
 	// 背景图/海报回填是独立任务，不占用刮削的 running 标记。
 	// 两者共用一把锁，避免同时对 TMDB 发两倍的图。
 	backdropMu sync.Mutex
 	backdrop   BackdropStatus
 	poster     BackdropStatus
+	still      BackdropStatus
 }
 
 func New(cfg config.Config, db *store.DB, log *slog.Logger) *Scraper {
@@ -89,9 +95,26 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger) *Scraper {
 			timeout = d
 		}
 	}
+	posterSize := tmdb.PosterSize
+	if v, err := db.GetSetting(posterSizeKey); err == nil {
+		if size, ok := normalizePosterSize(v); ok {
+			posterSize = size
+		}
+	}
+	stillSize := tmdb.StillSize
+	if v, err := db.GetSetting(stillSizeKey); err == nil {
+		if size, ok := normalizeStillSize(v); ok {
+			stillSize = size
+		}
+	}
+	episodeStills := false
+	if v, err := db.GetSetting(episodeStillsKey); err == nil {
+		episodeStills = strings.TrimSpace(v) == "1" || strings.EqualFold(strings.TrimSpace(v), "true")
+	}
 	s := &Scraper{
 		cfg: cfg, db: db, client: client, log: log,
 		workers: workers, paceInterval: interval, timeout: timeout,
+		posterSize: posterSize, stillSize: stillSize, episodeStills: episodeStills,
 	}
 	// 面板里保存的时长上限优先于环境变量，单位是秒；0 表示不限。
 	if v, err := db.GetSetting(scrapeTimeoutKey); err == nil {
@@ -135,10 +158,125 @@ func (s *Scraper) Timeout() time.Duration {
 	return s.timeout
 }
 
+const (
+	posterSizeKey    = "poster_size"
+	stillSizeKey     = "still_size"
+	episodeStillsKey = "episode_stills"
+)
+
+// 海报尺寸取 TMDB 支持的标准档位；original 是原图，存量多时占空间明显。
+var posterSizeChoices = map[string]bool{
+	"w342":     true,
+	"w500":     true,
+	"w780":     true,
+	"original": true,
+}
+
+func normalizePosterSize(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	return v, posterSizeChoices[v]
+}
+
+// TMDB 的剧照只有这几档；w92 太小，只在想极限省空间时用。
+var stillSizeChoices = map[string]bool{
+	"w92":      true,
+	"w185":     true,
+	"w300":     true,
+	"original": true,
+}
+
+func normalizeStillSize(v string) (string, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	return v, stillSizeChoices[v]
+}
+
+// PosterSize 返回当前海报下载尺寸。
+func (s *Scraper) PosterSize() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.posterSize == "" {
+		return tmdb.PosterSize
+	}
+	return s.posterSize
+}
+
+// SetPosterSize 保存海报尺寸，立即生效；之后的刮削和「重新下载海报」都会用它。
+func (s *Scraper) SetPosterSize(size string) error {
+	v, ok := normalizePosterSize(size)
+	if !ok {
+		return fmt.Errorf("unsupported poster size: %s", size)
+	}
+	if err := s.db.SetSetting(posterSizeKey, v); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.posterSize = v
+	s.mu.Unlock()
+	return nil
+}
+
+// StillSize 返回当前单集剧照下载尺寸。
+func (s *Scraper) StillSize() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stillSize == "" {
+		return tmdb.StillSize
+	}
+	return s.stillSize
+}
+
+// SetStillSize 保存剧照尺寸，立即生效；之后下载和重新下载剧照都会用它。
+func (s *Scraper) SetStillSize(size string) error {
+	v, ok := normalizeStillSize(size)
+	if !ok {
+		return fmt.Errorf("unsupported still size: %s", size)
+	}
+	if err := s.db.SetSetting(stillSizeKey, v); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.stillSize = v
+	s.mu.Unlock()
+	return nil
+}
+
+// EpisodeStills 表示单集是否单独下载 TMDB 剧照；false 时封面继承剧集海报。
+func (s *Scraper) EpisodeStills() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.episodeStills
+}
+
+// SetEpisodeStills 保存单集封面策略。切回「继承剧集海报」时顺手把存量
+// 单集的旧剧照改成剧集海报；切换到剧照则等下一次刮削按季回填。
+func (s *Scraper) SetEpisodeStills(on bool) error {
+	value := "0"
+	if on {
+		value = "1"
+	}
+	if err := s.db.SetSetting(episodeStillsKey, value); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.episodeStills = on
+	s.mu.Unlock()
+
+	if !on {
+		n, err := s.db.RepointEpisodeImagesToSeriesPoster()
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			s.log.Info("episode covers switched to series poster", "items", n)
+		}
+	}
+	return nil
+}
+
 const scrapeStatusKey = "scrape_status"
 
 // recheckInterval 是「补缺任务」的重试间隔。TMDB 本身没有评分/类型/
-// 时长/剧照的条目，每天重查没有意义；隔 30 天再试一次，也能覆盖
+// 时长的条目，每天重查没有意义；隔 30 天再试一次，也能覆盖
 // TMDB 后来补数据的情况。
 const recheckInterval = 30 * 24 * time.Hour
 
@@ -370,9 +508,11 @@ func (s *Scraper) scrapeSeasonEpisodes(ctx context.Context, it *store.Item, only
 			continue
 		}
 		image := poster
-		if ep.StillPath != "" {
-			if still, err := s.client.DownloadImage(ctx, ep.StillPath, tmdb.StillSize, s.cfg.DataDir); err == nil && still != "" {
+		if s.EpisodeStills() && ep.StillPath != "" {
+			if still, err := s.client.DownloadImage(ctx, ep.StillPath, s.StillSize(), s.cfg.DataDir); err == nil && still != "" {
 				image = still
+			} else if err != nil {
+				s.log.Warn("download episode still failed", "item", item.ID, "err", err)
 			}
 		}
 		if err := s.db.UpdateEpisodeMetadata(item.ID, ep.Name, ep.Overview, ep.AirDate,
@@ -546,9 +686,13 @@ func (s *Scraper) run() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	missingStills, err := s.db.SeriesSeasonsMissingEpisodeStill(checkedBefore)
-	if err != nil {
-		return 0, err
+	// 只有「单集封面=剧照」模式才补存量剧照；继承剧集海报时不需要这份查询。
+	var missingStills []store.SeriesSeason
+	if s.EpisodeStills() {
+		missingStills, err = s.db.SeriesSeasonsMissingEpisodeStill(checkedBefore)
+		if err != nil {
+			return 0, err
+		}
 	}
 	missingRatingsMovies, err := s.db.ItemsMissingOfficialRating(store.TypeMovie, checkedBefore)
 	if err != nil {
@@ -813,7 +957,7 @@ func (s *Scraper) backfillRatings(ctx context.Context, movies, series []*store.I
 	return count
 }
 
-// backfillStills 给已经刮削过的单集补 TMDB 剧照。
+// backfillStills 给已经刮削过的单集补 TMDB 剧照（仅在「单集封面=剧照」模式）。
 func (s *Scraper) backfillStills(ctx context.Context, seasons []store.SeriesSeason) int {
 	count := 0
 	for _, ss := range seasons {
@@ -838,7 +982,7 @@ func (s *Scraper) backfillStills(ctx context.Context, seasons []store.SeriesSeas
 			if err != nil {
 				continue
 			}
-			still, err := s.client.DownloadImage(ctx, ep.StillPath, tmdb.StillSize, s.cfg.DataDir)
+			still, err := s.client.DownloadImage(ctx, ep.StillPath, s.StillSize(), s.cfg.DataDir)
 			if err != nil {
 				s.log.Warn("download episode still failed", "item", item.ID, "err", err)
 				continue
@@ -1194,7 +1338,7 @@ func (s *Scraper) scrapeMovie(ctx context.Context, it *store.Item) error {
 	}
 	s.savePeople(m.Credits.Cast)
 
-	poster, err := s.client.DownloadImage(ctx, m.PosterPath, tmdb.PosterSize, s.cfg.DataDir)
+	poster, err := s.client.DownloadImage(ctx, m.PosterPath, s.PosterSize(), s.cfg.DataDir)
 	if err != nil {
 		s.log.Warn("download poster failed", "item", it.ID, "err", err)
 		_ = s.db.RecordScrapeFailure(it.ID, store.FailurePoster, err.Error())
@@ -1259,7 +1403,7 @@ func (s *Scraper) scrapeSeries(ctx context.Context, it *store.Item) error {
 	}
 	s.savePeople(tv.Credits.Cast)
 
-	poster, err := s.client.DownloadImage(ctx, tv.PosterPath, tmdb.PosterSize, s.cfg.DataDir)
+	poster, err := s.client.DownloadImage(ctx, tv.PosterPath, s.PosterSize(), s.cfg.DataDir)
 	if err != nil {
 		s.log.Warn("download poster failed", "item", it.ID, "err", err)
 		_ = s.db.RecordScrapeFailure(it.ID, store.FailurePoster, err.Error())
@@ -1309,14 +1453,15 @@ func (s *Scraper) scrapeSeason(ctx context.Context, it *store.Item) error {
 		return err
 	}
 
-	poster, err := s.client.DownloadImage(ctx, sd.PosterPath, tmdb.PosterSize, s.cfg.DataDir)
+	poster, err := s.client.DownloadImage(ctx, sd.PosterPath, s.PosterSize(), s.cfg.DataDir)
 	if err != nil {
 		s.log.Warn("download season poster failed", "item", it.ID, "err", err)
 	}
 
 	// 季没海报时用剧集海报，分级和 logo 也继承剧集
-	var backdrop, rating, logo string
+	var backdrop, rating, logo, seriesPoster string
 	if parent, err := s.db.GetItem(it.ParentID); err == nil {
+		seriesPoster = parent.ImagePath
 		if poster == "" {
 			poster = parent.ImagePath
 		}
@@ -1345,10 +1490,14 @@ func (s *Scraper) scrapeSeason(ctx context.Context, it *store.Item) error {
 		if err != nil {
 			return err
 		}
-		image := poster
-		if ep.StillPath != "" {
-			still, err := s.client.DownloadImage(ctx, ep.StillPath, tmdb.StillSize, s.cfg.DataDir)
-			if err != nil {
+		// 默认继承剧集大海报；剧集还没海报时退回季海报。
+		// 只有面板里开启「单集封面=剧照」才额外下载 16:9 剧照。
+		image := seriesPoster
+		if image == "" {
+			image = poster
+		}
+		if s.EpisodeStills() && ep.StillPath != "" {
+			if still, err := s.client.DownloadImage(ctx, ep.StillPath, s.StillSize(), s.cfg.DataDir); err != nil {
 				s.log.Warn("download episode still failed", "item", item.ID, "err", err)
 			} else if still != "" {
 				image = still

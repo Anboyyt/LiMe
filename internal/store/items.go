@@ -551,8 +551,8 @@ type SeriesSeason struct {
 	Season   int
 }
 
-// SeriesSeasonsMissingEpisodeStill 找出还在共用季海报的单集，
-// 按季聚合后统一去 TMDB 拉剧照。
+// SeriesSeasonsMissingEpisodeStill 找出封面仍是剧集海报的单集，
+// 按季聚合后统一去 TMDB 拉剧照。只在「单集封面=剧照」模式下使用。
 func (d *DB) SeriesSeasonsMissingEpisodeStill(checkedBefore int64) ([]SeriesSeason, error) {
 	rows, err := d.Query(`
 SELECT DISTINCT se.id, e.series_id, s.tmdb_id, e.parent_index_number
@@ -561,7 +561,7 @@ JOIN items s ON s.id = e.series_id
 JOIN items se ON se.id = e.season_id
 WHERE e.type = 'Episode' AND e.scraped_at > 0 AND s.tmdb_id <> ''
   AND e.parent_index_number > 0
-  AND (e.image_path = '' OR e.image_path = se.image_path)
+  AND (e.image_path = '' OR e.image_path = s.image_path)
   AND se.episode_stills_checked_at < ?
 ORDER BY s.tmdb_id, e.parent_index_number`, checkedBefore)
 	if err != nil {
@@ -580,6 +580,59 @@ ORDER BY s.tmdb_id, e.parent_index_number`, checkedBefore)
 	return out, rows.Err()
 }
 
+// SeriesSeasonsForStills 返回所有已刮削、带 TMDB ID 的季，
+// 用于按当前尺寸重新下载单集剧照。
+func (d *DB) SeriesSeasonsForStills() ([]SeriesSeason, error) {
+	rows, err := d.Query(`
+SELECT DISTINCT se.id, e.series_id, s.tmdb_id, e.parent_index_number
+FROM items e
+JOIN items s ON s.id = e.series_id
+JOIN items se ON se.id = e.season_id
+WHERE e.type = 'Episode' AND e.scraped_at > 0 AND s.tmdb_id <> ''
+ORDER BY s.tmdb_id, e.parent_index_number`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]SeriesSeason, 0, 16)
+	for rows.Next() {
+		var ss SeriesSeason
+		if err := rows.Scan(&ss.SeasonID, &ss.SeriesID, &ss.TmdbID, &ss.Season); err != nil {
+			return nil, err
+		}
+		out = append(out, ss)
+	}
+	return out, rows.Err()
+}
+
+// EpisodeStillPaths 返回单集当前引用的、不是剧集海报的刮削图片。
+// 清理时先取这份清单，再把封面改回剧集海报，最后删掉没人再引用的文件。
+func (d *DB) EpisodeStillPaths() ([]string, error) {
+	rows, err := d.Query(`
+SELECT DISTINCT e.image_path
+FROM items e
+JOIN items s ON s.id = e.series_id
+WHERE e.type = 'Episode'
+  AND e.image_path LIKE 'images/%'
+  AND e.image_path NOT LIKE '%' || e.id || '-primary-%'
+  AND e.image_path <> s.image_path`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]string, 0, 16)
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // UpdateItemImage 只更新图片，不动其他元数据。
 func (d *DB) UpdateItemImage(id, imagePath string) error {
 	if imagePath == "" {
@@ -587,6 +640,29 @@ func (d *DB) UpdateItemImage(id, imagePath string) error {
 	}
 	_, err := d.Exec(`UPDATE items SET image_path = ? WHERE id = ?`, imagePath, id)
 	return err
+}
+
+// RepointEpisodeImagesToSeriesPoster 把单集封面统一改成剧集海报。
+// 只动刮削下载的图（images/ 下的 <hash>.jpg），面板上传的封面和
+// local: 本地海报保持不变；剧集还没有海报的条目先跳过，等刮削补上。
+func (d *DB) RepointEpisodeImagesToSeriesPoster() (int64, error) {
+	res, err := d.Exec(`
+UPDATE items
+   SET image_path = (SELECT s.image_path FROM items s WHERE s.id = items.series_id)
+ WHERE type = 'Episode'
+   AND series_id <> ''
+   AND image_path LIKE 'images/%'
+   AND image_path NOT LIKE '%' || id || '-primary-%'
+   AND EXISTS (
+     SELECT 1 FROM items s
+      WHERE s.id = items.series_id
+        AND s.image_path <> ''
+   )
+   AND image_path <> (SELECT s.image_path FROM items s WHERE s.id = items.series_id)`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // SeriesSeasonsMissingEpisodeRuntime 按季聚合缺时长的单集，避免逐集请求 TMDB。
