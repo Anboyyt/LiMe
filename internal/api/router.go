@@ -66,6 +66,8 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /web/api/images/stills", h.webStills)
 	mux.HandleFunc("POST /web/api/images/stills", h.webStills)
 	mux.HandleFunc("DELETE /web/api/images/stills", h.webStills)
+	mux.HandleFunc("GET /web/api/identify/search", h.webIdentify)
+	mux.HandleFunc("POST /web/api/identify", h.webIdentify)
 	mux.HandleFunc("GET /web/api/scrape/failures", h.webScrapeFailures)
 	mux.HandleFunc("GET /web/api/scan", h.webScan)
 	mux.HandleFunc("POST /web/api/scan", h.webScan)

@@ -293,6 +293,7 @@
 
   async function route() {
     const seq = ++routeSeq;
+    document.querySelectorAll('.identify-overlay').forEach((el) => el.remove());
     renderNav();
 
     // 慢请求超过 180ms 才显示骨架，避免快速切换时闪一下。
@@ -702,6 +703,8 @@
     const it = await api('/Items/' + encodeURIComponent(id));
     const ud = it.UserData || {};
     const playable = it.Type === 'Movie' || it.Type === 'Episode';
+    const isAdmin = !!(state.user && state.user.Policy && state.user.Policy.IsAdministrator);
+    const canIdentify = isAdmin && (it.Type === 'Movie' || it.Type === 'Series');
 
     let childrenHTML = '';
     let nextItem = null;
@@ -809,6 +812,7 @@
               ${nextItem ? `<button class="btn ${playable ? '' : 'primary'}" id="nextBtn">${it.Type === 'Series' ? (isContinue ? '继续观看' : '开始观看') : '下一集'} ${epLabel(nextItem)}</button>` : ''}
               <button class="btn" id="playedBtn">${ud.Played ? '标记未看' : '标记已看'}</button>
               <button class="btn" id="favBtn">${ud.IsFavorite ? '取消收藏' : '收藏'}</button>
+              ${canIdentify ? '<button class="btn" id="identifyBtn">手动识别</button>' : ''}
               ${parents.join('')}
             </div>
           </div>
@@ -823,6 +827,7 @@
     if (nextItem) $('#nextBtn').onclick = () => playById(nextItem.Id);
     $('#playedBtn').onclick = () => togglePlayed(it, ud);
     $('#favBtn').onclick = () => toggleFavorite(it, ud);
+    if (canIdentify) $('#identifyBtn').onclick = () => openIdentify(it);
     $('#backBtn').onclick = () => history.back();
 
     const playerSel = $('#localPlayer');
@@ -850,6 +855,104 @@
       el.onclick = () => { location.hash = `#/item/${encodeURIComponent(el.dataset.episode)}`; };
     });
     window.scrollTo({ top: 0 });
+  }
+
+  // 手动识别：搜索 TMDB，选中后改 ID 并重新刮削。
+  function openIdentify(it) {
+    const kind = it.Type === 'Movie' ? 'movie' : 'series';
+    const overlay = document.createElement('div');
+    overlay.className = 'identify-overlay';
+    overlay.innerHTML = `
+      <div class="identify-card">
+        <div class="identify-head">
+          <h2>手动识别 · ${esc(it.Name)}</h2>
+          <button class="btn ghost" data-close>关闭</button>
+        </div>
+        <div class="identify-row">
+          <input id="identifyQuery" placeholder="输入片名搜索 TMDB" value="${esc(it.Name)}">
+          <input id="identifyYear" placeholder="年份（可选）" style="max-width:120px" value="${it.ProductionYear || ''}">
+          <button class="btn primary" id="identifySearchBtn">搜索</button>
+        </div>
+        <div class="identify-row">
+          <input id="identifyTmdb" placeholder="或直接输入 TMDB ID" style="max-width:220px" inputmode="numeric">
+          <button class="btn" id="identifyUseBtn">使用这个 ID</button>
+        </div>
+        <div class="identify-results" id="identifyResults">
+          <div class="identify-empty">输入片名后点搜索，选中正确的结果即可重新刮削。</div>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const close = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    overlay.querySelector('[data-close]').onclick = close;
+
+    const results = overlay.querySelector('#identifyResults');
+    const query = overlay.querySelector('#identifyQuery');
+    const year = overlay.querySelector('#identifyYear');
+
+    const doSearch = async () => {
+      const q = query.value.trim();
+      if (!q) return toast('请输入片名', true);
+      results.innerHTML = '<div class="identify-empty">搜索中…</div>';
+      try {
+        const data = await api(`/web/api/identify/search?type=${kind}` +
+          `&query=${encodeURIComponent(q)}&year=${encodeURIComponent(year.value.trim())}`);
+        const list = data.Results || [];
+        if (!list.length) {
+          results.innerHTML = '<div class="identify-empty">没有找到匹配结果。</div>';
+          return;
+        }
+        results.innerHTML = list.map((r) => `
+          <div class="identify-result">
+            ${r.PosterUrl ? `<img src="${esc(r.PosterUrl)}" alt="" loading="lazy">` : ''}
+            <div class="identify-meta">
+              <div class="identify-title">${esc(r.Title)}
+                ${r.Year ? `<span class="badge">${r.Year}</span>` : ''}
+                ${r.Rating ? `<span class="badge">★ ${r.Rating.toFixed(1)}</span>` : ''}
+              </div>
+              ${r.OriginalTitle && r.OriginalTitle !== r.Title
+                ? `<div class="identify-original">${esc(r.OriginalTitle)}</div>` : ''}
+              ${r.Overview ? `<div class="identify-ov">${esc(r.Overview)}</div>` : ''}
+            </div>
+            <button class="btn primary" data-tmdb="${esc(r.TmdbId)}">使用</button>
+          </div>`).join('');
+        results.querySelectorAll('[data-tmdb]').forEach((b) => {
+          b.onclick = () => applyIdentify(it, b.dataset.tmdb, close);
+        });
+      } catch (e) {
+        results.innerHTML = `<div class="identify-empty">${esc(e.message)}</div>`;
+      }
+    };
+
+    overlay.querySelector('#identifySearchBtn').onclick = doSearch;
+    query.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch(); });
+    overlay.querySelector('#identifyUseBtn').onclick = () => {
+      const id = overlay.querySelector('#identifyTmdb').value.trim();
+      if (!id) return toast('请输入 TMDB ID', true);
+      applyIdentify(it, id, close);
+    };
+    query.focus();
+    query.select();
+  }
+
+  async function applyIdentify(it, tmdbId, close) {
+    try {
+      await api('/web/api/identify', {
+        method: 'POST',
+        body: JSON.stringify({ ItemId: it.Id, TmdbId: String(tmdbId) }),
+      });
+      close();
+      toast('已提交识别，正在重新刮削…');
+      setTimeout(() => route(), 5000);
+    } catch (e) {
+      toast(e.message, true);
+    }
   }
 
   function childrenSection(title, items) {

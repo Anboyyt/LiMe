@@ -24,7 +24,7 @@ jobs:
           DH_USER: ${{ secrets.DOCKERHUB_USERNAME }}
           DH_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           REPO: lime
-          SHORT_DESC: "Jellyfin 兼容的轻量媒体服务器，网盘 STRM + 302 直连，不转码"
+          SHORT_DESC: "轻量 Jellyfin 兼容媒体服务器：网盘 STRM + 302 直连，不转码"
         run: |
           set -uo pipefail
           (

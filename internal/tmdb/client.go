@@ -357,6 +357,54 @@ func (c *Client) TVShow(ctx context.Context, id string) (*TV, error) {
 	return &out, nil
 }
 
+// SearchResult 是 TMDB 标题搜索结果，电影和剧集的字段略有不同。
+type SearchResult struct {
+	ID            int     `json:"id"`
+	Title         string  `json:"title"`
+	Name          string  `json:"name"`
+	OriginalTitle string  `json:"original_title"`
+	OriginalName  string  `json:"original_name"`
+	ReleaseDate   string  `json:"release_date"`
+	FirstAirDate  string  `json:"first_air_date"`
+	Overview      string  `json:"overview"`
+	PosterPath    string  `json:"poster_path"`
+	VoteAverage   float64 `json:"vote_average"`
+}
+
+type searchResponse struct {
+	Results []SearchResult `json:"results"`
+}
+
+// Search 按标题搜索电影或剧集，kind 取 movie / tv。year 非空时按年份过滤。
+func (c *Client) Search(ctx context.Context, kind, query, year string) ([]SearchResult, error) {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind != "movie" && kind != "tv" {
+		return nil, fmt.Errorf("unsupported search kind: %s", kind)
+	}
+	params := url.Values{}
+	params.Set("query", query)
+	if y := strings.TrimSpace(year); y != "" {
+		if kind == "tv" {
+			params.Set("first_air_date_year", y)
+		} else {
+			params.Set("year", y)
+		}
+	}
+	var out searchResponse
+	if err := c.get(ctx, "/search/"+kind, params, &out); err != nil {
+		return nil, err
+	}
+	return out.Results, nil
+}
+
+// ImageURL 拼出 TMDB 图片地址，供面板展示搜索结果缩略图。
+func (c *Client) ImageURL(path, size string) string {
+	if path == "" {
+		return ""
+	}
+	return c.imageBase + "/" + size + path
+}
+
 // fillMovie 用备用语言补空标题和空简介。主语言字段齐全时直接返回，
 // 不产生额外请求。备用请求不带 append_to_response，响应更小。
 func (c *Client) fillMovie(ctx context.Context, id string, m *Movie) {

@@ -466,3 +466,35 @@ func TestEpisodeStillPaths(t *testing.T) {
 		t.Fatalf("still paths = %v %v", paths, err)
 	}
 }
+
+func TestResetSeriesScrape(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	if err := db.SetItemTmdbID("s1", "456"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE items SET scraped_at = 1 WHERE id IN ('s1','se1','e1')`); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, err := db.SeasonIDsForSeries("s1")
+	if err != nil || len(ids) != 1 || ids[0] != "se1" {
+		t.Fatalf("season ids = %v %v", ids, err)
+	}
+	if err := db.ResetSeriesScrape("s1"); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM items WHERE id IN ('s1','se1','e1') AND scraped_at <> 0`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("%d items still marked scraped", n)
+	}
+	series, _ := db.GetItem("s1")
+	if series.TmdbID != "456" {
+		t.Fatalf("tmdb id = %q, want 456", series.TmdbID)
+	}
+}

@@ -633,6 +633,46 @@ WHERE e.type = 'Episode'
 	return out, rows.Err()
 }
 
+// SetItemTmdbID 修改条目的 TMDB ID，用于面板手动识别。
+func (d *DB) SetItemTmdbID(id, tmdbID string) error {
+	_, err := d.Exec(`UPDATE items SET tmdb_id = ? WHERE id = ?`, tmdbID, id)
+	return err
+}
+
+// ResetItemScrape 把单个条目标记为未刮削，让下一次刮削重新拉元数据。
+func (d *DB) ResetItemScrape(id string) error {
+	_, err := d.Exec(`UPDATE items SET scraped_at = 0 WHERE id = ?`, id)
+	return err
+}
+
+// ResetSeriesScrape 把剧集及其所有季、单集标记为未刮削。
+func (d *DB) ResetSeriesScrape(seriesID string) error {
+	_, err := d.Exec(`
+UPDATE items SET scraped_at = 0
+WHERE id = ? OR (type = 'Season' AND parent_id = ?) OR (type = 'Episode' AND series_id = ?)`,
+		seriesID, seriesID, seriesID)
+	return err
+}
+
+// SeasonIDsForSeries 返回一部剧下所有季的 ID。
+func (d *DB) SeasonIDsForSeries(seriesID string) ([]string, error) {
+	rows, err := d.Query(`SELECT id FROM items WHERE type = 'Season' AND parent_id = ? ORDER BY index_number`, seriesID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]string, 0, 8)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // UpdateItemImage 只更新图片，不动其他元数据。
 func (d *DB) UpdateItemImage(id, imagePath string) error {
 	if imagePath == "" {

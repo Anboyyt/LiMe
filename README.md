@@ -1,6 +1,7 @@
 # LiMe
 
 [![docker](https://github.com/Anboyyt/LiMe/actions/workflows/docker.yml/badge.svg)](https://github.com/Anboyyt/LiMe/actions/workflows/docker.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/Anboyyt/LiMe?sort=semver)](https://github.com/Anboyyt/LiMe/releases)
 [![Docker Pulls](https://img.shields.io/docker/pulls/lixxh/lime)](https://hub.docker.com/r/lixxh/lime)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Telegram Channel](https://img.shields.io/badge/Telegram-Channel-26A5E4?logo=telegram&logoColor=white)](https://t.me/Lime_see)
@@ -9,6 +10,8 @@
 **轻量 Jellyfin 兼容媒体服务器 · 只适配 PanSave**
 
 兼容 Jellyfin 客户端、爆米花、SenPlayer、VidHub —— **SenPlayer 体验最佳**。
+
+最新版本 **v1.0.57** · [更新记录](#更新记录) · [Docker Hub](https://hub.docker.com/r/lixxh/lime)
 
 服务端代客户端跟一跳 PanSave 的 302；**外网直接访问 LiMe 就能播放**，
 视频流不再绕经 PanSave 反向代理。
@@ -71,6 +74,8 @@
 | 302 直连 | 服务端只发重定向，不碰视频字节；可选在服务端跟掉 PanSave 一跳 |
 | STRM 索引 | 扫描 `.strm`，自动识别电影 / 剧集 / 季 / 单集，支持多版本归并 |
 | TMDB 刮削 | 按目录里的 `{tmdb-ID}` 精确刮削，海报 / 背景 / Logo / 简介 / 演员 |
+| 手动识别 | 详情页按标题搜索 TMDB，选中结果即可改绑并重新刮削；目录名缺 `{tmdb-ID}` 也能救回来 |
+| 图片尺寸 | 海报可选 w342 / w500 / w780 / original，剧照可选 w92 / w185 / w300 / original；单集封面可继承剧集海报，也可单独下载剧照 |
 | 本地元数据 | 识别同目录 `.nfo` 与 `poster.jpg` / `fanart.jpg`，本地优先 |
 | 实时监控 | 新 `.strm` 落盘即增量解析并精准刮削，删除/改名同步清理 |
 | 片头片尾 | 章节 + 音频指纹两种来源，返回 `MediaSegments`，支持手动标记 |
@@ -191,6 +196,7 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
 - 首页：随机背景 + 继续观看 + 最近添加
 - 媒体库：海报网格、按名称/年份/最近添加/最新一集排序、分页
 - 详情：海报/背景、简介、类型、演员、季与单集（单集封面继承剧集海报）、片源直链、外挂字幕、标记已看/收藏
+- 管理员可在详情页「手动识别」：搜索 TMDB、选结果或直接填 ID，自动改绑并重新刮削
 - **相似推荐**：按「类型交集 + 同演员 + 评分 + 年份」打分，电影只推电影、剧集只推剧集
 - 搜索、登录、退出；播放时自动上报进度，能接上续播
 - 亮/暗主题可切换，配色取自 LiMe logo；字体和图标全部本地，不依赖外网 CDN
@@ -516,6 +522,12 @@ TMDB 刮削会写回电影和单集的 `RunTimeTicks`；对升级前已刮削、
 - 面板里有「刮削失败」页，按接口错误 / 404 / 海报 / 背景图分类，可导出 CSV
 - **海报回填**：海报为空的条目也会进回填队列并排在最前，避免「刮过但当时 TMDB 还没图」的片永远缺海报
 - 头像回填并发执行，共用 50ms 全局限速；头像按需下载
+- **手动识别**：目录名里的 TMDB ID 错了或没写，管理员可在详情页搜索 TMDB 改绑，
+  电影重刮单条，剧集连同所有季一起重刮
+- **尺寸可选**：海报和剧照的下载尺寸都能在运维面板切换；改尺寸后点「重新下载」
+  按新尺寸回填，旧尺寸文件会自动清理
+- **单集封面策略**：默认继承剧集大海报（省空间、省请求）；也可切回 TMDB 16:9 剧照，
+  支持按尺寸重下、清理旧剧照，每个单集只保留一个版本
 - 年份排序以 TMDB 首映/上映日期为准，不再被目录名里的年份带偏
 
 > 国内直连 `api.themoviedb.org` 不通时，设置 `LIME_TMDB_PROXY`
@@ -665,10 +677,15 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.52**。
+当前版本 **v1.0.57**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.0.57 | 详情页新增「手动识别」：管理员可搜索 TMDB、选结果或直接填 ID，自动改绑并重新刮削；完善 README 与仓库介绍 |
+| v1.0.56 | 海报尺寸可选 w342 / w500 / w780 / original；单集封面默认继承剧集大海报，可切回 TMDB 剧照；剧照尺寸可选 w92 / w185 / w300 / original，重下时只保留一个版本；新增单集封面清理 |
+| v1.0.55 | 片头片尾支持按剧名精准提取；指纹并发与低码率片源可调 |
+| v1.0.54 | Web UI 启用新 logo，重排登录页与侧栏品牌区 |
+| v1.0.53 | 数据库备份目录可配置 |
 | v1.0.52 | 播放前读取磁盘上的 `.strm` 校验地址；PanSave 批量重生成 pickcode 后自动修复数据库旧地址，长剧不再沿用旧链接 |
 | v1.0.51 | PanSave 直链解析改用独立短连接（禁用 keep-alive），避免复用被上游静默关闭的空闲连接导致 8 秒超时；超时负缓存从 30 秒降到 5 秒，客户端取消不再缓存 |
 | v1.0.50 | 播放起播只预热 2 集，避免一次性把整部未探测剧压给 PanSave 导致直链解析超时；单集看满 10 分钟后的整剧补探测限制为 50 集/次 |

@@ -179,3 +179,30 @@ func TestMovieFallbackLanguage(t *testing.T) {
 		t.Fatalf("languages = %v, want [zh-CN zh-TW]", langs)
 	}
 }
+
+func TestSearch(t *testing.T) {
+	var gotPath, gotQuery, gotYear string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query().Get("query")
+		gotYear = r.URL.Query().Get("first_air_date_year")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"results":[{"id":123,"name":"装備仔","original_name":"Sousou","first_air_date":"2024-10-02","overview":"x","poster_path":"/p.jpg","vote_average":7.4}]}`))
+	}))
+	defer srv.Close()
+
+	c := New([]string{"k"}, "zh-CN", srv.URL, srv.URL, "", nil)
+	results, err := c.Search(context.Background(), "tv", "装備仔", "2024")
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if gotPath != "/search/tv" || gotQuery != "装備仔" || gotYear != "2024" {
+		t.Fatalf("request = %s %q %q", gotPath, gotQuery, gotYear)
+	}
+	if len(results) != 1 || results[0].ID != 123 || results[0].Name != "装備仔" {
+		t.Fatalf("results = %+v", results)
+	}
+	if got := c.ImageURL("/p.jpg", "w185"); got != srv.URL+"/w185/p.jpg" {
+		t.Fatalf("image url = %q", got)
+	}
+}
