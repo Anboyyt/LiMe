@@ -71,3 +71,43 @@ func TestTrackStallIgnoresPausedAndSeek(t *testing.T) {
 		t.Fatalf("paused/seek should not alert, got %d", len(rows))
 	}
 }
+
+// 暂停期间客户端可能完全不上报；恢复后的第一条心跳位置没变，
+// 不能把整段静默算成卡顿。
+func TestTrackStallIgnoresSilenceGap(t *testing.T) {
+	h := newStallTestHandler(t)
+	user := &store.User{ID: "u1", Name: "Lime"}
+	it := &store.Item{ID: "i1", Name: "测试片", Type: store.TypeMovie}
+	a := authInfo{Device: "手机"}
+
+	h.trackStall(user, a, "sess1", it, "", 1_000_000, false)
+	// 模拟暂停 10 分钟：期间没有任何进度上报。
+	h.stallMu.Lock()
+	h.stallWatch["sess1"].lastSeen = time.Now().Add(-10 * time.Minute)
+	h.stallMu.Unlock()
+	h.trackStall(user, a, "sess1", it, "", 1_000_000, false)
+
+	rows, _ := h.db.ListPlaybackStalls(0, 10)
+	if len(rows) != 0 {
+		t.Fatalf("silence gap should not alert, got %d", len(rows))
+	}
+}
+
+// 暂停时只上报一次 IsPaused=true，后续心跳不带暂停标记也不能误报。
+func TestTrackStallPausedLatches(t *testing.T) {
+	h := newStallTestHandler(t)
+	user := &store.User{ID: "u1", Name: "Lime"}
+	it := &store.Item{ID: "i1", Name: "测试片", Type: store.TypeMovie}
+	a := authInfo{Device: "手机"}
+
+	h.trackStall(user, a, "sess1", it, "", 1_000_000, true)
+	time.Sleep(10 * time.Millisecond)
+	h.trackStall(user, a, "sess1", it, "", 1_000_000, false) // 心跳省略 IsPaused
+	time.Sleep(50 * time.Millisecond)
+	h.trackStall(user, a, "sess1", it, "", 1_000_000, false)
+
+	rows, _ := h.db.ListPlaybackStalls(0, 10)
+	if len(rows) != 0 {
+		t.Fatalf("paused heartbeat should not alert, got %d", len(rows))
+	}
+}

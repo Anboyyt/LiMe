@@ -703,8 +703,7 @@ table:has(td:last-child button) th:last-child { text-align: right; }
     -webkit-overflow-scrolling: touch;
   }
   #nav::-webkit-scrollbar { display: none; }
-  #nav .nav-title,
-  #navLibs { display: none; }
+  #nav .nav-title { display: none; }
   #nav a { flex: 0 0 auto; white-space: nowrap; margin: 0; padding: 7px 11px; font-size: 13px; }
   .side-foot { display: none; }
   main { overflow: visible; }
@@ -962,3 +961,33 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 6%, var(--panel
   color: var(--muted);
   flex: none;
 }
+
+/* 系统页分组标签 */
+.sys-tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.sys-tabs button {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+}
+.sys-tabs button:hover { background: var(--chip-bg); }
+.sys-tabs button.active {
+  border-color: var(--primary-border);
+  background: var(--primary-bg);
+  color: var(--primary-fg);
+  font-weight: 600;
+}
+[data-sys] { display: none; }
+[data-sys].sys-active { display: block; }

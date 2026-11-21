@@ -1419,6 +1419,7 @@ func parseItemQuery(r *http.Request) store.ItemQuery {
 		Years:           parseInts(v.Get("Years")),
 		OfficialRatings: splitCSV(v.Get("OfficialRatings")),
 		SeasonID:        v.Get("SeasonId"),
+		ScrapeState:     v.Get("ScrapeState"),
 		Persons:         splitCSV(v.Get("Person")),
 		FavoriteOnly: strings.EqualFold(v.Get("IsFavorite"), "true") ||
 			containsFold(filters, "IsFavorite"),

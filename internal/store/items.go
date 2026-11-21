@@ -871,6 +871,7 @@ type ItemQuery struct {
 	OfficialRatings []string
 	MaxRating       int // >0 时只返回 rating_score 0（未分级）或不高于该值的条目
 	SeasonID        string
+	ScrapeState     string   // none / unscraped / missing_poster / missing_backdrop
 	Persons         []string // 演员名，多个之间 OR
 	UserID          string
 	FavoriteOnly    bool
@@ -1039,6 +1040,16 @@ func (d *DB) buildItemWhere(q ItemQuery) ([]string, []any) {
 	if q.SeasonID != "" {
 		where = append(where, "season_id = ?")
 		args = append(args, q.SeasonID)
+	}
+	switch q.ScrapeState {
+	case "none":
+		where = append(where, "(tmdb_id IS NULL OR tmdb_id = '')")
+	case "unscraped":
+		where = append(where, "tmdb_id <> '' AND scraped_at = 0")
+	case "missing_poster":
+		where = append(where, "(image_path IS NULL OR image_path = '')")
+	case "missing_backdrop":
+		where = append(where, "(backdrop_path IS NULL OR backdrop_path = '')")
 	}
 	if q.FavoriteOnly {
 		where = append(where,

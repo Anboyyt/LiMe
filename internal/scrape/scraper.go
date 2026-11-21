@@ -559,6 +559,23 @@ func (s *Scraper) runGuarded(label string, fn func() (int, error)) (int, error) 
 	s.mu.Unlock()
 	s.saveStatus()
 
+	kind := "scrape"
+	if label != "scrape" {
+		kind = "avatar"
+	}
+	status := "ok"
+	detail := fmt.Sprintf("%s：处理 %d 条", label, processed)
+	if err != nil {
+		status = "error"
+		detail += "：" + err.Error()
+	} else if partial {
+		status = "partial"
+		if note != "" {
+			detail += "：" + note
+		}
+	}
+	_ = s.db.RecordTaskRun(kind, start.Unix(), time.Now().Unix(), status, detail)
+
 	s.log.Info(label+" finished", "items", processed, "dur", time.Since(start).String(),
 		"err", err, "partial", partial, "note", note)
 	return processed, err

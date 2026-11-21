@@ -6,6 +6,10 @@
     token: localStorage.getItem('lime.token') || '',
     user: JSON.parse(localStorage.getItem('lime.user') || 'null'),
     stats: null,
+    statsAt: 0,
+    systemTab: 'basic',
+    attention: null,
+    attentionTab: 'notmdb',
     list: null,
     libEdit: null,
     libBrowsePath: '',
@@ -39,6 +43,10 @@
   }[c]));
 
   const TYPE_LABEL = { Movie: '电影', Series: '剧集', Season: '季', Episode: '单集' };
+  const FAILURE_KIND = {
+    not_found: 'TMDB ID 失效', api_error: '接口错误',
+    poster: '海报下载失败', backdrop: '背景图下载失败', logo: '标题图下载失败',
+  };
   // 与后端 localPlayers 保持一致；新增播放器两边都要改。
   const LOCAL_PLAYERS = [
     ['vlc', 'VLC'],
@@ -198,20 +206,18 @@
     }
   }
 
-  async function ensureStats() {
+  const STATS_TTL = 15000;
+
+  // 概览、媒体库、系统页都会用到统计。统计要扫全库，跨页面来回切时
+  // 没必要每次都重算：15 秒内复用，库有增删改时强制刷新。
+  async function ensureStats(force = false) {
+    if (!force && state.stats && state.statsAt && Date.now() - state.statsAt < STATS_TTL) {
+      return state.stats;
+    }
     state.stats = await api('/web/api/stats');
-    renderLibNav();
+    state.statsAt = Date.now();
     renderSideFoot();
     return state.stats;
-  }
-
-  function renderLibNav() {
-    const libs = state.stats?.Stats?.Libraries || [];
-    $('#navLibs').innerHTML = libs.map((l) =>
-      `<a href="#/library/${encodeURIComponent(l.ID)}" data-nav="lib">${esc(l.Name)}
-         <span class="muted" style="float:right">${l.Items}</span></a>`
-    ).join('');
-    markActiveNav();
   }
 
   function renderSideFoot() {
@@ -241,6 +247,7 @@
     if (name !== 'libraries') state.libEdit = null;
     try {
       switch (name) {
+        case 'attention': await renderAttention(); break;
         case 'library': await renderLibrary(decodeURIComponent(arg)); break;
         case 'libraries': await renderLibraries(); break;
         case 'item': await renderItem(decodeURIComponent(arg)); break;
@@ -258,14 +265,109 @@
     }
   }
 
+  // ---------- 待处理 ----------
+  async function renderAttention() {
+    $('#crumb').textContent = '待处理';
+    const data = await api('/web/api/attention');
+    state.attention = data;
+    if (!state.attentionTab) state.attentionTab = 'notmdb';
+    paintAttention();
+  }
+
+  function paintAttention() {
+    const d = state.attention || {};
+    const c = d.Counts || {};
+    const tab = state.attentionTab || 'notmdb';
+    const n = (k) => Number(c[k] || 0);
+    const tabs = [
+      ['notmdb', '待识别', n('NoTmdb')],
+      ['failures', '刮削失败', n('Failures')],
+      ['missing', '缺图', n('MissingArtwork')],
+      ['dups', '重复条目', n('Duplicates')],
+    ];
+    const tabHTML = tabs.map(([k, label, count]) =>
+      `<button data-action="attention-tab" data-tab="${k}" class="${tab === k ? 'active' : ''}">${label} <span class="muted">${count}</span></button>`).join('');
+
+    let body = '';
+    if (tab === 'failures') {
+      const rows = (d.Failures || []).map((f) => `<tr>
+        <td><input type="checkbox" class="attn-check" value="${esc(f.ItemId)}"></td>
+        <td><a href="/#/item/${encodeURIComponent(f.ItemId)}" target="_blank">${esc(f.Name || f.ItemId)}</a></td>
+        <td>${esc(TYPE_LABEL[f.Type] || f.Type || '—')}</td>
+        <td>${esc(FAILURE_KIND[f.Kind] || f.Kind)}</td>
+        <td class="muted" style="max-width:360px;word-break:break-all">${esc(f.Detail || '')}</td>
+        <td class="muted" style="max-width:360px;word-break:break-all">${esc(f.Path || '')}</td>
+        <td><button data-action="retry-one" data-id="${esc(f.ItemId)}">重试</button></td>
+      </tr>`).join('') || '<tr><td colspan="7" class="muted">没有刮削失败</td></tr>';
+      body = `<table><thead><tr><th></th><th>名称</th><th>类型</th><th>问题</th><th>详情</th><th>路径</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    } else if (tab === 'missing') {
+      const rows = (d.MissingArt || []).map((it) => {
+        const miss = [it.MissingPoster ? '缺海报' : '', it.MissingBackdrop ? '缺背景图' : ''].filter(Boolean).join(' / ');
+        return `<tr>
+          <td><input type="checkbox" class="attn-check" value="${esc(it.Id)}"></td>
+          <td><a href="/#/item/${encodeURIComponent(it.Id)}" target="_blank">${esc(it.Name)}</a></td>
+          <td>${esc(TYPE_LABEL[it.Type] || it.Type)}${it.ProductionYear ? ' · ' + it.ProductionYear : ''}</td>
+          <td>${esc(miss)}</td>
+          <td class="muted" style="max-width:420px;word-break:break-all">${esc(it.Path || '')}</td>
+          <td><button data-action="retry-one" data-id="${esc(it.Id)}">重试</button></td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="6" class="muted">没有缺图条目</td></tr>';
+      body = `<table><thead><tr><th></th><th>名称</th><th>类型</th><th>缺失</th><th>路径</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    } else if (tab === 'dups') {
+      const groups = (d.Duplicates || []).map((g) => `<div class="panel" style="margin-top:10px">
+        <h3>TMDB ${esc(g.TmdbId)} · ${esc(TYPE_LABEL[g.Type] || g.Type)}</h3>
+        <table><thead><tr><th>名称</th><th>路径</th><th></th></tr></thead><tbody>
+        ${(g.Items || []).map((it) => `<tr>
+          <td><a href="/#/item/${encodeURIComponent(it.Id)}" target="_blank">${esc(it.Name)}</a></td>
+          <td class="muted" style="word-break:break-all">${esc(it.Path || '')}</td>
+          <td><a class="btn" href="/#/item/${encodeURIComponent(it.Id)}" target="_blank">详情</a></td>
+        </tr>`).join('')}
+        </tbody></table></div>`).join('') || '<div class="empty">没有重复条目</div>';
+      body = groups;
+    } else {
+      const rows = (d.NoTmdb || []).map((it) => `<tr>
+        <td><a href="/#/item/${encodeURIComponent(it.Id)}" target="_blank">${esc(it.Name)}</a></td>
+        <td>${esc(TYPE_LABEL[it.Type] || it.Type)}${it.ProductionYear ? ' · ' + it.ProductionYear : ''}</td>
+        <td class="muted" style="max-width:520px;word-break:break-all">${esc(it.Path || '')}</td>
+        <td><a class="btn" href="/#/item/${encodeURIComponent(it.Id)}" target="_blank">去识别</a></td>
+      </tr>`).join('') || '<tr><td colspan="4" class="muted">全部条目都有 TMDB ID</td></tr>';
+      body = `<table><thead><tr><th>名称</th><th>类型</th><th>路径</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+    }
+
+    const canRetry = tab === 'failures' || tab === 'missing';
+    $('#view').innerHTML = `
+      <div class="panel">
+        <div class="tabs">${tabHTML}</div>
+        <div class="row" style="margin:10px 0">
+          ${canRetry ? '<button class="primary" data-action="retry-selected">重试选中</button>' : ''}
+          <button data-action="attention-refresh">刷新</button>
+          <span class="muted">重试会在后台重新刮削，完成后刷新列表；识别请打开详情页使用「手动识别」。</span>
+        </div>
+        ${body}
+      </div>`;
+  }
+
+  async function retryAttention(ids) {
+    const list = (ids || []).filter(Boolean);
+    if (!list.length) return toast('先勾选要重试的条目', true);
+    try {
+      const r = await api('/web/api/attention/retry', {
+        method: 'POST',
+        body: JSON.stringify({ ItemIds: list }),
+      });
+      toast(`已提交 ${r.Items || list.length} 条，后台重新刮削中`);
+      setTimeout(renderAttention, 4000);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+
   // ---------- 概览 ----------
   async function renderOverview() {
     const [s, sessions] = await Promise.all([
-      api('/web/api/stats'),
+      ensureStats(),
       api('/Sessions').catch(() => []),
     ]);
-    state.stats = s;
-    renderLibNav();
     renderSideFoot();
     $('#crumb').textContent = '概览';
 
@@ -527,7 +629,7 @@
             method: 'POST',
             body: JSON.stringify({ Ids: ids }),
           });
-          await ensureStats();
+          await ensureStats(true);
           await renderLibraries();
           toast('顺序已保存');
         } catch (err) {
@@ -613,7 +715,7 @@
       return;
     }
     $('#crumb').textContent = lib.Name;
-    state.list = { mode: 'library', libId: id, type: defaultType(lib), term: '', items: [], total: 0 };
+    state.list = { mode: 'library', libId: id, type: defaultType(lib), term: '', scrapeState: '', items: [], total: 0 };
     renderListShell(lib.Name, lib);
     await fetchPage(true);
   }
@@ -621,7 +723,7 @@
   async function renderSearch(term) {
     await ensureStats();
     $('#crumb').textContent = `搜索：${term}`;
-    state.list = { mode: 'search', libId: '', type: '', term, items: [], total: 0 };
+    state.list = { mode: 'search', libId: '', type: '', term, scrapeState: '', items: [], total: 0 };
     renderListShell('', null);
     await fetchPage(true);
   }
@@ -639,11 +741,30 @@
           class="${state.list.type === type ? 'active' : ''}">${label}</button>`);
       }
     }
+    const scrapeOpts = [
+      ['', '全部刮削状态'],
+      ['none', '没 TMDB ID'],
+      ['unscraped', '有 ID 未刮削'],
+      ['missing_poster', '缺海报'],
+      ['missing_backdrop', '缺背景图'],
+    ].map(([v, label]) =>
+      `<option value="${v}" ${state.list && state.list.scrapeState === v ? 'selected' : ''}>${label}</option>`).join('');
     $('#view').innerHTML = `
       ${tabs.length ? `<div class="tabs">${tabs}</div>` : ''}
+      <div class="row" style="margin-bottom:10px">
+        <select id="scrapeState" style="max-width:180px">${scrapeOpts}</select>
+        <span class="muted">只影响当前列表，用来快速筛出没刮好的条目</span>
+      </div>
       <div id="listMeta" class="muted" style="margin-bottom:10px"></div>
       <div class="grid" id="itemGrid"></div>
       <div class="more" id="moreWrap"></div>`;
+    const scrapeSel = $('#scrapeState');
+    if (scrapeSel) {
+      scrapeSel.onchange = () => {
+        state.list.scrapeState = scrapeSel.value;
+        fetchPage(true);
+      };
+    }
   }
 
   async function fetchPage(reset) {
@@ -661,6 +782,7 @@
     }
     p.set('SortBy', list.mode === 'search' ? 'SortName' : 'SortName');
     p.set('SortOrder', 'Ascending');
+    if (list.scrapeState) p.set('ScrapeState', list.scrapeState);
     p.set('Limit', '60');
     p.set('StartIndex', String(reset ? 0 : list.items.length));
 
@@ -1064,7 +1186,7 @@
   // ---------- 系统 ----------
   async function renderSystem() {
     $('#crumb').textContent = '系统';
-    const [info, cfg, scan, settings, backdrops, posters, stills, failures, stats] = await Promise.all([
+    const [info, cfg, scan, settings, backdrops, posters, stills, storage, failures, tasks, stats] = await Promise.all([
       api('/System/Info'),
       api('/System/Configuration'),
       api('/web/api/scan'),
@@ -1072,8 +1194,10 @@
       api('/web/api/images/backdrops'),
       api('/web/api/images/posters'),
       api('/web/api/images/stills'),
+      api('/web/api/storage'),
       api('/web/api/scrape/failures?limit=1'),
-      api('/web/api/stats'),
+      api('/web/api/tasks/history?limit=10'),
+      ensureStats(),
     ]);
     const fc = (k) => (failures.Counts && failures.Counts[k]) || 0;
     const infoRows = [
@@ -1087,6 +1211,25 @@
 
     const cfgRows = Object.entries(cfg || {}).map(([k, v]) =>
       `<div><b>${esc(k)}</b><span>${esc(Array.isArray(v) ? v.join(', ') : v)}</span></div>`).join('');
+
+    const storageRows = [
+      ['图片文件', `${storage.Images || 0} 个 · ${fmtBytes(storage.ImageBytes)}`],
+      ['无引用图片', `${storage.Orphans || 0} 个 · ${fmtBytes(storage.OrphanBytes)}`],
+      ['缩放缓存', `${storage.Cache || 0} 个 · ${fmtBytes(storage.CacheBytes)}`],
+    ].map(([k, v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join('');
+
+    const TASK_LABEL = { scan: '扫描', scrape: '刮削', avatar: '演员头像', backup: '备份' };
+    const TASK_STATUS = { ok: '成功', error: '失败', partial: '未跑完' };
+    const taskRows = (tasks || []).map((t) => {
+      const dur = Math.max(0, (t.FinishedAt || 0) - (t.StartedAt || 0));
+      return `<tr>
+        <td>${esc(TASK_LABEL[t.Kind] || t.Kind)}</td>
+        <td class="muted">${fmtUnix(t.StartedAt)}</td>
+        <td>${dur} 秒</td>
+        <td>${esc(TASK_STATUS[t.Status] || t.Status)}</td>
+        <td class="muted" style="max-width:520px;word-break:break-all">${esc(t.Detail || '')}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="5" class="muted">还没有执行记录</td></tr>';
 
     const scanRows = [
       ['状态', scan.Running ? '扫描中' : '空闲'],
@@ -1106,10 +1249,16 @@
     }
 
     $('#view').innerHTML = `
-      <div class="panel"><h3>服务器</h3><div class="kv">${infoRows}</div></div>
-      <div class="panel"><h3>扫描</h3><div class="kv">${scanRows}</div>
+      <div class="sys-tabs">
+        <button data-action="sys-tab" data-tab="basic" class="active">常规</button>
+        <button data-action="sys-tab" data-tab="scrape">刮削与图片</button>
+        <button data-action="sys-tab" data-tab="playback">播放</button>
+        <button data-action="sys-tab" data-tab="advanced">高级</button>
+      </div>
+      <div class="panel" data-sys="basic"><h3>服务器</h3><div class="kv">${infoRows}</div></div>
+      <div class="panel" data-sys="basic"><h3>扫描</h3><div class="kv">${scanRows}</div>
         <div class="row" style="margin-top:12px"><button data-action="scan">立即全量扫描</button></div></div>
-      <div class="panel"><h3>TMDB 刮削</h3>
+      <div class="panel" data-sys="scrape"><h3>TMDB 刮削</h3>
         <div class="kv">
           <div><b>API Key</b><span>${settings.TMDBKeyCount
             ? `${settings.TMDBKeyCount} 个：${esc((settings.TMDBKeyHints || []).join('、'))}`
@@ -1122,17 +1271,27 @@
           <input id="tmdbKey" placeholder="添加一个 API Key（留空不改）" style="max-width:320px">
           <input id="tmdbProxy" placeholder="代理，如 http://192.168.5.133:7890"
             style="max-width:320px" value="${esc(settings.TMDBProxy || '')}">
-          <button class="primary" data-action="save-settings">保存</button>
+          <button class="primary" data-action="save-settings">保存 TMDB 设置</button>
           ${settings.TMDBKeyCount ? '<button data-action="clear-tmdb-keys">清空 Key</button>' : ''}
         </div>
         <div class="row" style="margin-top:12px">
           <select id="scrapeTimeout" style="max-width:160px">${timeoutOptions.join('')}</select>
-          <button class="primary" data-action="save-settings">保存</button>
+          <button class="primary" data-action="save-settings">保存上限</button>
           <span class="muted">单次刮削上限，到点自动暂停，剩余条目下次继续；选「不限」则一次跑完</span>
         </div>
         <p class="muted" style="margin:8px 0 0">支持多个 Key，刮削时自动轮询；遇到 429 会换下一个。</p>
       </div>
-      <div class="panel"><h3>定时任务</h3>
+      <div class="panel" data-sys="basic"><h3>实时监控</h3>
+        <div class="row">
+          <label class="check-field">
+            <input type="checkbox" id="realtimeMonitor" ${settings.RealtimeMonitor ? 'checked' : ''}>
+            <span>实时监控媒体库目录</span>
+          </label>
+          <button class="primary" data-action="save-settings">保存监控</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">新 .strm 出现后立即增量解析并补刮削，等价于 Emby 的实时监控；关闭后只靠定时或手动扫描。</p>
+      </div>
+      <div class="panel" data-sys="basic"><h3>定时任务</h3>
         <div class="kv">
           <div><b>每日增量扫描</b><span>${settings.ScanDailyAt ? esc(settings.ScanDailyAt) : '未启用'}</span></div>
           <div><b>每日刮削</b><span>${settings.ScrapeDailyAt ? esc(settings.ScrapeDailyAt) : '未启用'}</span></div>
@@ -1149,24 +1308,21 @@
             value="${settings.BackupKeep || 3}">
           <input id="backupDir" placeholder="备份目录（默认 ${esc(settings.BackupDirEffective || '')}）" style="min-width:260px"
             value="${esc(settings.BackupDir || '')}">
-          <button class="primary" data-action="save-settings">保存</button>
+          <button class="primary" data-action="save-settings">保存定时</button>
         </div>
         <div class="row" style="margin-top:12px">
           <button data-action="backup-now">立即备份</button>
         </div>
         <p class="muted" style="margin:8px 0 0">扫描和刮削互不联动，按各自时间独立执行；数据库每天自动备份，保留最近几份。备份目录留空则写在数据目录（/data），改到别的挂载点前先确认容器里已挂载该路径。</p>
       </div>
-      <div class="panel"><h3>实时监控</h3>
-        <div class="row">
-          <label class="check-field">
-            <input type="checkbox" id="realtimeMonitor" ${settings.RealtimeMonitor ? 'checked' : ''}>
-            <span>实时监控媒体库目录</span>
-          </label>
-          <button class="primary" data-action="save-settings">保存</button>
-        </div>
-        <p class="muted" style="margin:8px 0 0">新 .strm 出现后立即增量解析并补刮削，等价于 Emby 的实时监控；关闭后只靠定时或手动扫描。</p>
+      <div class="panel" data-sys="basic"><h3>最近任务</h3>
+        <table>
+          <thead><tr><th>任务</th><th>开始</th><th>耗时</th><th>结果</th><th>说明</th></tr></thead>
+          <tbody>${taskRows}</tbody>
+        </table>
+        <p class="muted" style="margin:8px 0 0">扫描、刮削和备份完成后自动记录，保留最近 200 条。</p>
       </div>
-      <div class="panel"><h3>播放预热</h3>
+      <div class="panel" data-sys="playback"><h3>播放预热</h3>
         <div class="kv">
           <div><b>状态</b><span>${settings.ProbeWarmup ? '已启用' : '已关闭'}</span></div>
           <div><b>范围</b><span>${probeScopeLabel(settings.ProbeScope)}</span></div>
@@ -1189,11 +1345,11 @@
             value="${esc(settings.ProbeWindow || 'all')}">
           <input id="probeMaxRun" placeholder="单次最长，如 2h、0=不限" style="max-width:180px"
             value="${esc(settings.ProbeMaxRun || '2h')}">
-          <button class="primary" data-action="save-settings">保存</button>
+          <button class="primary" data-action="save-settings">保存预热</button>
         </div>
         <p class="muted" style="margin:8px 0 0">后台预探测片源并缓存轨道信息，之后起播不再等 ffprobe。全库提取建议放凌晨窗口慢慢跑，随时可关。</p>
       </div>
-      <div class="panel"><h3>片头片尾</h3>
+      <div class="panel" data-sys="playback"><h3>片头片尾</h3>
         <div class="kv">
           <div><b>状态</b><span>${settings.SegmentExtract ? '已启用' : '已关闭'}</span></div>
           <div><b>回填范围</b><span>${probeScopeLabel(settings.SegmentScope)}</span></div>
@@ -1226,7 +1382,7 @@
             <input type="checkbox" id="segmentPreferLowBitrate" ${settings.SegmentPreferLowBitrate ? 'checked' : ''}>
             <span>低码率优先</span>
           </label>
-          <button class="primary" data-action="save-settings">保存</button>
+          <button class="primary" data-action="save-settings">保存片头片尾</button>
           <button data-action="scan-segments">立即提取一批</button>
           <button data-action="scan-fingerprints">补齐缺失指纹</button>
         </div>
@@ -1238,7 +1394,27 @@
         <div id="segmentSearchResults" class="muted" style="margin-top:8px"></div>
         <p class="muted" style="margin:8px 0 0">章节随预热探测顺手获取，零额外流量；没有标准章节的剧会在预热时间窗内自动跑音频指纹，一次只跑一季。并发数控制同时下载几集头尾音频，低码率优先会挑体积最小的片源做指纹。精准提取可搜索剧名，把整部剧缺片头片尾的季直接排进队列。</p>
       </div>
-      <div class="panel"><h3>背景图清晰度</h3>
+      <div class="panel" data-sys="playback"><h3>卡顿告警</h3>
+        <div class="kv">
+          <div><b>判定阈值</b><span>${Math.round((settings.StallAlertSeconds || 120) / 60)} 分钟</span></div>
+          <div><b>冷却时间</b><span>${Math.round((settings.StallCooldownSeconds || 600) / 60)} 分钟</span></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <label class="check-field">
+            <span>进度多久不动告警（分钟）</span>
+            <input id="stallAfterMin" type="number" min="1" max="60" style="width:80px"
+              value="${Math.max(1, Math.round((settings.StallAlertSeconds || 120) / 60))}">
+          </label>
+          <label class="check-field">
+            <span>同一会话冷却（分钟）</span>
+            <input id="stallCooldownMin" type="number" min="1" max="1440" style="width:90px"
+              value="${Math.max(1, Math.round((settings.StallCooldownSeconds || 600) / 60))}">
+          </label>
+          <button class="primary" data-action="save-settings">保存告警</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">暂停、切后台或系统挂起期间客户端会停止上报，这段时间不会算作卡顿；只有持续收到进度心跳但位置不动才会告警。</p>
+      </div>
+      <div class="panel" data-sys="scrape"><h3>背景图清晰度</h3>
         <div class="kv">
           <div><b>状态</b><span>${backdrops.Running
             ? `回填中 ${backdrops.Processed || 0}/${backdrops.Total || '?'}`
@@ -1252,7 +1428,7 @@
         </div>
         <p class="muted" style="margin:8px 0 0">按 TMDB 原图重新下载电影/剧集背景图，替换被压到 500 宽的旧图。约 2.1 万张，预计多占 15GB；小时级任务，期间可正常播放。</p>
       </div>
-      <div class="panel"><h3>海报清晰度</h3>
+      <div class="panel" data-sys="scrape"><h3>海报清晰度</h3>
         <div class="kv">
           <div><b>下载尺寸</b><span>${esc(settings.PosterSize || 'w780')}</span></div>
           <div><b>状态</b><span>${posters.Running
@@ -1274,7 +1450,7 @@
         </div>
         <p class="muted" style="margin:8px 0 0">新刮削的电影/剧集/季海报按所选尺寸下载。改尺寸不会自动重下存量，点「重新下载海报」才会按新尺寸替换电影/剧集海报（季海报随整季刮削更新）；约 2.2 万张，w780 约 3GB，original 视原图大小可能几十 GB。不会覆盖面板里手工上传的封面。</p>
       </div>
-      <div class="panel"><h3>单集封面</h3>
+      <div class="panel" data-sys="scrape"><h3>单集封面</h3>
         <div class="kv">
           <div><b>当前方式</b><span>${settings.EpisodeStills ? 'TMDB 剧照（16:9）' : '继承剧集大海报'}</span></div>
           <div><b>剧照尺寸</b><span>${esc(settings.StillSize || 'w185')}</span></div>
@@ -1296,7 +1472,7 @@
             <option value="w300" ${settings.StillSize === 'w300' ? 'selected' : ''}>w300（清晰）</option>
             <option value="original" ${settings.StillSize === 'original' ? 'selected' : ''}>original（原图）</option>
           </select>
-          <button class="primary" data-action="save-settings">保存</button>
+          <button class="primary" data-action="save-settings">保存封面</button>
         </div>
         <div class="row" style="margin-top:12px">
           <button data-action="refresh-stills" ${(!settings.EpisodeStills || stills.Running) ? 'disabled' : ''}>重新下载单集剧照（${esc(settings.StillSize || 'w185')}）</button>
@@ -1304,7 +1480,7 @@
         </div>
         <p class="muted" style="margin:8px 0 0">继承模式直接用剧集大海报，省空间也省 TMDB 请求。剧照模式按所选尺寸下载；重新下载会替换旧图并删除旧尺寸文件，每个单集只保留一个版本。清理会把存量单集改回剧集海报并删除剧照文件，面板上传的封面和本地 poster.jpg 不受影响。</p>
       </div>
-      <div class="panel"><h3>刮削失败报告</h3>
+      <div class="panel" data-sys="scrape"><h3>刮削失败报告</h3>
         <div class="kv">
           <div><b>TMDB ID 失效</b><span>${fc('not_found')} 条</span></div>
           <div><b>接口错误</b><span>${fc('api_error')} 条</span></div>
@@ -1322,7 +1498,40 @@
         </div>
         <p class="muted" style="margin:8px 0 0">刮削/回填过程中失败过的条目会记在这里，修好后自动消失。「缺背景图」多半是 TMDB 本身只有海报、没有背景图，不是下载失败。</p>
       </div>
-      <div class="panel"><h3>配置</h3><div class="kv">${cfgRows}</div></div>`;
+      <div class="panel" data-sys="advanced"><h3>图片与缓存</h3>
+        <div class="kv">${storageRows}</div>
+        <div class="row" style="margin-top:12px">
+          <button data-action="refresh-storage">刷新统计</button>
+          <button data-action="cleanup-storage">清理无引用图片和缓存</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">只删除 data/images 下已经没有任何条目引用的文件；缩放缓存只清 10 分钟前的，避免影响正在加载的图片。面板上传的封面和本地 poster.jpg 不会被清理。</p>
+      </div>
+      <div class="panel" data-sys="advanced"><h3>运行诊断</h3>
+        <div class="kv">
+          <div><b>运行时长</b><span>${fmtUptime(stats.UptimeSec || 0)}</span></div>
+          <div><b>数据库延迟</b><span>${stats.DBLatencyMs == null ? '—' : stats.DBLatencyMs + ' ms'}</span></div>
+          <div><b>Goroutine</b><span>${stats.Goroutines || 0}</span></div>
+          <div><b>磁盘可用</b><span>${fmtBytes(stats.DiskFreeBytes)} / ${fmtBytes(stats.DiskTotalBytes)}</span></div>
+          <div><b>监控目录</b><span>${stats.WatchDirs || 0}</span></div>
+        </div>
+      </div>
+      <div class="panel" data-sys="advanced"><h3>原始配置</h3>
+        <details>
+          <summary class="muted">展开查看 /System/Configuration 原始字段</summary>
+          <div class="kv" style="margin-top:10px">${cfgRows}</div>
+        </details>
+      </div>`;
+    applySystemTab();
+  }
+
+  function applySystemTab() {
+    const tab = state.systemTab || 'basic';
+    document.querySelectorAll('[data-sys]').forEach((el) => {
+      el.classList.toggle('sys-active', el.dataset.sys === tab);
+    });
+    document.querySelectorAll('[data-action="sys-tab"]').forEach((el) => {
+      el.classList.toggle('active', el.dataset.tab === tab);
+    });
   }
 
   // ---------- 通知 ----------
@@ -1480,6 +1689,25 @@
       case 'back':
         history.length > 1 ? history.back() : (location.hash = '#/overview');
         break;
+      case 'sys-tab':
+        state.systemTab = el.dataset.tab || 'basic';
+        applySystemTab();
+        break;
+      case 'attention-tab':
+        state.attentionTab = el.dataset.tab || 'notmdb';
+        paintAttention();
+        break;
+      case 'attention-refresh':
+        await renderAttention();
+        break;
+      case 'retry-one':
+        await retryAttention([el.dataset.id]);
+        break;
+      case 'retry-selected': {
+        const ids = Array.from(document.querySelectorAll('.attn-check:checked')).map((x) => x.value);
+        await retryAttention(ids);
+        break;
+      }
       case 'save-settings': {
         // 同一套保存逻辑被多个页面复用，读不到的字段就跳过。
         const val = (sel) => {
@@ -1502,6 +1730,12 @@
         if (episodeStillsEl) body.EpisodeStills = episodeStillsEl.value === '1';
         const stillSizeEl = $('#stillSize');
         if (stillSizeEl) body.StillSize = stillSizeEl.value;
+        const stallAfterEl = $('#stallAfterMin');
+        if (stallAfterEl) {
+          body.StallAlertSeconds = Math.max(1, parseInt(stallAfterEl.value || '2', 10)) * 60;
+          const cooldownEl = $('#stallCooldownMin');
+          body.StallCooldownSeconds = Math.max(1, parseInt((cooldownEl && cooldownEl.value) || '10', 10)) * 60;
+        }
         const realtimeEl = $('#realtimeMonitor');
         if (realtimeEl) body.RealtimeMonitor = realtimeEl.checked;
         const probeWarmupEl = $('#probeWarmup');
@@ -1690,6 +1924,16 @@
         await route();
         break;
       }
+      case 'refresh-storage':
+        await renderSystem();
+        break;
+      case 'cleanup-storage': {
+        if (!confirm('删除没有任何条目引用的图片文件，并清理缩放缓存？')) break;
+        const res = await api('/web/api/storage', { method: 'POST' });
+        toast(`已删除 ${res.RemovedFiles || 0} 张图片、${res.CacheFiles || 0} 个缓存文件`);
+        await renderSystem();
+        break;
+      }
       case 'download-failures': {
         const res = await fetch('/web/api/scrape/failures?format=csv', {
           headers: state.token ? { 'X-Emby-Token': state.token } : {},
@@ -1796,7 +2040,7 @@
         state.libEdit = null;
         state.libPaths = null;
         state.libDraft = null;
-        await ensureStats();
+        await ensureStats(true);
         await route();
         break;
       }
@@ -1825,7 +2069,7 @@
       case 'move-lib':
         await api(`/web/api/libraries/${encodeURIComponent(el.dataset.id)}/move?dir=${el.dataset.dir}`,
           { method: 'POST' });
-        await ensureStats();
+        await ensureStats(true);
         await renderLibraries();
         break;
       case 'scan-lib':
@@ -1838,7 +2082,7 @@
         await api(`/web/api/libraries/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' });
         toast('媒体库已删除');
         state.libEdit = null;
-        await ensureStats();
+        await ensureStats(true);
         await route();
         break;
       }

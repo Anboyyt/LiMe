@@ -45,6 +45,15 @@ type Handler struct {
 	// 播放卡顿监控：按 PlaySessionId 记录上次进度和告警时间。
 	stallMu    sync.Mutex
 	stallWatch map[string]*stallState
+	// 卡顿阈值运行时可在面板调整。
+	stallCfgMu    sync.RWMutex
+	stallAfter    time.Duration
+	stallCooldown time.Duration
+
+	// 全库统计要扫几十万行；概览/媒体库/系统页来回切时复用 15 秒。
+	statsMu      sync.Mutex
+	statsCache   *store.Stats
+	statsCacheAt time.Time
 
 	// 筛选面板缓存（Genres / Years / Ratings），按可见库集合缓存。
 	filterMu       sync.Mutex
@@ -133,6 +142,7 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 		loginLimiter: newLoginLimiter(),
 	}
 	// 面板里保存的 Telegram 设置优先于环境变量；worker 常驻，改配置即时生效。
+	h.loadStallSettings()
 	h.notifier = notify.New(h.tgConfig(), log)
 	h.ingestNotifier = notify.New(h.ingestTGConfig(), log)
 	go h.runIngestNotifier()

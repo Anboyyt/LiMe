@@ -38,12 +38,43 @@ func (h *Handler) realtimeDirs() int {
 	return h.realtime.WatchDirs()
 }
 
+const statsCacheTTL = 15 * time.Second
+
+// cachedStats 缓存全库统计。COUNT 子查询要扫几十万行，面板来回切换时
+// 没必要每次都重算；库有增删改时调用 invalidateStats 立即失效。
+func (h *Handler) cachedStats() (*store.Stats, error) {
+	h.statsMu.Lock()
+	if h.statsCache != nil && time.Since(h.statsCacheAt) < statsCacheTTL {
+		s := h.statsCache
+		h.statsMu.Unlock()
+		return s, nil
+	}
+	h.statsMu.Unlock()
+
+	s, err := h.db.Stats()
+	if err != nil {
+		return nil, err
+	}
+	h.statsMu.Lock()
+	h.statsCache = s
+	h.statsCacheAt = time.Now()
+	h.statsMu.Unlock()
+	return s, nil
+}
+
+func (h *Handler) invalidateStats() {
+	h.statsMu.Lock()
+	h.statsCache = nil
+	h.statsCacheAt = time.Time{}
+	h.statsMu.Unlock()
+}
+
 func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {
 		return
 	}
 
-	stats, err := h.db.Stats()
+	stats, err := h.cachedStats()
 	if err != nil {
 		h.log.Error("load stats", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

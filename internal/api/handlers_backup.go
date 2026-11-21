@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -48,16 +49,18 @@ func (h *Handler) webBackup(w http.ResponseWriter, r *http.Request) {
 	h.backupMu.Lock()
 	defer h.backupMu.Unlock()
 
+	start := time.Now()
 	dir := h.backupDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		_ = h.db.RecordTaskRun("backup", start.Unix(), time.Now().Unix(), "error", "备份目录不可用："+err.Error())
 		h.log.Error("manual backup failed", "dir", dir, "err", err)
 		writeError(w, http.StatusInternalServerError, "backup dir unavailable: "+err.Error())
 		return
 	}
 	name := "lime.db.bak-" + time.Now().Format("20060102-150405")
 	dest := filepath.Join(dir, name)
-	start := time.Now()
 	if err := h.db.BackupTo(dest); err != nil {
+		_ = h.db.RecordTaskRun("backup", start.Unix(), time.Now().Unix(), "error", "备份失败："+err.Error())
 		h.log.Error("manual backup failed", "dir", dir, "err", err)
 		writeError(w, http.StatusInternalServerError, "backup failed")
 		return
@@ -70,6 +73,8 @@ func (h *Handler) webBackup(w http.ResponseWriter, r *http.Request) {
 	}
 	h.log.Info("database backup created",
 		"file", name, "dir", dir, "mb", size>>20, "dur", time.Since(start).Round(time.Second).String())
+	_ = h.db.RecordTaskRun("backup", start.Unix(), time.Now().Unix(), "ok",
+		fmt.Sprintf("手动备份 %s（%d MB）", name, size>>20))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"File":    name,
 		"Dir":     dir,

@@ -178,7 +178,8 @@ func (s *Scanner) scanAll(fast bool) (int, error) {
 		return 0, fmt.Errorf("scan already running")
 	}
 	s.running = true
-	s.lastStarted = time.Now().Unix()
+	startedAt := time.Now().Unix()
+	s.lastStarted = startedAt
 	s.lastError = ""
 	s.mu.Unlock()
 	s.saveScanStatus()
@@ -189,8 +190,16 @@ func (s *Scanner) scanAll(fast bool) (int, error) {
 		s.running = false
 		s.lastFinished = time.Now().Unix()
 		s.lastCount = total
+		errMsg := s.lastError
 		s.mu.Unlock()
 		s.saveScanStatus()
+		status := "ok"
+		detail := fmt.Sprintf("全量扫描 %d 条", total)
+		if errMsg != "" {
+			status = "error"
+			detail += "：" + errMsg
+		}
+		_ = s.db.RecordTaskRun("scan", startedAt, time.Now().Unix(), status, detail)
 	}()
 
 	libs, err := s.db.ListLibraries()
@@ -228,25 +237,39 @@ func (s *Scanner) scanLibraryID(id string, fast bool) (int, error) {
 		return 0, fmt.Errorf("scan already running")
 	}
 	s.running = true
-	s.lastStarted = time.Now().Unix()
+	startedAt := time.Now().Unix()
+	s.lastStarted = startedAt
 	s.lastError = ""
 	s.mu.Unlock()
 	s.saveScanStatus()
 
 	total := 0
+	label := "扫描"
 	defer func() {
 		s.mu.Lock()
 		s.running = false
 		s.lastFinished = time.Now().Unix()
 		s.lastCount = total
+		errMsg := s.lastError
 		s.mu.Unlock()
 		s.saveScanStatus()
+		status := "ok"
+		detail := fmt.Sprintf("%s %d 条", label, total)
+		if errMsg != "" {
+			status = "error"
+			detail += "：" + errMsg
+		}
+		_ = s.db.RecordTaskRun("scan", startedAt, time.Now().Unix(), status, detail)
 	}()
 
 	lib, err := s.db.GetLibrary(id)
 	if err != nil {
 		s.setLastError(err.Error())
 		return 0, err
+	}
+	label = "扫描《" + lib.Name + "》"
+	if fast {
+		label = "增量扫描《" + lib.Name + "》"
 	}
 	n, err := s.scanLibrary(lib, fast)
 	if err != nil {

@@ -119,6 +119,7 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			stillSize = h.scraper.StillSize()
 			episodeStills = h.scraper.EpisodeStills()
 		}
+		stallAfter, stallCooldown := h.stallSettings()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"TMDBKeySet":              len(keys) > 0,
 			"TMDBKeyHint":             firstHint,
@@ -130,6 +131,8 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			"PosterSize":              posterSize,
 			"StillSize":               stillSize,
 			"EpisodeStills":           episodeStills,
+			"StallAlertSeconds":       int(stallAfter.Seconds()),
+			"StallCooldownSeconds":    int(stallCooldown.Seconds()),
 			"ScanDailyAt":             scanDaily,
 			"ScrapeDailyAt":           scrapeDaily,
 			"RealtimeMonitor":         h.realtime != nil && h.realtime.Enabled(),
@@ -189,7 +192,10 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			// 单集剧照尺寸：w92 / w185 / w300 / original。
 			StillSize *string `json:"StillSize"`
 			// 单集是否单独刮削 TMDB 剧照；false 时封面继承剧集海报。
-			EpisodeStills           *bool   `json:"EpisodeStills"`
+			EpisodeStills *bool `json:"EpisodeStills"`
+			// 播放卡顿告警阈值 / 冷却时间（秒）。
+			StallAlertSeconds       *int    `json:"StallAlertSeconds"`
+			StallCooldownSeconds    *int    `json:"StallCooldownSeconds"`
 			RealtimeMonitor         *bool   `json:"RealtimeMonitor"`
 			ProbeWarmup             *bool   `json:"ProbeWarmup"`
 			ProbeScope              *string `json:"ProbeScope"`
@@ -324,6 +330,19 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if err := h.scraper.SetEpisodeStills(*p.EpisodeStills); err != nil {
 				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+		}
+		if p.StallAlertSeconds != nil || p.StallCooldownSeconds != nil {
+			after, cooldown := h.stallSettings()
+			if p.StallAlertSeconds != nil {
+				after = time.Duration(*p.StallAlertSeconds) * time.Second
+			}
+			if p.StallCooldownSeconds != nil {
+				cooldown = time.Duration(*p.StallCooldownSeconds) * time.Second
+			}
+			if err := h.SetStallSettings(after, cooldown); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
 		}

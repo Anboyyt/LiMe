@@ -160,17 +160,8 @@ func (s *Scraper) removeReplacedStill(old, current string) {
 // CleanupEpisodeStills 把单集封面改回剧集海报，并删除不再被引用的剧照文件。
 // 返回删除的文件数。刮削或图片任务进行中时拒绝执行，避免删到正在写入的图。
 func (s *Scraper) CleanupEpisodeStills() (int, error) {
-	s.mu.Lock()
-	busy := s.running || s.quick > 0
-	s.mu.Unlock()
-	if busy {
-		return 0, errors.New("刮削进行中")
-	}
-	s.backdropMu.Lock()
-	busy = s.backdrop.Running || s.poster.Running || s.still.Running
-	s.backdropMu.Unlock()
-	if busy {
-		return 0, errors.New("图片回填进行中")
+	if s.maintenanceBusy() {
+		return 0, errors.New("刮削或图片任务进行中")
 	}
 
 	paths, err := s.db.EpisodeStillPaths()

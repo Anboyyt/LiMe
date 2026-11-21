@@ -26,7 +26,7 @@ func (h *Handler) webLibraries(w http.ResponseWriter, r *http.Request) {
 		if _, ok := h.requireUser(w, r); !ok {
 			return
 		}
-		stats, err := h.db.Stats()
+		stats, err := h.cachedStats()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "load libraries failed")
 			return
@@ -59,6 +59,7 @@ func (h *Handler) webLibraries(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "create library failed")
 		return
 	}
+	h.invalidateStats()
 	writeJSON(w, http.StatusCreated, lib)
 }
 
@@ -93,6 +94,7 @@ func (h *Handler) webLibraryByID(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "update library failed")
 			return
 		}
+		h.invalidateStats()
 		lib, _ := h.db.GetLibrary(id)
 		writeJSON(w, http.StatusOK, lib)
 
@@ -105,6 +107,7 @@ func (h *Handler) webLibraryByID(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "delete library failed")
 			return
 		}
+		h.invalidateStats()
 		w.WriteHeader(http.StatusNoContent)
 
 	default:
@@ -306,6 +309,7 @@ func (h *Handler) webLibraryMove(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "move library failed")
 		return
 	}
+	h.invalidateStats()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -329,5 +333,6 @@ func (h *Handler) webLibraryReorder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "reorder libraries failed")
 		return
 	}
+	h.invalidateStats()
 	w.WriteHeader(http.StatusNoContent)
 }

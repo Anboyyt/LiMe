@@ -32,6 +32,7 @@ type ScrapeHealth struct {
 	Unscraped       int `json:"Unscraped"`
 	MissingPoster   int `json:"MissingPoster"`
 	MissingBackdrop int `json:"MissingBackdrop"`
+	MissingArtwork  int `json:"MissingArtwork"`
 }
 
 // RecordScrapeFailure 记录（或覆盖）某个条目某类失败。detail 只留前 400 字。
@@ -131,8 +132,9 @@ func (d *DB) ScrapeHealth() (ScrapeHealth, error) {
 		  COALESCE(SUM(CASE WHEN (tmdb_id IS NULL OR tmdb_id = '') THEN 1 ELSE 0 END), 0),
 		  COALESCE(SUM(CASE WHEN tmdb_id <> '' AND scraped_at = 0 THEN 1 ELSE 0 END), 0),
 		  COALESCE(SUM(CASE WHEN (image_path IS NULL OR image_path = '') THEN 1 ELSE 0 END), 0),
-		  COALESCE(SUM(CASE WHEN (backdrop_path IS NULL OR backdrop_path = '') THEN 1 ELSE 0 END), 0)
+		  COALESCE(SUM(CASE WHEN (backdrop_path IS NULL OR backdrop_path = '') THEN 1 ELSE 0 END), 0),
+		  COALESCE(SUM(CASE WHEN (image_path IS NULL OR image_path = '' OR backdrop_path IS NULL OR backdrop_path = '') THEN 1 ELSE 0 END), 0)
 		FROM items WHERE type IN (?, ?)`,
-		TypeMovie, TypeSeries).Scan(&h.NoTmdbID, &h.Unscraped, &h.MissingPoster, &h.MissingBackdrop)
+		TypeMovie, TypeSeries).Scan(&h.NoTmdbID, &h.Unscraped, &h.MissingPoster, &h.MissingBackdrop, &h.MissingArtwork)
 	return h, err
 }

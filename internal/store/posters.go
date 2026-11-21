@@ -83,6 +83,31 @@ func (d *DB) ReplacePoster(oldPath, newPath string) error {
 	return err
 }
 
+// ReferencedImagePaths 返回所有条目仍在引用的 data/images 相对路径。
+// 图片清理只删不在这个集合里的文件。
+func (d *DB) ReferencedImagePaths() (map[string]struct{}, error) {
+	rows, err := d.Query(`
+SELECT image_path FROM items WHERE image_path LIKE 'images/%'
+UNION
+SELECT backdrop_path FROM items WHERE backdrop_path LIKE 'images/%'
+UNION
+SELECT logo_path FROM items WHERE logo_path LIKE 'images/%'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[string]struct{}, 1024)
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out[p] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
 // CountPosterRefs 统计还有多少条目引用这张海报（用于安全删除旧文件）。
 func (d *DB) CountPosterRefs(rel string) (int, error) {
 	var n int
