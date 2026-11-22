@@ -271,3 +271,31 @@ func TestItemsByIDs(t *testing.T) {
 		t.Fatalf("unexpected items: %+v", got)
 	}
 }
+
+// 同一部剧多个单集都有进度时，只保留最近看的那一集。
+func TestResumeGroupsEpisodesBySeries(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	if err := db.UpsertPlaystate("u1", "e1", 1200, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertPlaystate("u1", "e2", 2400, false); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	if _, err := db.Exec(`UPDATE playstates SET updated_at = ? WHERE user_id='u1' AND item_id='e1'`, now-60); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE playstates SET updated_at = ? WHERE user_id='u1' AND item_id='e2'`, now); err != nil {
+		t.Fatal(err)
+	}
+
+	ids, total, err := db.ResumeItemIDs("u1", []string{TypeEpisode}, nil, 0, 20, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(ids) != 1 || ids[0] != "e2" {
+		t.Fatalf("resume ids=%v total=%d, want [e2] total 1", ids, total)
+	}
+}

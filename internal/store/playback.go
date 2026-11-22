@@ -257,9 +257,16 @@ func (d *DB) ResumeItemIDs(userID string, types, libraryIDs []string, maxRating,
 
 	cond := strings.Join(where, " AND ")
 
+	// 同一部剧的多个单集都有进度时，只保留最近看的那一集，
+	// 否则「继续观看」会整季铺满同一张海报。电影按自身 ID 分组。
+	const resumeGroup = `CASE WHEN i.type = 'Episode'
+		AND i.series_id IS NOT NULL AND i.series_id <> ''
+		THEN i.series_id ELSE i.id END`
+
 	var total int
 	if err := d.QueryRow(
-		`SELECT COUNT(*) FROM playstates p JOIN items i ON i.id = p.item_id WHERE `+cond,
+		`SELECT COUNT(DISTINCT `+resumeGroup+`)
+FROM playstates p JOIN items i ON i.id = p.item_id WHERE `+cond,
 		args...,
 	).Scan(&total); err != nil {
 		return nil, 0, err
@@ -268,8 +275,18 @@ func (d *DB) ResumeItemIDs(userID string, types, libraryIDs []string, maxRating,
 	if limit <= 0 {
 		limit = 20
 	}
-	q := `SELECT p.item_id FROM playstates p JOIN items i ON i.id = p.item_id
-WHERE ` + cond + ` ORDER BY p.updated_at DESC LIMIT ? OFFSET ?`
+	q := `WITH base AS (
+	SELECT p.item_id, p.updated_at, ` + resumeGroup + ` AS grp
+	FROM playstates p JOIN items i ON i.id = p.item_id
+	WHERE ` + cond + `
+), ranked AS (
+	SELECT item_id, updated_at,
+	       ROW_NUMBER() OVER (PARTITION BY grp ORDER BY updated_at DESC, item_id) AS rn
+	FROM base
+)
+SELECT item_id FROM ranked WHERE rn = 1
+ORDER BY updated_at DESC, item_id
+LIMIT ? OFFSET ?`
 
 	rows, err := d.Query(q, append(args, limit, max0(start))...)
 	if err != nil {
