@@ -8,6 +8,7 @@
     stats: null,
     statsAt: 0,
     systemTab: 'basic',
+    storage: null,
     attention: null,
     attentionTab: 'notmdb',
     list: null,
@@ -1186,7 +1187,7 @@
   // ---------- 系统 ----------
   async function renderSystem() {
     $('#crumb').textContent = '系统';
-    const [info, cfg, scan, settings, backdrops, posters, stills, storage, failures, tasks, stats] = await Promise.all([
+    const [info, cfg, scan, settings, backdrops, posters, stills, failures, tasks, stats] = await Promise.all([
       api('/System/Info'),
       api('/System/Configuration'),
       api('/web/api/scan'),
@@ -1194,7 +1195,6 @@
       api('/web/api/images/backdrops'),
       api('/web/api/images/posters'),
       api('/web/api/images/stills'),
-      api('/web/api/storage'),
       api('/web/api/scrape/failures?limit=1'),
       api('/web/api/tasks/history?limit=10'),
       ensureStats(),
@@ -1211,12 +1211,6 @@
 
     const cfgRows = Object.entries(cfg || {}).map(([k, v]) =>
       `<div><b>${esc(k)}</b><span>${esc(Array.isArray(v) ? v.join(', ') : v)}</span></div>`).join('');
-
-    const storageRows = [
-      ['图片文件', `${storage.Images || 0} 个 · ${fmtBytes(storage.ImageBytes)}`],
-      ['无引用图片', `${storage.Orphans || 0} 个 · ${fmtBytes(storage.OrphanBytes)}`],
-      ['缩放缓存', `${storage.Cache || 0} 个 · ${fmtBytes(storage.CacheBytes)}`],
-    ].map(([k, v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join('');
 
     const TASK_LABEL = { scan: '扫描', scrape: '刮削', avatar: '演员头像', backup: '备份' };
     const TASK_STATUS = { ok: '成功', error: '失败', partial: '未跑完' };
@@ -1499,7 +1493,7 @@
         <p class="muted" style="margin:8px 0 0">刮削/回填过程中失败过的条目会记在这里，修好后自动消失。「缺背景图」多半是 TMDB 本身只有海报、没有背景图，不是下载失败。</p>
       </div>
       <div class="panel" data-sys="advanced"><h3>图片与缓存</h3>
-        <div class="kv">${storageRows}</div>
+        <div class="kv" id="storageRows">${storageRowsHTML(state.storage)}</div>
         <div class="row" style="margin-top:12px">
           <button data-action="refresh-storage">刷新统计</button>
           <button data-action="cleanup-storage">清理无引用图片和缓存</button>
@@ -1522,6 +1516,34 @@
         </details>
       </div>`;
     applySystemTab();
+    loadStoragePanel(true);
+  }
+
+  function storageRowsHTML(s) {
+    if (!s) return '<div><b>状态</b><span>正在加载图片统计…</span></div>';
+    return [
+      ['图片文件', `${s.Images || 0} 个 · ${fmtBytes(s.ImageBytes)}`],
+      ['无引用图片', `${s.Orphans || 0} 个 · ${fmtBytes(s.OrphanBytes)}`],
+      ['缩放缓存', `${s.Cache || 0} 个 · ${fmtBytes(s.CacheBytes)}`],
+    ].map(([k, v]) => `<div><b>${k}</b><span>${esc(v)}</span></div>`).join('');
+  }
+
+  async function loadStoragePanel(refresh) {
+    if (!refresh && state.storage) {
+      updateStorageRows(state.storage);
+      return;
+    }
+    try {
+      state.storage = await api('/web/api/storage');
+    } catch (e) {
+      state.storage = null;
+    }
+    updateStorageRows(state.storage);
+  }
+
+  function updateStorageRows(s) {
+    const el = $('#storageRows');
+    if (el) el.innerHTML = storageRowsHTML(s);
   }
 
   function applySystemTab() {
@@ -1925,13 +1947,13 @@
         break;
       }
       case 'refresh-storage':
-        await renderSystem();
+        await loadStoragePanel(true);
         break;
       case 'cleanup-storage': {
         if (!confirm('删除没有任何条目引用的图片文件，并清理缩放缓存？')) break;
         const res = await api('/web/api/storage', { method: 'POST' });
         toast(`已删除 ${res.RemovedFiles || 0} 张图片、${res.CacheFiles || 0} 个缓存文件`);
-        await renderSystem();
+        await loadStoragePanel(true);
         break;
       }
       case 'download-failures': {

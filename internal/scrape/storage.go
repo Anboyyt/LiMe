@@ -42,6 +42,14 @@ func (s *Scraper) maintenanceBusy() bool {
 // StorageStats 统计 data/images 与 data/image-cache。孤儿文件是
 // data/images 下没有被任何条目 image/backdrop/logo 引用的文件。
 func (s *Scraper) StorageStats() (StorageStats, error) {
+	s.storageMu.Lock()
+	if !s.storageCacheAt.IsZero() && time.Since(s.storageCacheAt) < 60*time.Second {
+		st := s.storageCache
+		s.storageMu.Unlock()
+		return st, nil
+	}
+	s.storageMu.Unlock()
+
 	refs, err := s.db.ReferencedImagePaths()
 	if err != nil {
 		return StorageStats{}, err
@@ -53,6 +61,10 @@ func (s *Scraper) StorageStats() (StorageStats, error) {
 	if err := walkStorage(filepath.Join(s.cfg.DataDir, "image-cache"), "image-cache", nil, false, &st, nil); err != nil {
 		return st, err
 	}
+	s.storageMu.Lock()
+	s.storageCache = st
+	s.storageCacheAt = time.Now()
+	s.storageMu.Unlock()
 	return st, nil
 }
 
@@ -90,6 +102,9 @@ func (s *Scraper) CleanupStorage() (CleanupResult, error) {
 	}); err != nil {
 		return res, err
 	}
+	s.storageMu.Lock()
+	s.storageCacheAt = time.Time{}
+	s.storageMu.Unlock()
 	s.log.Info("storage cleanup done",
 		"images_removed", res.RemovedFiles, "images_mb", res.RemovedBytes>>20,
 		"cache_removed", res.CacheFiles, "cache_mb", res.CacheBytes>>20)

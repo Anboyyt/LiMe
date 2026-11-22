@@ -9,17 +9,48 @@ import (
 	"lime/internal/store"
 )
 
+const failureCacheTTL = 60 * time.Second
+
+// cachedFailureSummary 缓存失败计数和「没 ID / 缺图」存量统计。
+// 两个查询都要扫全库，系统页和待处理页来回切时没必要重复算。
+func (h *Handler) cachedFailureSummary() (map[string]int, store.ScrapeHealth, error) {
+	h.failureMu.Lock()
+	if h.failureCache != nil && time.Since(h.failureAt) < failureCacheTTL {
+		counts, health := h.failureCache, h.failureHealth
+		h.failureMu.Unlock()
+		return counts, health, nil
+	}
+	h.failureMu.Unlock()
+
+	counts, err := h.db.ScrapeFailureCounts()
+	if err != nil {
+		return nil, store.ScrapeHealth{}, err
+	}
+	health, err := h.db.ScrapeHealth()
+	if err != nil {
+		return nil, store.ScrapeHealth{}, err
+	}
+	h.failureMu.Lock()
+	h.failureCache = counts
+	h.failureHealth = health
+	h.failureAt = time.Now()
+	h.failureMu.Unlock()
+	return counts, health, nil
+}
+
+func (h *Handler) invalidateFailureSummary() {
+	h.failureMu.Lock()
+	h.failureCache = nil
+	h.failureAt = time.Time{}
+	h.failureMu.Unlock()
+}
+
 // webScrapeFailures 输出刮削失败报告：JSON 给面板展示，CSV 给人工排查。
 func (h *Handler) webScrapeFailures(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {
 		return
 	}
-	counts, err := h.db.ScrapeFailureCounts()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	health, err := h.db.ScrapeHealth()
+	counts, health, err := h.cachedFailureSummary()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

@@ -7,11 +7,24 @@ import (
 	"lime/internal/webui"
 )
 
+// versionedCache 让带 ?v= 的静态资源长缓存，入口页仍然每次回源校验。
+// 发版改 JS/CSS 时记得同步改 index.html 里的 v 值。
+func versionedCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("v") != "" {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux := http.NewServeMux()
 
 	// 媒体界面：/app/ 下是静态资源，/ 返回入口页
-	mux.Handle("GET /app/", noCache(http.StripPrefix("/app/", http.FileServerFS(appFS))))
+	mux.Handle("GET /app/", versionedCache(http.StripPrefix("/app/", http.FileServerFS(appFS))))
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -25,8 +38,8 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /health", h.health)
 
 	// 运维面板：内嵌静态页 + 几个只读接口。
-	// 静态文件每次都要回源校验，否则更新后浏览器还在用旧 JS。
-	mux.Handle("GET /web/", noCache(http.StripPrefix("/web/", http.FileServerFS(webui.OpsFS))))
+	// 入口 HTML 仍然 no-cache；带 ?v= 的 JS/CSS 可以长缓存，靠版本号换新。
+	mux.Handle("GET /web/", versionedCache(http.StripPrefix("/web/", http.FileServerFS(webui.OpsFS))))
 	mux.HandleFunc("GET /web", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/web/", http.StatusFound)
 	})

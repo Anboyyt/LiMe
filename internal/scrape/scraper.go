@@ -69,6 +69,11 @@ type Scraper struct {
 	backdrop   BackdropStatus
 	poster     BackdropStatus
 	still      BackdropStatus
+
+	// 图片目录统计要遍历文件并扫引用表，缓存 60 秒。
+	storageMu      sync.Mutex
+	storageCache   StorageStats
+	storageCacheAt time.Time
 }
 
 func New(cfg config.Config, db *store.DB, log *slog.Logger) *Scraper {

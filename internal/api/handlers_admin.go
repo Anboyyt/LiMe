@@ -38,13 +38,25 @@ func (h *Handler) realtimeDirs() int {
 	return h.realtime.WatchDirs()
 }
 
-const statsCacheTTL = 15 * time.Second
+const statsCacheTTL = 60 * time.Second
 
 // cachedStats 缓存全库统计。COUNT 子查询要扫几十万行，面板来回切换时
 // 没必要每次都重算；库有增删改时调用 invalidateStats 立即失效。
 func (h *Handler) cachedStats() (*store.Stats, error) {
+	ttl := statsCacheTTL
+	var lastFinished int64
+	if h.scanner != nil {
+		st := h.scanner.Status()
+		if st.Running {
+			// 扫描过程中计数一直在变，缓存短一点，页面能跟上进度。
+			ttl = 3 * time.Second
+		}
+		lastFinished = st.LastFinished
+	}
+
 	h.statsMu.Lock()
-	if h.statsCache != nil && time.Since(h.statsCacheAt) < statsCacheTTL {
+	if h.statsCache != nil && time.Since(h.statsCacheAt) < ttl &&
+		h.statsCacheAt.Unix() >= lastFinished {
 		s := h.statsCache
 		h.statsMu.Unlock()
 		return s, nil

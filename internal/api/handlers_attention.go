@@ -18,12 +18,7 @@ func (h *Handler) webAttention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	health, err := h.db.ScrapeHealth()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	failureCounts, err := h.db.ScrapeFailureCounts()
+	failureCounts, health, err := h.cachedFailureSummary()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -116,6 +111,7 @@ func (h *Handler) webAttentionRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.invalidateFailureSummary()
 	go func() {
 		if _, err := h.scraper.ScrapeItems(ids); err != nil {
 			h.log.Warn("attention retry failed", "items", len(ids), "err", err)

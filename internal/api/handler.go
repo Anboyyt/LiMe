@@ -50,10 +50,16 @@ type Handler struct {
 	stallAfter    time.Duration
 	stallCooldown time.Duration
 
-	// 全库统计要扫几十万行；概览/媒体库/系统页来回切时复用 15 秒。
+	// 全库统计要扫几十万行；概览/媒体库/系统页来回切时复用 60 秒。
 	statsMu      sync.Mutex
 	statsCache   *store.Stats
 	statsCacheAt time.Time
+
+	// 刮削失败汇总（按类型计数 + 存量缺图）也要扫全库，缓存 60 秒。
+	failureMu     sync.Mutex
+	failureCache  map[string]int
+	failureHealth store.ScrapeHealth
+	failureAt     time.Time
 
 	// 筛选面板缓存（Genres / Years / Ratings），按可见库集合缓存。
 	filterMu       sync.Mutex
@@ -143,6 +149,11 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	}
 	// 面板里保存的 Telegram 设置优先于环境变量；worker 常驻，改配置即时生效。
 	h.loadStallSettings()
+	// 全库统计和图片目录统计都不适合等用户点开页面才算；后台先热一次。
+	go func() { _, _ = h.cachedStats() }()
+	if h.scraper != nil {
+		go func() { _, _ = h.scraper.StorageStats() }()
+	}
 	h.notifier = notify.New(h.tgConfig(), log)
 	h.ingestNotifier = notify.New(h.ingestTGConfig(), log)
 	go h.runIngestNotifier()
