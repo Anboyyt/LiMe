@@ -91,9 +91,15 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 	// 可选：把第一个片源解析成 CDN 直链，客户端（VidHub）拿 DirectStreamUrl
 	// 就能直接连云盘，少一次经 Cloudflare 回到 LiMe 的 302。多版本时只解析
 	// 客户端实际要播的那个，避免串行等待多次 PanSave 探测。
-	if h.cfg.PlaybackDirectURL && h.cfg.ResolveRedirect && len(out) > 0 && !usesRelativeStreamURL(r) {
-		if final, err := cachedResolveRedirect(r.Context(), preferred.URL, r.UserAgent()); err != nil {
-			h.log.Warn("resolve playback direct url", "item", itemID, "err", err)
+	if h.cfg.PlaybackDirectURL && h.cfg.ResolveRedirect && len(out) > 0 &&
+		!usesRelativeStreamURL(r) && h.directURLClientAllowed(r.UserAgent()) {
+		final, err := h.resolveURL(r.Context(), preferred.URL, r.UserAgent(), autoResolveTimeout)
+		if err != nil {
+			if h.cfg.ResolveRedirectAuto {
+				h.log.Debug("resolve playback direct url fallback", "item", itemID, "err", err)
+			} else {
+				h.log.Warn("resolve playback direct url", "item", itemID, "err", err)
+			}
 		} else if final != "" {
 			out[0].DirectStreamUrl = safeLocation(final)
 		}
@@ -194,12 +200,20 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.ResolveRedirect {
 		// 115 的直链签名和请求 UA 有关，必须透传客户端 UA，
 		// 否则 PanSave 按 LiMe 的 UA 生成链接，播放器拿到会 403 invalid signature。
-		if final, err := cachedResolveRedirect(r.Context(), location, r.UserAgent()); err != nil {
-			h.log.Warn("resolve redirect failed", "item", itemID, "err", err)
-			var se upstreamStatusError
-			if errors.As(err, &se) {
-				writeError(w, http.StatusBadGateway, "upstream unavailable")
-				return
+		final, err := h.resolveURL(r.Context(), location, r.UserAgent(), autoResolveTimeout)
+		if err != nil {
+			if h.cfg.ResolveRedirectAuto {
+				// auto 模式绝不阻断播放：解析失败就按原地址 302。
+				if !errors.Is(err, errAutoResolveBlocked) {
+					h.log.Debug("resolve redirect fallback", "item", itemID, "err", err)
+				}
+			} else {
+				h.log.Warn("resolve redirect failed", "item", itemID, "err", err)
+				var se upstreamStatusError
+				if errors.As(err, &se) {
+					writeError(w, http.StatusBadGateway, "upstream unavailable")
+					return
+				}
 			}
 		} else if final != "" {
 			location = safeLocation(final)

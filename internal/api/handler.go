@@ -50,6 +50,12 @@ type Handler struct {
 	stallAfter    time.Duration
 	stallCooldown time.Duration
 
+	// auto 跟跳的熔断：连续失败几次后暂停解析，避免 PanSave 挂了时
+	// 每个新地址都先等超时再回退。
+	resolveMu           sync.Mutex
+	resolveFails        int
+	resolveBlockedUntil time.Time
+
 	// 全库统计要扫几十万行；概览/媒体库/系统页来回切时复用 60 秒。
 	statsMu      sync.Mutex
 	statsCache   *store.Stats
@@ -149,6 +155,12 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	}
 	// 面板里保存的 Telegram 设置优先于环境变量；worker 常驻，改配置即时生效。
 	h.loadStallSettings()
+	resolveMode := playbackModeLabel(cfg.ResolveRedirect, cfg.ResolveRedirectAuto)
+	directMode := playbackModeLabel(cfg.PlaybackDirectURL, cfg.PlaybackDirectURLAuto)
+	if !cfg.ResolveRedirect {
+		directMode = "off"
+	}
+	log.Info("playback acceleration", "resolve", resolveMode, "direct_stream_url", directMode)
 	// 全库统计和图片目录统计都不适合等用户点开页面才算；后台先热一次。
 	go func() { _, _ = h.cachedStats() }()
 	if h.scraper != nil {

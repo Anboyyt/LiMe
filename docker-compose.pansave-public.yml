@@ -96,8 +96,8 @@ services:
 #   LIME_REWRITE_FROM: "192.168.5.133:16868"
 #   LIME_REWRITE_LOCAL: "192.168.5.133:16868"
 #   LIME_REWRITE_PUBLIC: ""              # 用不到
-#   LIME_RESOLVE_REDIRECT: "true"
-#   LIME_PLAYBACK_DIRECT_URL: "true"     # 起播优化：PlaybackInfo 直接给 CDN 直链，少一次 302 往返
+#   LIME_RESOLVE_REDIRECT: "auto"        # 默认就是 auto，可不写
+#   LIME_PLAYBACK_DIRECT_URL: "auto"     # 默认就是 auto，可不写
 #   LIME_INTERNAL_URL: "http://192.168.5.133:886"
 #
 # 注意：

@@ -49,12 +49,18 @@ type Config struct {
 	// 把最终 CDN 地址交给客户端。适用于只暴露 PanSave 反代、没有公网
 	// PanSave 直链域名的部署。
 	ResolveRedirect bool
+	// ResolveRedirect 是 auto 模式：默认开启，但有短超时和失败回退，
+	// 不会因为 PanSave 慢/连不上把起播卡死。
+	ResolveRedirectAuto bool
 
 	// PlaybackInfo 里直接把解析后的 CDN 直链写进 DirectStreamUrl。
 	// VidHub 这类优先读 DirectStreamUrl 的播放器会跳过 LiMe 的 302 一跳，
 	// 起播少的是一次公网往返。115 直链和请求 UA 绑定、有效期约两周，
 	// 因此只对当前播放器 UA 解析，失败时保留 LiMe 地址。
 	PlaybackDirectURL bool
+	// PlaybackDirectURLAuto 是 auto 模式：只对会用 DirectStreamUrl 的
+	// 客户端预解析，其余客户端保持 LiMe 地址，不额外等解析。
+	PlaybackDirectURLAuto bool
 
 	// Yamby 对 302 跳转兼容性差时，可把它的视频流改成服务端中转。
 	// 媒体轨道（尤其是内嵌封面）修正后 302 已能正常播放，默认关闭；
@@ -147,6 +153,8 @@ type LibrarySpec struct {
 }
 
 func Load() Config {
+	resolveRedirect, resolveAuto := getboolAuto("LIME_RESOLVE_REDIRECT")
+	playbackDirect, playbackDirectAuto := getboolAuto("LIME_PLAYBACK_DIRECT_URL")
 	cfg := Config{
 		ServerName:              getenv("LIME_SERVER_NAME", "LiMe"),
 		HTTPAddr:                getenv("LIME_HTTP_ADDR", ":886"),
@@ -163,8 +171,10 @@ func Load() Config {
 		HTTPLog:                 getbool("LIME_HTTP_LOG", false),
 		MaxItems:                getint("LIME_MAX_ITEMS", 20000),
 		InternalURL:             strings.TrimRight(os.Getenv("LIME_INTERNAL_URL"), "/"),
-		ResolveRedirect:         getbool("LIME_RESOLVE_REDIRECT", false),
-		PlaybackDirectURL:       getbool("LIME_PLAYBACK_DIRECT_URL", false),
+		ResolveRedirect:         resolveRedirect,
+		ResolveRedirectAuto:     resolveAuto,
+		PlaybackDirectURL:       playbackDirect,
+		PlaybackDirectURLAuto:   playbackDirectAuto,
 		ProxyYamby:              getbool("LIME_YAMBY_PROXY", false),
 		StreamCacheMB:           getint("LIME_STREAM_CACHE_MB", 0),
 		StreamCacheMaxMB:        getint("LIME_STREAM_CACHE_MAX_MB", 4096),
@@ -336,4 +346,21 @@ func getbool(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+// getboolAuto 解析三态开关：未设置 / auto → (true, true)，
+// true / false → 对应布尔值且非 auto。无效值按 auto 处理，保证
+// 老部署不会因为写错一个值就失去播放能力。
+func getboolAuto(key string) (enabled, auto bool) {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch raw {
+	case "", "auto":
+		return true, true
+	case "false", "0", "no", "off":
+		return false, false
+	case "true", "1", "yes", "on":
+		return true, false
+	default:
+		return true, true
+	}
 }

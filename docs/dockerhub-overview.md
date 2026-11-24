@@ -11,10 +11,12 @@
 客户端 → LiMe → 302 → 115/123 CDN → 播放
 ```
 
-开启 `LIME_RESOLVE_REDIRECT` 后，LiMe 在服务端就把 PanSave 那一跳跟掉，
-直接把最终 CDN 地址交给客户端 —— PanSave 的反代端口完全不用暴露到公网。
-再叠加 `LIME_PLAYBACK_DIRECT_URL`，PlaybackInfo 的 `DirectStreamUrl` 会直接
-写成最终 CDN 直链，客户端起播再少一次 302 往返。
+默认自动开启：LiMe 在服务端把 PanSave 那一跳跟掉，直接把最终 CDN 地址交给
+客户端 —— PanSave 的反代端口完全不用暴露到公网。PlaybackInfo 的
+`DirectStreamUrl` 也会按客户端类型自动给 CDN 直链，起播再少一次 302 往返。
+PanSave 慢或连不上时会自动回退原 302，不会把起播卡死。
+
+两个开关都支持 `auto` / `true` / `false` 三态，不写就是 `auto`，不需要额外配置。
 
 > 服务端不接触视频字节、不转码、不缓存 URL。播放大库时 LiMe 几乎不占上传带宽。
 
@@ -70,8 +72,9 @@ services:
       LIME_ADMIN_PASSWORD: "change-me"
       LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
       LIME_LIBRARY_ROOTS: "/media"
-      LIME_RESOLVE_REDIRECT: "true"
-      LIME_PLAYBACK_DIRECT_URL: "true"  # 起播优化：PlaybackInfo 直接给 CDN 直链，少一次 302 往返
+      # 起播加速默认 auto，不用写；需要强制/关闭时再设 true/false
+      # LIME_RESOLVE_REDIRECT: "auto"
+      # LIME_PLAYBACK_DIRECT_URL: "auto"
       LIME_BACKUP_DIR: "/backup"        # 数据库每日备份目录
     volumes:
       - ./data:/data
@@ -98,8 +101,6 @@ docker run -d --name lime \
   -e LIME_ADMIN_PASSWORD=change-me \
   -e LIME_LIBRARIES="电影|/media/电影|movies;剧集|/media/剧集|tvshows" \
   -e LIME_LIBRARY_ROOTS=/media \
-  -e LIME_RESOLVE_REDIRECT=true \
-  -e LIME_PLAYBACK_DIRECT_URL=true \
   -e LIME_BACKUP_DIR=/backup \
   lixxh/lime:latest
 ```
@@ -120,8 +121,8 @@ docker run -d --name lime \
 | `LIME_SCAN_DAILY_AT` | 每日增量扫描时间 `HH:MM`，留空关闭 | 空（面板默认 03:30） |
 | `LIME_REALTIME_MONITOR` | 实时监控媒体目录 | `true` |
 | `LIME_REALTIME_RECONCILE` | 启动时磁盘与数据库对账 | `true` |
-| `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，直接给 CDN 地址 | `false` |
-| `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo 的 `DirectStreamUrl` 直接给 CDN 直链，客户端起播少一跳；需配合 `LIME_RESOLVE_REDIRECT=true` | `false` |
+| `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，直接给 CDN 地址；`auto` 500ms 超时并失败回退/熔断，`true` 严格，`false` 关闭 | `auto` |
+| `LIME_PLAYBACK_DIRECT_URL` | `DirectStreamUrl` 直接给 CDN 直链；`auto` 只对会用该字段的客户端预解析，`true` 对所有客户端，`false` 关闭 | `auto` |
 | `LIME_INTERNAL_URL` | PanSave 反代用的内网上游地址 | 空 |
 | `LIME_REWRITE_ENABLED` | 改写 STRM 里的 302 地址 | `false` |
 | `LIME_REWRITE_FROM` / `LOCAL` / `PUBLIC` | 地址改写规则 | — |

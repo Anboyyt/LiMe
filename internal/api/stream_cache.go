@@ -91,10 +91,8 @@ func (h *Handler) warmStreamCache(r *http.Request, src *store.MediaSource, locat
 		defer cancel()
 
 		final := location
-		if h.cfg.ResolveRedirect {
-			if u, err := cachedResolveRedirect(ctx, location, ua); err == nil && u != "" {
-				final = u
-			}
+		if u, err := h.resolveURL(ctx, location, ua, autoResolveTimeout); err == nil && u != "" {
+			final = u
 		}
 		// 尾部先取：它只要 2MB，第一轮探测马上就会用上。
 		if err := h.fillCacheFile(ctx, final, ua, src.Size-tailLen, src.Size-1, tailPath); err != nil {
@@ -285,10 +283,8 @@ func (h *Handler) tryServeStreamCache(w http.ResponseWriter, r *http.Request, sr
 	// 剩余部分继续从 CDN 透传，保持完整的 Content-Length。
 	location := h.streamLocation(r, src.URL)
 	final := location
-	if h.cfg.ResolveRedirect {
-		if u, err := cachedResolveRedirect(r.Context(), location, r.UserAgent()); err == nil && u != "" {
-			final = u
-		}
+	if u, err := h.resolveURL(r.Context(), location, r.UserAgent(), autoResolveTimeout); err == nil && u != "" {
+		final = u
 	}
 	if err := h.copyUpstreamRange(r.Context(), w, final, r.UserAgent(), headLen, end); err != nil {
 		h.log.Warn("stream cache continue", "source", src.ID, "err", err)

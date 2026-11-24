@@ -43,10 +43,8 @@ func (h *Handler) proxyStream(w http.ResponseWriter, r *http.Request, src *store
 	}
 
 	final := location
-	if h.cfg.ResolveRedirect {
-		if u, err := cachedResolveRedirect(r.Context(), location, r.UserAgent()); err == nil && u != "" {
-			final = u
-		}
+	if u, err := h.resolveURL(r.Context(), location, r.UserAgent(), autoResolveTimeout); err == nil && u != "" {
+		final = u
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, final, nil)

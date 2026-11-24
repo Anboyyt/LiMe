@@ -48,6 +48,8 @@
     not_found: 'TMDB ID 失效', api_error: '接口错误',
     poster: '海报下载失败', backdrop: '背景图下载失败', logo: '标题图下载失败',
   };
+  const PLAYBACK_MODE = { auto: '自动（失败回退）', strict: '强制解析', off: '关闭' };
+  const playbackModeLabel = (m) => PLAYBACK_MODE[m] || m || '—';
   // 与后端 localPlayers 保持一致；新增播放器两边都要改。
   const LOCAL_PLAYERS = [
     ['vlc', 'VLC'],
@@ -1315,6 +1317,13 @@
           <tbody>${taskRows}</tbody>
         </table>
         <p class="muted" style="margin:8px 0 0">扫描、刮削和备份完成后自动记录，保留最近 200 条。</p>
+      </div>
+      <div class="panel" data-sys="playback"><h3>起播加速</h3>
+        <div class="kv">
+          <div><b>服务端跟跳</b><span>${esc(playbackModeLabel(settings.ResolveMode))}</span></div>
+          <div><b>DirectStreamUrl</b><span>${esc(playbackModeLabel(settings.PlaybackDirectMode))}</span></div>
+        </div>
+        <p class="muted" style="margin:8px 0 0">默认 auto：最多等 500ms，成功直接给 CDN 地址，失败/超时回退原 302；连续失败 3 次后熔断 5 分钟。可通过 LIME_RESOLVE_REDIRECT / LIME_PLAYBACK_DIRECT_URL 设为 auto/true/false，改环境变量后重启生效。</p>
       </div>
       <div class="panel" data-sys="playback"><h3>播放预热</h3>
         <div class="kv">

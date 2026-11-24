@@ -11,7 +11,7 @@
 
 兼容 Jellyfin 客户端、爆米花、SenPlayer、VidHub —— **SenPlayer 体验最佳**。
 
-最新版本 **v1.0.60** · [更新记录](#更新记录) · [Docker Hub](https://hub.docker.com/r/lixxh/lime)
+最新版本 **v1.1.0** · [更新记录](#更新记录) · [Docker Hub](https://hub.docker.com/r/lixxh/lime)
 
 服务端代客户端跟一跳 PanSave 的 302；**外网直接访问 LiMe 就能播放**，
 视频流不再绕经 PanSave 反向代理。
@@ -20,8 +20,9 @@
 客户端 → LiMe → 302 → 115/123 CDN → 播放
 ```
 
-开启 `LIME_RESOLVE_REDIRECT` 后，LiMe 在服务端就把 PanSave 那一跳跟掉，
-直接把最终 CDN 地址交给客户端 —— PanSave 的 16868 端口完全不用暴露到公网。
+默认自动开启：LiMe 在服务端把 PanSave 那一跳跟掉，直接把最终 CDN 地址交给客户端
+—— PanSave 的 16868 端口完全不用暴露到公网。PanSave 慢或连不上时会自动回退原 302，
+不会把起播卡死。
 
 > 服务端不接触视频字节、不转码、不缓存 URL。播放大库时 LiMe 几乎不占上传带宽。
 
@@ -71,7 +72,7 @@
 | 能力 | 说明 |
 |---|---|
 | Jellyfin / Emby 兼容 | 同时接受 `/emby/...` 前缀，PanSave 的 Emby 配置校验可直接通过 |
-| 302 直连 | 服务端只发重定向，不碰视频字节；可选在服务端跟掉 PanSave 一跳 |
+| 302 直连 | 服务端只发重定向，不碰视频字节；默认 auto 在服务端跟掉 PanSave 一跳，失败/超时回退原 302 |
 | STRM 索引 | 扫描 `.strm`，自动识别电影 / 剧集 / 季 / 单集，支持多版本归并 |
 | TMDB 刮削 | 按目录里的 `{tmdb-ID}` 精确刮削，海报 / 背景 / Logo / 简介 / 演员 |
 | 手动识别 | 详情页按标题搜索 TMDB，选中结果即可改绑并重新刮削；目录名缺 `{tmdb-ID}` 也能救回来 |
@@ -112,7 +113,9 @@ services:
       LIME_ADMIN_PASSWORD: "change-me"
       LIME_LIBRARIES: "电影|/media/电影|movies;剧集|/media/剧集|tvshows"
       LIME_LIBRARY_ROOTS: "/media"
-      LIME_RESOLVE_REDIRECT: "true"
+      # 起播加速默认 auto，不用写；需要强制/关闭时再设 true/false
+      # LIME_RESOLVE_REDIRECT: "auto"
+      # LIME_PLAYBACK_DIRECT_URL: "auto"
       LIME_BACKUP_DIR: "/backup"        # 数据库每日备份目录
     volumes:
       - ./data:/data
@@ -144,7 +147,6 @@ docker run -d --name lime \
   -e LIME_ADMIN_PASSWORD=change-me \
   -e LIME_LIBRARIES="电影|/media/电影|movies;剧集|/media/剧集|tvshows" \
   -e LIME_LIBRARY_ROOTS=/media \
-  -e LIME_RESOLVE_REDIRECT=true \
   -e LIME_BACKUP_DIR=/backup \
   lixxh/lime:latest
 ```
@@ -421,8 +423,8 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_REWRITE_PUBLIC` | 外网客户端使用的地址 | — |
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token | `false` |
 | `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
-| `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端；公网直连建议开 | `false`（compose 模板里为 `true`） |
-| `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链（按客户端 UA 解析并缓存 10 分钟），VidHub 等优先读该字段的客户端少一跳。**需同时开 `LIME_RESOLVE_REDIRECT` 才生效** | `false` |
+| `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端。`auto`：最多等 500ms，失败/超时回退原 302，连续失败 3 次熔断 5 分钟；`true`：强制解析，失败可能返回 502；`false`：关闭 | `auto` |
+| `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链。`auto`：只对 VidHub / SenPlayer / Yamby / Infuse 等会用该字段的客户端预解析；`true`：对所有客户端；`false`：关闭。需 `LIME_RESOLVE_REDIRECT` 不为 false | `auto` |
 | `LIME_YAMBY_PROXY` | Yamby 跟 302 不稳时，把它的视频流改成服务端中转；会占用 NAS 上行 | `false` |
 | `LIME_STREAM_CACHE_MB` | 仅代理模式：每个片源预取的头部长度的 MB 数，`0` 关闭（尾部固定 2MB） | `0` |
 | `LIME_STREAM_CACHE_MAX_MB` | 头/尾缓存总上限 | `4096` |
@@ -466,34 +468,47 @@ environment:
 ```
 客户端 → GET /Items/{id}/PlaybackInfo   （拿到 MediaSource，Path 指向本服务）
       → GET /Videos/{id}/stream?static=true&MediaSourceId=...
-      → 302（LIME_RESOLVE_REDIRECT=true 时直接给 CDN 地址）
+      → 302（auto/true 时直接给 CDN 地址；false 时给 PanSave 地址）
       → 115/123 CDN（支持 Range，206）
 ```
 
-关闭 `LIME_RESOLVE_REDIRECT` 时，LiMe 只回 STRM 里的 PanSave 地址，
-由客户端再跟一跳 PanSave 的 302。
+`LIME_RESOLVE_REDIRECT` 设为 `false` 时，LiMe 只回 STRM 里的 PanSave 地址，
+由客户端再跟一跳 PanSave 的 302。默认的 `auto` 会自动尝试服务端跟跳，
+失败或超时就回退到这条路径。
 
 - `SupportsTranscoding: false`，没有任何转码路径；客户端不支持直连编码时会直接报错，这是设计边界
 - CDN 直链的签名与请求 UA 绑定，LiMe 会透传客户端 UA，否则会 403 `invalid signature`
 - `RunTimeTicks = 0` 时部分客户端进度条异常，属已知限制；有 TMDB 时长后会自动回填
 - 多版本默认按画质排序，客户端不指定 `MediaSourceId` 时播最高画质
 
-### 起播加速：`LIME_PLAYBACK_DIRECT_URL`
+### 起播加速：默认 auto，不需要写环境变量
 
-在 `LIME_RESOLVE_REDIRECT=true` 的基础上再打开 `LIME_PLAYBACK_DIRECT_URL`，
-PlaybackInfo 的 `DirectStreamUrl` 会直接写最终 CDN 直链（按客户端 UA 解析，
-结果缓存 10 分钟），客户端起播少一次「回 LiMe 拿 302」的往返：
+两个开关都支持三态，**不写就是 auto**：
+
+| 值 | 行为 |
+|---|---|
+| `auto`（默认） | 服务端先尝试跟掉 PanSave 一跳，最多等 500ms；成功就把最终 CDN 地址交给客户端，失败/超时回退原 302。连续失败 3 次后熔断 5 分钟，全部直接走回退 |
+| `true` | 强制解析。保持原有严格行为：上游 4xx/5xx 可能返回 502 |
+| `false` | 关闭，客户端自己跟 PanSave 的 302 |
+
+> 老 compose 里已经写了 `true` / `false` 的，会继续按写的值执行，不会因为升级
+> 改变行为。想用 auto 的超时回退/熔断，把对应变量改成 `"auto"` 或直接删掉那行；
+> 什么都不写就是 `auto`。
+
+`LIME_PLAYBACK_DIRECT_URL` 在 auto 模式下只对会优先读 `DirectStreamUrl` 的客户端
+（VidHub、SenPlayer、Yamby、Infuse 等）预解析，其它客户端保持 LiMe 地址，不会
+额外等解析。显式写 `true` 才会对所有客户端生效。
 
 ```
 客户端 → PlaybackInfo（DirectStreamUrl = https://xxx.115cdn.net/...mp4）
       → 直接连 CDN，跳过 LiMe 的 302
 ```
 
-- 优先读 `DirectStreamUrl` 的客户端（VidHub、SenPlayer 等）生效；不读该字段的
-  客户端仍走 `/Videos/{id}/stream` 的 302，行为不变
+- 显式 `true` 时列表接口（`/Items`、`/Shows/{id}/Episodes`）也会预解析第一片源，
+  最多等 600ms；auto 模式只对上述客户端做。超时保持 LiMe 地址，不影响列表可用性
 - 外部访问走 Cloudflare / 反向代理时收益更明显，省掉一次公网往返
-- 列表接口（`/Items`、`/Shows/{id}/Episodes`）也会预解析第一片源，最多等 600ms，
-  超时保持 LiMe 地址，不影响列表可用性
+- 实现在 `internal/api/resolve_mode.go`：短超时、负缓存、熔断都在这里，任何
+  一步失败都不会阻断播放
 
 ### 时长
 
@@ -634,8 +649,8 @@ VidHub / SenPlayer 的版本列表里手动切低版本。媒体源 ID 不变，
       → LiMe 886 → 302 → 115/123 CDN → 播放
 ```
 
-- `LIME_RESOLVE_REDIRECT: "true"`：LiMe 在返回 302 前先跟一跳 PanSave，
-  把最终 CDN 地址交给客户端。PanSave 的 16868 不需要暴露到公网
+- `LIME_RESOLVE_REDIRECT` 默认 `auto`：LiMe 在返回 302 前先跟一跳 PanSave，
+  把最终 CDN 地址交给客户端；失败自动回退。PanSave 的 16868 不需要暴露到公网
 - `LIME_INTERNAL_URL` 留空即可：PlaybackInfo 里的 `Path` 直接用客户端访问的域名。
   就算填了也不影响公网客户端，见下面「自动判断」
 - CDN 直链的签名与请求 UA 绑定，LiMe 会透传客户端 UA，否则会 403
@@ -655,7 +670,7 @@ PanSave 反代会拿 `MediaSources[].Path` 去探测 302，这个地址必须是
 
 ```yaml
 LIME_INTERNAL_URL: "http://192.168.1.100:886"
-LIME_RESOLVE_REDIRECT: "true"
+# LIME_RESOLVE_REDIRECT 默认 auto，不用写；要强制严格解析再设 true
 ```
 
 ### `LIME_INTERNAL_URL` 是自动判断的
@@ -670,8 +685,8 @@ LIME_RESOLVE_REDIRECT: "true"
 所以把 `LIME_INTERNAL_URL` 配好，公网客户端走域名访问照样能播；
 只想纯直连的话留空即可。
 
-> 局域网内可以把 `LIME_RESOLVE_REDIRECT` 关掉，让客户端沿 PanSave 自己的
-> 302 链走；公网建议保持开启，省掉一次客户端往返。
+> 局域网内可以把 `LIME_RESOLVE_REDIRECT` 设为 `false`，让客户端沿 PanSave
+> 自己的 302 链走；公网保持默认 `auto` 即可，失败会自动回退。
 
 ### Emby 兼容
 
@@ -685,10 +700,11 @@ LIME_RESOLVE_REDIRECT: "true"
 
 ## 更新记录
 
-当前版本 **v1.0.60**。
+当前版本 **v1.1.0**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.1.0 | 起播加速改为默认 `auto`：不写环境变量也会自动跟掉 PanSave 一跳并给 CDN 直链；500ms 超时、失败回退、连续失败 3 次熔断 5 分钟。`LIME_PLAYBACK_DIRECT_URL` 的 auto 只对 VidHub / SenPlayer / Yamby / Infuse 预解析；显式 `true`/`false` 保持原行为，老 compose 无需修改。系统 → 播放新增当前模式展示 |
 | v1.0.60 | 修复「继续观看」：同一部剧多个单集都有进度时，只显示最近看的一集，不再整季铺满同一张海报；TotalRecordCount 和分页同步按合并结果计算 |
 | v1.0.59 | 运维面板性能优化：全库统计、刮削失败汇总、图片目录统计加缓存与启动预热；系统页图片统计改为异步加载，不再阻塞首屏；带版本号的 JS/CSS 改为长缓存，入口 HTML 继续回源校验；概览与系统页打开明显更快 |
 | v1.0.58 | 新增「待处理」页：没 TMDB ID / 刮削失败 / 缺图 / 重复条目集中展示，支持单条与批量重试；新增图片孤儿清理、扫描/刮削/备份任务历史、卡顿阈值面板可调、媒体库刮削状态筛选；系统页按常规/刮削与图片/播放/高级分组；修复暂停、切后台时误报播放卡顿 |

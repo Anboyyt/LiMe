@@ -27,7 +27,8 @@ services:
       # 日常靠实时监控 + 面板里的每日增量扫描。
       LIME_SCAN_ON_START: "false"
 
-      # 302 前先跟一跳 PanSave → 云盘 CDN，外网播放必须
+      # 302 前先跟一跳 PanSave → 云盘 CDN
+      # 写 true 是严格模式；删掉或写 "auto" 则默认 auto（500ms 超时 + 失败回退）
       LIME_RESOLVE_REDIRECT: "true"
 
       # 数据库每日快照写到独立挂载点，不和库抢 vol1 空间

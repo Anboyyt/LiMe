@@ -120,6 +120,11 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			episodeStills = h.scraper.EpisodeStills()
 		}
 		stallAfter, stallCooldown := h.stallSettings()
+		resolveMode := playbackModeLabel(h.cfg.ResolveRedirect, h.cfg.ResolveRedirectAuto)
+		directMode := playbackModeLabel(h.cfg.PlaybackDirectURL, h.cfg.PlaybackDirectURLAuto)
+		if !h.cfg.ResolveRedirect {
+			directMode = "off"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"TMDBKeySet":              len(keys) > 0,
 			"TMDBKeyHint":             firstHint,
@@ -133,6 +138,8 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			"EpisodeStills":           episodeStills,
 			"StallAlertSeconds":       int(stallAfter.Seconds()),
 			"StallCooldownSeconds":    int(stallCooldown.Seconds()),
+			"ResolveMode":             resolveMode,
+			"PlaybackDirectMode":      directMode,
 			"ScanDailyAt":             scanDaily,
 			"ScrapeDailyAt":           scrapeDaily,
 			"RealtimeMonitor":         h.realtime != nil && h.realtime.Enabled(),

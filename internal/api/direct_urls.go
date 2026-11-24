@@ -30,7 +30,7 @@ func directURLFor(ctx context.Context, sourceID string) string {
 // (URL, UA) 缓存十分钟，重复打开同一部剧几乎不再增加耗时。
 func (h *Handler) resolveDirectURLs(r *http.Request, items []*store.Item) map[string]string {
 	if !h.cfg.PlaybackDirectURL || !h.cfg.ResolveRedirect || len(items) == 0 ||
-		usesRelativeStreamURL(r) {
+		usesRelativeStreamURL(r) || !h.directURLClientAllowed(r.UserAgent()) {
 		return nil
 	}
 	ids := make([]string, 0, len(items))
@@ -68,7 +68,7 @@ func (h *Handler) resolveDirectURLs(r *http.Request, items []*store.Item) map[st
 		go func(s *store.MediaSource) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			final, err := cachedResolveRedirect(ctx, s.URL, r.UserAgent())
+			final, err := h.resolveURL(ctx, s.URL, r.UserAgent(), autoResolveTimeout)
 			if err == nil && final != "" {
 				mu.Lock()
 				out[s.ID] = safeLocation(final)

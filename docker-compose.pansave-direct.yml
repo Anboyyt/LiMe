@@ -139,4 +139,4 @@ services:
 #   LIME_HTTP_LOG: "true"
 #
 # PanSave 没有公网域名时不要用本文件，改用 docker-compose.pansave-public.yml
-# 里的「模式 B」：LIME_RESOLVE_REDIRECT=true，由 LiMe 在服务端代跟一跳。
+# 里的「模式 B」：LIME_RESOLVE_REDIRECT=auto（或 true），由 LiMe 在服务端代跟一跳。
