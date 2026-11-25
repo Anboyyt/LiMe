@@ -64,6 +64,29 @@ func TestLoadPlaybackDefaultsToAuto(t *testing.T) {
 	}
 }
 
+func TestLoadSQLiteDefaults(t *testing.T) {
+	unsetEnv(t, "LIME_SQLITE_CACHE_MB")
+	unsetEnv(t, "LIME_SQLITE_MMAP_MB")
+
+	cfg := Load()
+	if cfg.SQLiteCacheMB != 32 {
+		t.Fatalf("SQLiteCacheMB = %d, want 32", cfg.SQLiteCacheMB)
+	}
+	if cfg.SQLiteMmapMB != 256 {
+		t.Fatalf("SQLiteMmapMB = %d, want 256", cfg.SQLiteMmapMB)
+	}
+}
+
+func TestLoadSQLiteOverrides(t *testing.T) {
+	t.Setenv("LIME_SQLITE_CACHE_MB", "16")
+	t.Setenv("LIME_SQLITE_MMAP_MB", "64")
+
+	cfg := Load()
+	if cfg.SQLiteCacheMB != 16 || cfg.SQLiteMmapMB != 64 {
+		t.Fatalf("sqlite = %d/%d, want 16/64", cfg.SQLiteCacheMB, cfg.SQLiteMmapMB)
+	}
+}
+
 func TestLoadPlaybackExplicitValues(t *testing.T) {
 	t.Setenv("LIME_RESOLVE_REDIRECT", "false")
 	t.Setenv("LIME_PLAYBACK_DIRECT_URL", "true")

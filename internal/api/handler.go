@@ -162,9 +162,14 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	}
 	log.Info("playback acceleration", "resolve", resolveMode, "direct_stream_url", directMode)
 	// 全库统计和图片目录统计都不适合等用户点开页面才算；后台先热一次。
+	// 错开执行：多个全表扫描同时跑会把不同连接的 SQLite 页缓存一起填满，
+	// 启动瞬间容器内存会冲到很高，其实随后都会被回收。
 	go func() { _, _ = h.cachedStats() }()
 	if h.scraper != nil {
-		go func() { _, _ = h.scraper.StorageStats() }()
+		go func() {
+			time.Sleep(5 * time.Second)
+			_, _ = h.scraper.StorageStats()
+		}()
 	}
 	h.notifier = notify.New(h.tgConfig(), log)
 	h.ingestNotifier = notify.New(h.ingestTGConfig(), log)
@@ -173,8 +178,11 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	h.prober.StartWarmup(h.warmupConfig())
 	go h.runHealthMonitor()
 	h.prober.SetSegmentsEnabled(h.segmentExtractEnabled())
-	go h.refreshProbeCounts()
-	go h.refreshSegmentPending()
+	go h.refreshProbeCounts() // 内部先等 20 秒
+	go func() {
+		time.Sleep(10 * time.Second)
+		h.segmentPendingCached()
+	}()
 
 	appFS, err := webui.AppFS()
 	if err != nil {

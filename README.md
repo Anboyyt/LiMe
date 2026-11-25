@@ -11,7 +11,7 @@
 
 兼容 Jellyfin 客户端、爆米花、SenPlayer、VidHub —— **SenPlayer 体验最佳**。
 
-最新版本 **v1.1.0** · [更新记录](#更新记录) · [Docker Hub](https://hub.docker.com/r/lixxh/lime)
+最新版本 **v1.1.1** · [更新记录](#更新记录) · [Docker Hub](https://hub.docker.com/r/lixxh/lime)
 
 服务端代客户端跟一跳 PanSave 的 302；**外网直接访问 LiMe 就能播放**，
 视频流不再绕经 PanSave 反向代理。
@@ -60,7 +60,7 @@
 - **只为「网盘 STRM + 302」这一件事**。不接云盘 API、不做转码、不缓存直链，
   云盘那层全部交给 PanSave，LiMe 只负责索引和协议。
 - **29 万条 STRM 能扫**。流式 `WalkDir` + 12 个解析 worker + 批量事务，
-  实测 29 万条约 2 秒完成启动对账，内存稳定在几十 MB。
+  实测 29 万条约 2 秒完成启动对账，扫描内存不随文件数线性增长。
 - **出网带宽几乎为零**。播放时只回一个 302，视频字节从 CDN 直进客户端，
   NAS 不承担中转。
 - **复用官方客户端生态**。实现 Jellyfin 兼容 API，Android / Android TV /
@@ -428,7 +428,7 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_YAMBY_PROXY` | Yamby 跟 302 不稳时，把它的视频流改成服务端中转；会占用 NAS 上行 | `false` |
 | `LIME_STREAM_CACHE_MB` | 仅代理模式：每个片源预取的头部长度的 MB 数，`0` 关闭（尾部固定 2MB） | `0` |
 | `LIME_STREAM_CACHE_MAX_MB` | 头/尾缓存总上限 | `4096` |
-| `LIME_SQLITE_CACHE_MB` | SQLite 每个连接的页缓存（MB），大库首页并发查询用 | `64` |
+| `LIME_SQLITE_CACHE_MB` | SQLite 每个连接的页缓存（MB），8 个连接合计上限约为该值的 8 倍 | `32` |
 | `LIME_SQLITE_MMAP_MB` | SQLite mmap 大小（MB），`0` 关闭 | `256` |
 | `LIME_TMDB_API_KEY` | TMDB v3 API Key，留空则关闭刮削 | 空 |
 | `LIME_TMDB_LANGUAGE` | 刮削语言 | `zh-CN` |
@@ -700,10 +700,11 @@ LIME_INTERNAL_URL: "http://192.168.1.100:886"
 
 ## 更新记录
 
-当前版本 **v1.1.0**。
+当前版本 **v1.1.1**。
 
 | 版本 | 内容 |
 |---|---|
+| v1.1.1 | 修正 SQLite 页缓存默认值：此前 config 一直传 64MB，覆盖了 store 层 32MB 的默认值，8 个连接上限 512MB；现在默认 32MB（合计上限 256MB），大库启动内存峰值明显下降。启动时的全库统计、图片统计、片头片尾待分析计数改为错峰执行，避免多个全表扫描同时填满页缓存 |
 | v1.1.0 | 起播加速改为默认 `auto`：不写环境变量也会自动跟掉 PanSave 一跳并给 CDN 直链；500ms 超时、失败回退、连续失败 3 次熔断 5 分钟。`LIME_PLAYBACK_DIRECT_URL` 的 auto 只对 VidHub / SenPlayer / Yamby / Infuse 预解析；显式 `true`/`false` 保持原行为，老 compose 无需修改。系统 → 播放新增当前模式展示 |
 | v1.0.60 | 修复「继续观看」：同一部剧多个单集都有进度时，只显示最近看的一集，不再整季铺满同一张海报；TotalRecordCount 和分页同步按合并结果计算 |
 | v1.0.59 | 运维面板性能优化：全库统计、刮削失败汇总、图片目录统计加缓存与启动预热；系统页图片统计改为异步加载，不再阻塞首屏；带版本号的 JS/CSS 改为长缓存，入口 HTML 继续回源校验；概览与系统页打开明显更快 |
