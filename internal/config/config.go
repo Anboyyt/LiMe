@@ -72,6 +72,10 @@ type Config struct {
 	StreamCacheMB    int
 	StreamCacheMaxMB int
 
+	// 客户端下载/离线缓存：redirect 直接 302 到 CDN，proxy 由 LiMe 中转字节，
+	// off 关闭下载入口。默认 redirect，不占服务端带宽。
+	DownloadMode string
+
 	// SQLite 每个连接的页缓存（MB）和 mmap 大小（MB）。默认 32/256，
 	// 8 个连接合计最多 256MB；内存紧张时可调小，首页并发查询多时可适当调大。
 	SQLiteCacheMB int
@@ -178,6 +182,7 @@ func Load() Config {
 		ProxyYamby:              getbool("LIME_YAMBY_PROXY", false),
 		StreamCacheMB:           getint("LIME_STREAM_CACHE_MB", 0),
 		StreamCacheMaxMB:        getint("LIME_STREAM_CACHE_MAX_MB", 4096),
+		DownloadMode:            normalizeDownloadMode(os.Getenv("LIME_DOWNLOAD_MODE")),
 		SQLiteCacheMB:           getint("LIME_SQLITE_CACHE_MB", 32),
 		SQLiteMmapMB:            getint("LIME_SQLITE_MMAP_MB", 256),
 		Libraries:               parseLibraries(os.Getenv("LIME_LIBRARIES")),
@@ -351,6 +356,19 @@ func getbool(key string, def bool) bool {
 // getboolAuto 解析三态开关：未设置 / auto → (true, true)，
 // true / false → 对应布尔值且非 auto。无效值按 auto 处理，保证
 // 老部署不会因为写错一个值就失去播放能力。
+// normalizeDownloadMode 把 LIME_DOWNLOAD_MODE 归一到 redirect/proxy/off。
+// 未配置或未知值按 redirect 处理，保持下载能力可用。
+func normalizeDownloadMode(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "off", "false", "0", "no", "disabled":
+		return "off"
+	case "proxy", "relay":
+		return "proxy"
+	default:
+		return "redirect"
+	}
+}
+
 func getboolAuto(key string) (enabled, auto bool) {
 	raw := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 	switch raw {

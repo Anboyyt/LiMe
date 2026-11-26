@@ -206,6 +206,13 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /Trailers/{itemId}/Similar", h.similarItems)
 	mux.HandleFunc("POST /Items/{itemId}", h.updateItem)
 	mux.HandleFunc("GET /Items/{itemId}", h.getItem)
+	// 客户端离线下载/缓存。STRM 没有本地文件，默认 302 到 CDN；
+	// 不跟 302 的下载器可把 LIME_DOWNLOAD_MODE 设为 proxy。
+	mux.HandleFunc("GET /Items/{itemId}/Download", h.downloadItem)
+	mux.HandleFunc("GET /Items/{itemId}/File", h.downloadItem)
+	// 部分客户端会把动作段写成小写。
+	mux.HandleFunc("GET /Items/{itemId}/download", h.downloadItem)
+	mux.HandleFunc("GET /Items/{itemId}/file", h.downloadItem)
 	mux.HandleFunc("GET /Items/{itemId}/Images/{imageType}", h.itemImage)
 	// 客户端可能在后面带 index/tag/尺寸等任意段，整段吃掉
 	mux.HandleFunc("GET /Items/{itemId}/Images/{imageType}/{rest...}", h.itemImage)

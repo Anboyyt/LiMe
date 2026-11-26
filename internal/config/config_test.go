@@ -64,6 +64,33 @@ func TestLoadPlaybackDefaultsToAuto(t *testing.T) {
 	}
 }
 
+func TestLoadDownloadMode(t *testing.T) {
+	cases := []struct {
+		raw  string
+		set  bool
+		want string
+	}{
+		{set: false, want: "redirect"},
+		{raw: "", set: true, want: "redirect"},
+		{raw: "redirect", set: true, want: "redirect"},
+		{raw: "proxy", set: true, want: "proxy"},
+		{raw: "relay", set: true, want: "proxy"},
+		{raw: "off", set: true, want: "off"},
+		{raw: "false", set: true, want: "off"},
+		{raw: "garbage", set: true, want: "redirect"},
+	}
+	for _, c := range cases {
+		if c.set {
+			t.Setenv("LIME_DOWNLOAD_MODE", c.raw)
+		} else {
+			unsetEnv(t, "LIME_DOWNLOAD_MODE")
+		}
+		if got := Load().DownloadMode; got != c.want {
+			t.Fatalf("DownloadMode(%q) = %q, want %q", c.raw, got, c.want)
+		}
+	}
+}
+
 func TestLoadSQLiteDefaults(t *testing.T) {
 	unsetEnv(t, "LIME_SQLITE_CACHE_MB")
 	unsetEnv(t, "LIME_SQLITE_MMAP_MB")

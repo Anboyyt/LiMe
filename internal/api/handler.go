@@ -222,6 +222,7 @@ func writeStatus(w http.ResponseWriter, status int) {
 func (h *Handler) userDto(u *store.User) *dto.UserDto {
 	policy := dto.DefaultPolicy(u.IsAdmin)
 	policy.IsDisabled = u.IsDisabled
+	policy.EnableContentDownloading = h.downloadEnabled()
 	if u.MaxParentalRating > 0 {
 		v := u.MaxParentalRating
 		policy.MaxParentalRating = &v

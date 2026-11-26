@@ -48,6 +48,7 @@ type BaseItemDto struct {
 	BackdropImageTags  []string       `json:"BackdropImageTags"`
 	ImageBlurHashes    map[string]any `json:"ImageBlurHashes"`
 	LocationType       string         `json:"LocationType"`
+	CanDownload        bool           `json:"CanDownload"`
 	Type               string         `json:"Type"`
 	MediaType          string         `json:"MediaType,omitempty"`
 	IsFolder           bool           `json:"IsFolder"`

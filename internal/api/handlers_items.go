@@ -549,6 +549,8 @@ func (h *Handler) itemsToDto(r *http.Request, user *store.User, items []*store.I
 				d.MediaSources = h.listMediaSources(r, it, srcs, streamsBy)
 			}
 		}
+		// 三处口径保持一致：用户策略、条目 CanDownload、下载端点。
+		d.CanDownload = h.downloadEnabled() && d.MediaSourceCount > 0
 		out = append(out, d)
 	}
 	return out

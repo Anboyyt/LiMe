@@ -879,6 +879,8 @@
         <td style="white-space:nowrap">
           <button class="primary" data-action="play-local" data-item="${esc(it.Id)}" data-source="${esc(s.Id)}">播放</button>
           <button data-action="playlist" data-item="${esc(it.Id)}" data-source="${esc(s.Id)}">播放列表</button>
+          <button data-action="download" data-item="${esc(it.Id)}" data-source="${esc(s.Id)}"
+            data-title="${esc(it.Name)}" data-container="${esc(s.Container || '')}">下载</button>
           <button data-action="copy" data-path="${esc(s.Path)}">复制直链</button>
           <button data-action="play" data-path="${esc(s.Path)}" data-container="${esc(s.Container)}">网页播放</button>
         </td>
@@ -996,6 +998,38 @@
       ta.remove();
     }
     toast('已复制直链');
+  }
+
+  // 下载/离线缓存：Android App 里交给原生下载器，浏览器直接走下载链接。
+  async function downloadSource(el) {
+    const itemId = el.dataset.item;
+    const sourceId = el.dataset.source || '';
+    const title = el.dataset.title || 'download';
+    const container = String(el.dataset.container || '').replace(/^\./, '');
+    let filename = title;
+    if (container && !filename.toLowerCase().endsWith('.' + container.toLowerCase())) {
+      filename += '.' + container;
+    }
+
+    const params = new URLSearchParams();
+    if (sourceId) params.set('MediaSourceId', sourceId);
+    if (state.token) params.set('api_key', state.token);
+    const url = `${location.origin}/Items/${encodeURIComponent(itemId)}/Download?${params.toString()}`;
+
+    const native = window.NativeInterface;
+    if (native && typeof native.downloadFiles === 'function') {
+      native.downloadFiles(JSON.stringify([{ url, title, filename }]));
+      toast('已交给客户端下载');
+      return;
+    }
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    toast('已开始下载');
   }
 
   // 唤起本地播放器。直接跳协议，不碰剪贴板；协议没注册时用「播放列表」回退。
@@ -2175,6 +2209,9 @@
         break;
       case 'copy':
         await copyText(el.dataset.path);
+        break;
+      case 'download':
+        await downloadSource(el);
         break;
       case 'play-local':
         await playWithLocalPlayer(el.dataset.item, el.dataset.source);
