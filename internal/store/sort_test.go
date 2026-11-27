@@ -129,6 +129,51 @@ func TestSortByDatePlayed(t *testing.T) {
 	}
 }
 
+// SenPlayer 的「最后一集发行日期」发 SortBy=LastContentPremiereDate。
+func TestSortByLastContentPremiereDate(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	if _, err := db.Exec(`UPDATE items SET premiere_date = '2025-01-01' WHERE id = 'e1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE items SET premiere_date = '2025-02-01' WHERE id = 'e2'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertItem(&Item{
+		ID: "s2", LibraryID: "lib", ParentID: "lib", Type: TypeSeries, Name: "新剧", SortName: "新剧",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertItem(&Item{
+		ID: "e21", LibraryID: "lib", ParentID: "s2", Type: TypeEpisode, Name: "第 1 集",
+		SeriesID: "s2", SeasonID: "s2se1", IndexNumber: 1, ParentIndexNumber: 1,
+		PremiereDate: "2026-01-01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		desc bool
+		want []string
+	}{
+		{true, []string{"s2", "s1"}},
+		{false, []string{"s1", "s2"}},
+	} {
+		items, _, err := db.QueryItems(ItemQuery{
+			Types:      []string{TypeSeries},
+			SortBy:     []string{"LastContentPremiereDate"},
+			Descending: tc.desc,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(items) != 2 || items[0].ID != tc.want[0] || items[1].ID != tc.want[1] {
+			t.Fatalf("desc=%v order = %v, want %v", tc.desc, itemIDs(items), tc.want)
+		}
+	}
+}
+
 func itemIDs(items []*Item) []string {
 	out := make([]string, len(items))
 	for i, it := range items {

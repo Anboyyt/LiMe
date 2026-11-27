@@ -1236,10 +1236,8 @@ func buildOrderBy(q ItemQuery) (string, []any) {
 			parts = append(parts, latestEpisodeOrder+" DESC")
 			continue
 		}
-		if s == "LastEpisodeAirDate" || s == "DateLastEpisodeAirDate" ||
-			s == "DateLastEpisode" || s == "LastEpisodePremiereDate" ||
-			s == "LastEpisodeDate" {
-			// 「最后一集发行日期」：各客户端叫法不统一，这里多认几种。
+		if s == "LastContentPremiereDate" {
+			// 「最后一集发行日期」：SenPlayer 实测发这个字段。
 			// 取单集 premiere_date 的 MAX，没有日期时回退入库时间。
 			parts = append(parts, latestEpisodeOrder+" "+dir)
 			continue
