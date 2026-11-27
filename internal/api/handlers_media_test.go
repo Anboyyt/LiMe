@@ -557,6 +557,57 @@ func TestMediaPathStrmProxyHostList(t *testing.T) {
 	}
 }
 
+// PanSave 的 115 复制同播按 device_id 区分设备，但部分客户端请求 stream
+// 时不带 X-Emby-Device-Id。LiMe 把它拼进播放 URL，反代就能识别第二个设备。
+func TestStreamURLCarriesDeviceID(t *testing.T) {
+	f := newUserFixture(t)
+	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "m1", LibraryID: lib.ID, ParentID: lib.ID, Type: store.TypeMovie,
+		Name: "电影", SortName: "电影",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
+		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm",
+		URL: "http://example", Container: "mp4", FileName: "m1.mp4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/Items/m1/PlaybackInfo", strings.NewReader("{}"))
+	req.Header.Set("X-Emby-Token", f.adminTok)
+	req.Header.Set("X-Emby-Device-Id", "dev-123")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	f.env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var info dto.PlaybackInfoResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if len(info.MediaSources) != 1 {
+		t.Fatalf("sources = %d", len(info.MediaSources))
+	}
+	if got := info.MediaSources[0].DirectStreamUrl; !strings.Contains(got, "DeviceId=dev-123") {
+		t.Fatalf("direct url = %q, want DeviceId param", got)
+	}
+
+	// 没有设备头时不拼，保持老行为。
+	rr = f.do(http.MethodPost, "/Items/m1/PlaybackInfo", map[string]any{}, f.adminTok)
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if got := info.MediaSources[0].DirectStreamUrl; strings.Contains(got, "DeviceId=") {
+		t.Fatalf("direct url = %q, unexpected DeviceId", got)
+	}
+}
+
 func TestSourceDisplayNameFallback(t *testing.T) {
 	s := &store.MediaSource{VersionName: "2160p · HDR · HEVC · 5.6GB"}
 	if got := sourceDisplayName(s, nil, 0); got != s.VersionName {

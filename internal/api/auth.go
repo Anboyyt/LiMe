@@ -38,6 +38,14 @@ func parseAuth(r *http.Request) authInfo {
 	if a.Token == "" {
 		a.Token = r.URL.Query().Get("ApiKey")
 	}
+	// 部分客户端（如 SenPlayer 直连 LiMe）只在单独的头里带设备 ID，
+	// PanSave 的 115 复制同播要靠它区分设备，这里一并取出来。
+	if a.DeviceID == "" {
+		a.DeviceID = r.Header.Get("X-Emby-Device-Id")
+	}
+	if a.DeviceID == "" {
+		a.DeviceID = r.Header.Get("X-MediaBrowser-Device-Id")
+	}
 	return a
 }
 

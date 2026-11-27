@@ -88,6 +88,12 @@ func (h *Handler) streamPath(itemID, sourceID string, playSessionID ...string) s
 // 否则拿 DirectStreamUrl 直连会 401。
 func (h *Handler) mediaStreamURL(r *http.Request, itemID, sourceID string, playSessionID ...string) string {
 	u := h.streamPath(itemID, sourceID, playSessionID...)
+	// PanSave 的 115 复制同播按 device_id 区分设备。客户端请求 stream 时
+	// 不一定带 X-Emby-Device-Id，但会原样请求这个 URL，所以把设备 ID 拼进
+	// 查询参数，反代那边就能识别第二个设备并分配副本。
+	if d := parseAuth(r).DeviceID; d != "" {
+		u += "&DeviceId=" + url.QueryEscape(d)
+	}
 	// Yamby 会把服务器地址和 DirectStreamUrl 直接拼接，给绝对地址会变成
 	// /embyhttps://cdn... 这种非法路径。对它只返回相对路径。
 	if !usesRelativeStreamURL(r) {
