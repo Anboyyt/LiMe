@@ -9,6 +9,29 @@ import (
 const PlayedPercent = 90
 
 const (
+	// PlayedTailTicks 是「离结尾这么近也算看完」的容差。客户端普遍在片尾曲
+	// 开始时停，位置停在 88–90% 之间，只按 90% 判定会漏标。例如 1500s 的
+	// 番剧停在 1349s（89.9%），差 1.4 秒没标上。
+	PlayedTailTicks = int64(3 * 60 * 10_000_000)
+	// PlayedTailFloorPercent 是尾部容差生效的最低进度，避免短片停在
+	// 七八成就被当成看完。
+	PlayedTailFloorPercent = 80
+)
+
+// IsPlayed 判断进度是否算看完：过 90%，或已进最低进度且离结尾在容差内。
+// 时长未知时无法判定，返回 false。
+func IsPlayed(positionTicks, runTimeTicks int64) bool {
+	if runTimeTicks <= 0 {
+		return false
+	}
+	if positionTicks >= runTimeTicks*PlayedPercent/100 {
+		return true
+	}
+	return positionTicks >= runTimeTicks*PlayedTailFloorPercent/100 &&
+		runTimeTicks-positionTicks <= PlayedTailTicks
+}
+
+const (
 	// PlaybackSessionTTL 是会话被视为「仍在播放」的最长静默时间。
 	// 部分客户端不发 /Sessions/Playing/Stopped，只能靠 TTL 兜底。
 	PlaybackSessionTTL = 30 * time.Minute
@@ -72,8 +95,14 @@ WHERE played = 0 AND position_ticks > 0
     SELECT 1 FROM items i
     WHERE i.id = playstates.item_id
       AND i.run_time_ticks > 0
-      AND playstates.position_ticks * 100 >= i.run_time_ticks * ?
-  )`, percent)
+      AND (
+        playstates.position_ticks * 100 >= i.run_time_ticks * ?
+        OR (
+          playstates.position_ticks * 100 >= i.run_time_ticks * ?
+          AND i.run_time_ticks - playstates.position_ticks <= ?
+        )
+      )
+  )`, percent, PlayedTailFloorPercent, PlayedTailTicks)
 	if err != nil {
 		return 0, err
 	}

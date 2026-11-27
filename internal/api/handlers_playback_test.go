@@ -16,7 +16,9 @@ func playbackItem(t *testing.T, f *userFixture, id string) *store.Item {
 	it := &store.Item{
 		ID: id, LibraryID: lib.ID, ParentID: lib.ID,
 		Type: store.TypeEpisode, Name: "第 1 集", SortName: "0001",
-		RunTimeTicks: 1000 * 10_000_000, // 1000 秒
+		// 50 分钟：89% 时离结尾还有 5.5 分钟，超出 3 分钟的尾部容差，
+		// 仍能验证「89% 不算看完」；短片会被容差规则判成已看，不适合做边界。
+		RunTimeTicks: 3000 * 10_000_000,
 	}
 	if err := f.env.db.UpsertItem(it); err != nil {
 		t.Fatal(err)

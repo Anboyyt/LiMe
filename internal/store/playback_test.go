@@ -91,6 +91,28 @@ func TestPlaybackSessionTTL(t *testing.T) {
 	}
 }
 
+func TestIsPlayed(t *testing.T) {
+	const sec = int64(10_000_000)
+	cases := []struct {
+		name    string
+		pos     int64
+		runtime int64
+		want    bool
+	}{
+		{"正好 90%", 1350 * sec, 1500 * sec, true},
+		{"89.9% 片尾曲开始就停", 1349 * sec, 1500 * sec, true},
+		{"80% 停，离结尾还有 5 分钟", 1200 * sec, 1500 * sec, false},
+		{"75% 停", 1125 * sec, 1500 * sec, false},
+		{"时长未知", 1349 * sec, 0, false},
+		{"电影停在片尾字幕", 7100 * sec, 7200 * sec, true},
+	}
+	for _, c := range cases {
+		if got := IsPlayed(c.pos, c.runtime); got != c.want {
+			t.Errorf("%s: IsPlayed(%d, %d) = %v, want %v", c.name, c.pos, c.runtime, got, c.want)
+		}
+	}
+}
+
 func TestBackfillPlayedFromProgress(t *testing.T) {
 	db := newTestDB(t)
 	seedPlaybackFixture(t, db)
@@ -102,12 +124,23 @@ func TestBackfillPlayedFromProgress(t *testing.T) {
 	if err := db.UpsertPlaystate("u1", "e1", 999999999, false); err != nil {
 		t.Fatal(err)
 	}
+	// 尾部容差：1500s 的集停在 1349s（89.9%），片尾曲开始就停了，应补成已播。
+	if err := db.UpsertItem(&Item{
+		ID: "e2", LibraryID: "lib", ParentID: "se1", Type: TypeEpisode,
+		Name: "第 2 集", SeriesID: "s1", SeasonID: "se1",
+		IndexNumber: 2, ParentIndexNumber: 1, RunTimeTicks: 1500 * 10_000_000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertPlaystate("u1", "e2", 1349*10_000_000, false); err != nil {
+		t.Fatal(err)
+	}
 
 	n, err := db.BackfillPlayedFromProgress(PlayedPercent)
-	if err != nil || n != 1 {
-		t.Fatalf("backfilled = %d, %v; want 1", n, err)
+	if err != nil || n != 2 {
+		t.Fatalf("backfilled = %d, %v; want 2", n, err)
 	}
-	states, err := db.Playstates("u1", []string{"m1", "e1"})
+	states, err := db.Playstates("u1", []string{"m1", "e1", "e2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,6 +149,9 @@ func TestBackfillPlayedFromProgress(t *testing.T) {
 	}
 	if states["e1"].Played {
 		t.Fatal("item without runtime should not be marked played")
+	}
+	if !states["e2"].Played {
+		t.Fatal("episode stopped at 89.9% should be marked played")
 	}
 }
 

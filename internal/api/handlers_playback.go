@@ -728,13 +728,14 @@ func (h *Handler) recordPlaybackHistory(user *store.User, a authInfo, deviceID s
 	}
 }
 
-// isPlayed 播放进度到 90% 视为看完。没有时长信息时无法判定。
+// isPlayed 播放进度到 90%（或离结尾 3 分钟内）视为看完。
+// 没有时长信息时无法判定。
 func (h *Handler) isPlayed(itemID string, positionTicks int64) bool {
 	it, err := h.db.GetItem(itemID)
-	if err != nil || it.RunTimeTicks <= 0 {
+	if err != nil {
 		return false
 	}
-	return positionTicks >= it.RunTimeTicks*store.PlayedPercent/100
+	return store.IsPlayed(positionTicks, it.RunTimeTicks)
 }
 
 func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
