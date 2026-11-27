@@ -57,7 +57,10 @@ func (h *Handler) streamBase(r *http.Request) string {
 		origHost = hf
 	}
 	base := externalBase(r)
-	if h.cfg.InternalURL != "" && isPrivateHost(origHost) {
+	// MediaPathStrm 生效时（请求来自内网反代），客户端实际播放走反代入口，
+	// 地址必须取 X-Forwarded-Host；再用 InternalURL 覆盖会把它打回 LiMe 端口，
+	// 客户端直连 LiMe 就绕过了反代，拿不到 device_id，副本不会被分配。
+	if h.cfg.InternalURL != "" && isPrivateHost(origHost) && !h.mediaPathStrm(r) {
 		base = h.cfg.InternalURL
 	}
 	// 诊断日志：每个 PlaybackInfo / 详情请求都会走这里，反代下量很大

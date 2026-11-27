@@ -376,6 +376,56 @@ func TestMediaPathStrmAutoByForwardedHost(t *testing.T) {
 	}
 }
 
+// InternalURL 是给没走 MediaPathStrm 的场景用的（PanSave 探测上游）。
+// 一旦请求来自内网反代并启用了 MediaPathStrm，播放地址必须留在反代入口
+// （X-Forwarded-Host），否则客户端直连 LiMe 端口会绕过反代，拿不到副本。
+func TestMediaPathStrmKeepsProxyHostOverInternalURL(t *testing.T) {
+	f := newUserFixtureWithConfig(t, func(c *config.Config) {
+		c.InternalURL = "http://192.168.5.133:888"
+	})
+	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "m1", LibraryID: lib.ID, ParentID: lib.ID, Type: store.TypeMovie,
+		Name: "电影", SortName: "电影",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
+		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm",
+		URL: "http://192.168.5.133:16868/strm/115/drive?pickcode=abc",
+		Container: "mp4", FileName: "m1.mp4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/Items/m1?Fields=MediaSources", nil)
+	req.Header.Set("X-Emby-Token", f.adminTok)
+	req.Header.Set("X-Forwarded-Host", "192.168.5.133:1888")
+	rr := httptest.NewRecorder()
+	f.env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d", rr.Code)
+	}
+	var res struct {
+		MediaSources []struct {
+			Path            string `json:"Path"`
+			DirectStreamUrl string `json:"DirectStreamUrl"`
+		} `json:"MediaSources"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.MediaSources) != 1 {
+		t.Fatalf("sources = %d", len(res.MediaSources))
+	}
+	if got := res.MediaSources[0].DirectStreamUrl; !strings.HasPrefix(got, "http://192.168.5.133:1888/") {
+		t.Fatalf("direct url = %q, want proxy host", got)
+	}
+}
+
 func TestSourceDisplayNameFallback(t *testing.T) {
 	s := &store.MediaSource{VersionName: "2160p · HDR · HEVC · 5.6GB"}
 	if got := sourceDisplayName(s, nil, 0); got != s.VersionName {
