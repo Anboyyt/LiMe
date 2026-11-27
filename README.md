@@ -425,7 +425,7 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token | `false` |
 | `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
 | `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端。`auto`：最多等 500ms，失败/超时回退原 302，连续失败 3 次熔断 5 分钟；`true`：强制解析，失败可能返回 502；`false`：关闭 | `auto` |
-| `LIME_MEDIA_PATH_STRM` | `MediaSources[].Path` 返回 STRM 里的原始地址（仍按 rewrite 规则改写 host），`DirectStreamUrl` 保持本服务地址。PanSave 的 Emby 反代只对 `/strm` 形状的片源路径启用 **115 复制同播**，多人同时播放同一视频时需要打开。Yamby / 爆米花仍返回相对路径 | `false` |
+| `LIME_MEDIA_PATH_STRM` | `MediaSources[].Path` 返回 STRM 里的原始地址（仍按 rewrite 规则改写 host），`DirectStreamUrl` 保持本服务地址。PanSave 的 Emby 反代只对 `/strm` 形状的片源路径启用 **115 复制同播**。`auto`（默认）：请求带 `X-Forwarded-Host` 且是内网地址（即从 PanSave 反代端口进来）时启用，Cloudflare 隧道等公网域名访问保持原行为；`true` / `false` 强制开关。Yamby / 爆米花仍返回相对路径 | `auto` |
 | `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链。`auto`：只对 VidHub / SenPlayer / Yamby / Infuse 等会用该字段的客户端预解析；`true`：对所有客户端；`false`：关闭。需 `LIME_RESOLVE_REDIRECT` 不为 false | `auto` |
 | `LIME_YAMBY_PROXY` | Yamby 跟 302 不稳时，把它的视频流改成服务端中转；会占用 NAS 上行 | `false` |
 | `LIME_STREAM_CACHE_MB` | 仅代理模式：每个片源预取的头部长度的 MB 数，`0` 关闭（尾部固定 2MB） | `0` |
@@ -491,13 +491,17 @@ environment:
 它自己生成的 `/strm` 地址**——它会观察 Item 详情里的 `media_source_path`，
 不是这个形状就当成普通外部 HTTP 源，不做副本分配。
 
-开启方式（三个条件缺一不可）：
+**默认不用配任何东西**：`LIME_MEDIA_PATH_STRM` 默认 `auto`，LiMe 检测到请求来自
+内网反代（`X-Forwarded-Host` 是私有地址，即从 PanSave 的 1886/1888 端口进来）
+就自动启用；客户端直连 LiMe 或走 Cloudflare 隧道（公网域名）时保持原行为。
+
+需要固定行为时再显式写：
 
 ```yaml
 environment:
-  LIME_RESOLVE_REDIRECT: "false"                      # 不要自己解析成 CDN，否则 PanSave 只看到一条 302
-  LIME_INTERNAL_URL: "http://192.168.5.133:1888"      # PanSave 反代端口，客户端播放走这里
-  LIME_MEDIA_PATH_STRM: "true"                        # Path 返回 /strm 原文，供 PanSave 识别
+  LIME_MEDIA_PATH_STRM: "true"     # 强制开启；"false" 强制关闭
+  # LIME_INTERNAL_URL: "http://192.168.5.133:1888"  # auto 下不需要，地址取自 X-Forwarded-Host
+  # LIME_RESOLVE_REDIRECT: "false"                  # 走反代时 LiMe 的 stream 不被调用，auto 也不影响
 ```
 
 字段分工：

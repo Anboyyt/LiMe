@@ -328,7 +328,7 @@ func (h *Handler) listMediaSources(r *http.Request, it *store.Item, srcs []*stor
 		pathURL := h.sourcePath(r, it.ID, s.ID, s.URL)
 		directURL := h.mediaStreamURL(r, it.ID, s.ID)
 		// MediaPathStrm 下直接给 CDN 直链会绕开 PanSave，同播就失效了。
-		if !h.cfg.MediaPathStrm {
+		if !h.mediaPathStrm(r) {
 			if u := directURLFor(r.Context(), s.ID); u != "" {
 				directURL = u
 			}

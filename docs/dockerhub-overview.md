@@ -126,7 +126,7 @@ docker run -d --name lime \
 | `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，直接给 CDN 地址；`auto` 500ms 超时并失败回退/熔断，`true` 严格，`false` 关闭 | `auto` |
 | `LIME_PLAYBACK_DIRECT_URL` | `DirectStreamUrl` 直接给 CDN 直链；`auto` 只对会用该字段的客户端预解析，`true` 对所有客户端，`false` 关闭 | `auto` |
 | `LIME_INTERNAL_URL` | PanSave 反代用的内网上游地址 | 空 |
-| `LIME_MEDIA_PATH_STRM` | `MediaSources[].Path` 返回 STRM 原文，供 PanSave 启用 115 复制同播 | `false` |
+| `LIME_MEDIA_PATH_STRM` | `MediaSources[].Path` 返回 STRM 原文，供 PanSave 启用 115 复制同播；`auto` 只在请求来自内网反代时启用 | `auto` |
 | `LIME_REWRITE_ENABLED` | 改写 STRM 里的 302 地址 | `false` |
 | `LIME_REWRITE_FROM` / `LOCAL` / `PUBLIC` | 地址改写规则 | — |
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点强制校验 token | `false` |

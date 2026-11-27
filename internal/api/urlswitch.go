@@ -102,10 +102,27 @@ func (h *Handler) mediaStreamURL(r *http.Request, itemID, sourceID string, playS
 // PanSave 的 Emby 反代只认 /strm 形状的片源路径来启用 115 复制同播：返回
 // /Videos/... 会被当成普通外部 HTTP 源，第二个设备拿到的还是同一条直链，
 // 播放时就 403。地址仍过一遍 streamLocation，保证 rewrite 后的 host 可达。
+// mediaPathStrm 判断当前请求是否要走「Path 返回 STRM 原文」的模式。
+//
+// auto（默认）只在请求经过内网反代时启用：PanSave 的 Emby 反代会把
+// X-Forwarded-Host 设成它自己的监听地址（192.168.x.x:1888 这种），而
+// Cloudflare 隧道转发的是公网域名。这样同一个容器既能服务内网反代
+// （开同播），又不会把外网客户端的 Path 改成它连不上的内网 STRM 地址。
+func (h *Handler) mediaPathStrm(r *http.Request) bool {
+	switch h.cfg.MediaPathStrm {
+	case "true", "1", "on", "yes":
+		return true
+	case "false", "0", "off", "no":
+		return false
+	}
+	xfh := firstForwarded(r.Header.Get("X-Forwarded-Host"))
+	return xfh != "" && isPrivateHost(xfh)
+}
+
 func (h *Handler) sourcePath(r *http.Request, itemID, sourceID, rawURL string, playSessionID ...string) string {
 	// Yamby / 爆米花会把服务器地址和这个字段直接拼接，绝对地址会拼成
 	// /embyhttps://... 这种非法路径，对它们保持 LiMe 的相对地址。
-	if h.cfg.MediaPathStrm && strings.TrimSpace(rawURL) != "" && !usesRelativeStreamURL(r) {
+	if h.mediaPathStrm(r) && strings.TrimSpace(rawURL) != "" && !usesRelativeStreamURL(r) {
 		return h.streamLocation(r, rawURL)
 	}
 	return h.mediaStreamURL(r, itemID, sourceID, playSessionID...)

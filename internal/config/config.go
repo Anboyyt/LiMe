@@ -45,11 +45,15 @@ type Config struct {
 	// 留空则沿用请求的 Host（适合客户端直连 LiMe）。
 	InternalURL string
 
-	// MediaSources[].Path 直接返回 STRM 里的原始地址（按 rewrite 规则改写 host）。
+	// MediaSources[].Path 是否返回 STRM 里的原始地址（按 rewrite 规则改写 host）。
 	// PanSave 的 Emby 反代靠观察 Item 详情的 media_source_path 判断片源是不是
 	// 它自己生成的 /strm 地址，只有那种形状才会启用 115 复制同播；返回 LiMe
 	// 的 /Videos/... 会被当成普通外部 HTTP 源，多人同播时第二条直链照旧 403。
-	MediaPathStrm bool
+	//
+	// auto（默认）：请求带 X-Forwarded-Host 且是内网地址时启用，也就是走
+	// PanSave 反代端口进来的才开；Cloudflare 隧道那种公网域名访问保持原行为。
+	// true / false 强制开关。
+	MediaPathStrm string
 
 	// 返回 302 前先跟随一次上游跳转（PanSave → 云盘 CDN），
 	// 把最终 CDN 地址交给客户端。适用于只暴露 PanSave 反代、没有公网
@@ -185,7 +189,7 @@ func Load() Config {
 		HTTPLog:                 getbool("LIME_HTTP_LOG", false),
 		MaxItems:                getint("LIME_MAX_ITEMS", 20000),
 		InternalURL:             strings.TrimRight(os.Getenv("LIME_INTERNAL_URL"), "/"),
-		MediaPathStrm:           getbool("LIME_MEDIA_PATH_STRM", false),
+		MediaPathStrm:           strings.ToLower(strings.TrimSpace(getenv("LIME_MEDIA_PATH_STRM", "auto"))),
 		ResolveRedirect:         resolveRedirect,
 		ResolveRedirectAuto:     resolveAuto,
 		PlaybackDirectURL:       playbackDirect,

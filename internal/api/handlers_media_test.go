@@ -234,7 +234,7 @@ func TestPlaybackInfoRequestedSourceFirst(t *testing.T) {
 // 它自己的 /strm 源，只有那种形状才启用 115 复制同播。开启 MediaPathStrm
 // 后 Path 必须回 STRM 原始地址；Yamby/爆米花仍要相对地址，否则拼坏。
 func TestMediaPathStrmReturnsRawStrmURL(t *testing.T) {
-	f := newUserFixtureWithConfig(t, func(c *config.Config) { c.MediaPathStrm = true })
+	f := newUserFixtureWithConfig(t, func(c *config.Config) { c.MediaPathStrm = "true" })
 	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
 	if err != nil {
 		t.Fatal(err)
@@ -310,6 +310,69 @@ func TestMediaPathStrmReturnsRawStrmURL(t *testing.T) {
 	}
 	if got := info.MediaSources[0].Path; !strings.HasPrefix(got, "/Videos/m1/stream") {
 		t.Fatalf("yamby path = %q", got)
+	}
+}
+
+// auto 模式：只有内网反代（X-Forwarded-Host 是私有地址）才把 Path 换成
+// STRM 原文。Cloudflare 隧道转发的是公网域名，不能跟着换，否则外网客户端
+// 会拿到连不上的内网地址。
+func TestMediaPathStrmAutoByForwardedHost(t *testing.T) {
+	f := newUserFixture(t)
+	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "m1", LibraryID: lib.ID, ParentID: lib.ID, Type: store.TypeMovie,
+		Name: "电影", SortName: "电影",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const raw = "http://192.168.5.133:16868/strm/115/drive?pickcode=abc"
+	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
+		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm", URL: raw,
+		Container: "mp4", FileName: "m1.mp4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(xfh string) string {
+		req := httptest.NewRequest(http.MethodGet, "/Items/m1?Fields=MediaSources", nil)
+		req.Header.Set("X-Emby-Token", f.adminTok)
+		if xfh != "" {
+			req.Header.Set("X-Forwarded-Host", xfh)
+		}
+		rr := httptest.NewRecorder()
+		f.env.handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+		}
+		var res struct {
+			MediaSources []struct {
+				Path            string `json:"Path"`
+				DirectStreamUrl string `json:"DirectStreamUrl"`
+			} `json:"MediaSources"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		if len(res.MediaSources) == 0 {
+			t.Fatal("no media sources")
+		}
+		return res.MediaSources[0].Path
+	}
+
+	// 直连：保持 LiMe 地址。
+	if got := get(""); strings.HasPrefix(got, "http://192.168.5.133:16868") {
+		t.Fatalf("direct path = %q, want LiMe url", got)
+	}
+	// PanSave 内网反代：换成 STRM 原文。
+	if got := get("192.168.5.133:1888"); got != raw {
+		t.Fatalf("proxy path = %q, want %q", got, raw)
+	}
+	// Cloudflare 隧道（公网域名）：不能换。
+	if got := get("lime.974517.xyz"); strings.HasPrefix(got, "http://192.168.5.133:16868") {
+		t.Fatalf("public proxy path = %q, want LiMe url", got)
 	}
 }
 
