@@ -97,11 +97,12 @@ func TestShowEpisodesCarriesMediaStreams(t *testing.T) {
 	// 列表里的 Path/DirectStreamUrl 必须是播放器能直接请求的 URL。
 	// VidHub 优先读 DirectStreamUrl，缺失时会自己拼地址并多探测几轮。
 	wantURL := "http://example.com/Videos/ep1/stream?static=true&MediaSourceId=src-ep1"
-	if srcs[0].Path != wantURL {
-		t.Fatalf("Path = %q, want %q", srcs[0].Path, wantURL)
+	// 后面还会追加 DeviceId（token 反查），用前缀比对。
+	if !strings.HasPrefix(srcs[0].Path, wantURL) {
+		t.Fatalf("Path = %q, want prefix %q", srcs[0].Path, wantURL)
 	}
-	if srcs[0].DirectStreamUrl != wantURL {
-		t.Fatalf("DirectStreamUrl = %q, want %q", srcs[0].DirectStreamUrl, wantURL)
+	if !strings.HasPrefix(srcs[0].DirectStreamUrl, wantURL) {
+		t.Fatalf("DirectStreamUrl = %q, want prefix %q", srcs[0].DirectStreamUrl, wantURL)
 	}
 }
 

@@ -598,13 +598,13 @@ func TestStreamURLCarriesDeviceID(t *testing.T) {
 		t.Fatalf("direct url = %q, want DeviceId param", got)
 	}
 
-	// 没有设备头时不拼，保持老行为。
+	// 没有设备头时用 token 反查登录时记录的设备 ID。
 	rr = f.do(http.MethodPost, "/Items/m1/PlaybackInfo", map[string]any{}, f.adminTok)
 	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
 		t.Fatal(err)
 	}
-	if got := info.MediaSources[0].DirectStreamUrl; strings.Contains(got, "DeviceId=") {
-		t.Fatalf("direct url = %q, unexpected DeviceId", got)
+	if got := info.MediaSources[0].DirectStreamUrl; !strings.Contains(got, "DeviceId=admin-dev") {
+		t.Fatalf("direct url = %q, want device id from token", got)
 	}
 }
 

@@ -91,7 +91,7 @@ func (h *Handler) mediaStreamURL(r *http.Request, itemID, sourceID string, playS
 	// PanSave 的 115 复制同播按 device_id 区分设备。客户端请求 stream 时
 	// 不一定带 X-Emby-Device-Id，但会原样请求这个 URL，所以把设备 ID 拼进
 	// 查询参数，反代那边就能识别第二个设备并分配副本。
-	if d := parseAuth(r).DeviceID; d != "" {
+	if d := h.requestDeviceID(r); d != "" {
 		u += "&DeviceId=" + url.QueryEscape(d)
 	}
 	// Yamby 会把服务器地址和 DirectStreamUrl 直接拼接，给绝对地址会变成
@@ -164,6 +164,20 @@ func (h *Handler) sourcePath(r *http.Request, itemID, sourceID, rawURL string, p
 		return h.streamLocation(r, rawURL)
 	}
 	return h.mediaStreamURL(r, itemID, sourceID, playSessionID...)
+}
+
+// requestDeviceID 取当前请求的设备 ID：优先请求头，缺了用 token 反查登录
+// 时记录的值。SenPlayer 之类只在登录/PlaybackInfo 带设备信息，请求播放地址
+// 时可能什么都不带，PanSave 那头就分不出第二台设备。
+func (h *Handler) requestDeviceID(r *http.Request) string {
+	a := parseAuth(r)
+	if a.DeviceID != "" {
+		return a.DeviceID
+	}
+	if a.Token == "" {
+		return ""
+	}
+	return h.db.DeviceIDByToken(a.Token)
 }
 
 // usesRelativeStreamURL 判断客户端是否要求 MediaSources 里的播放地址是相对路径。

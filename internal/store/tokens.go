@@ -47,6 +47,17 @@ func (d *DB) UserByToken(token string) (*User, error) {
 	return user, nil
 }
 
+// DeviceIDByToken 返回 token 绑定的设备 ID。客户端请求 stream 时不一定带
+// 设备头，用登录时记下的这份能补上，PanSave 的副本分配靠它区分设备。
+func (d *DB) DeviceIDByToken(token string) string {
+	if token == "" {
+		return ""
+	}
+	var id string
+	_ = d.QueryRow(`SELECT device_id FROM access_tokens WHERE token = ?`, token).Scan(&id)
+	return id
+}
+
 // APIToken 是给第三方客户端/脚本用的长期 key。
 type APIToken struct {
 	Token     string
