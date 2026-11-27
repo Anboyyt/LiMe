@@ -1192,15 +1192,23 @@ const lastContentAddedOrder = `CASE WHEN items.type = 'Series'
   ELSE items.created_at END`
 
 // latestEpisodeOrder 剧集库按「最新一集」排序：优先看该剧最新一集的播出日期，
-// 没有日期时退回最新一集的入库时间，再退回剧集本身的创建时间。
-// NULLIF 放在 MAX 外层，才能让 (series_id, premiere_date) 索引参与 MAX 计算；
-// 写成 MAX(NULLIF(...)) 会退化成逐行函数调用，索引失效。
+// 取「按集数索引的最后一集」的播出日期；日期为空或晚于今天（TMDB 的
+// 预定播出表，剧其实早就入库了）时，退回最新一集的入库时间，再退回剧集
+// 自身的创建时间。不用 MAX(premiere_date)：TMDB 日期会倒挂，未来日期
+// 还会把没播的剧顶到最前面。
 const latestEpisodeOrder = `COALESCE(
-  (SELECT NULLIF(MAX(e.premiere_date), '') FROM items e
+  (SELECT CASE
+     WHEN e.premiere_date <> '' AND e.premiere_date <= date('now', 'localtime')
+     THEN e.premiere_date END
+   FROM items e
+   WHERE e.type = 'Episode' AND e.series_id = items.id
+   ORDER BY e.parent_index_number DESC, e.index_number DESC
+   LIMIT 1),
+  -- 全部转成 YYYY-MM-DD 文本再比较：created_at 是整数时间戳，
+  -- 和日期字符串混在 COALESCE 里排序会按类型分家，结果不可靠。
+  (SELECT date(MAX(e.created_at), 'unixepoch', 'localtime') FROM items e
    WHERE e.type = 'Episode' AND e.series_id = items.id),
-  (SELECT MAX(e.created_at) FROM items e
-   WHERE e.type = 'Episode' AND e.series_id = items.id),
-  items.created_at)`
+  date(items.created_at, 'unixepoch', 'localtime'))`
 
 func buildOrderBy(q ItemQuery) (string, []any) {
 	dir := "ASC"

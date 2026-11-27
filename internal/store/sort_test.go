@@ -174,6 +174,49 @@ func TestSortByLastContentPremiereDate(t *testing.T) {
 	}
 }
 
+// TMDB 会排未来播出日期，剧其实早就入库了。这种情况要回退到入库时间，
+// 不能把还没播的剧顶到最前面。
+func TestSortByLatestEpisodeFallsBackOnFutureDate(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db)
+
+	// s1 的最后一集播出日期是未来，入库时间很早
+	if _, err := db.Exec(`UPDATE items SET premiere_date = '2999-01-01' WHERE id = 'e2'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE items SET created_at = 1000 WHERE id IN ('e1','e2')`); err != nil {
+		t.Fatal(err)
+	}
+	// s2 的最后一集是正常日期
+	if err := db.UpsertItem(&Item{
+		ID: "s2", LibraryID: "lib", ParentID: "lib", Type: TypeSeries, Name: "新剧", SortName: "新剧",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertItem(&Item{
+		ID: "e21", LibraryID: "lib", ParentID: "s2", Type: TypeEpisode, Name: "第 1 集",
+		SeriesID: "s2", SeasonID: "s2se1", IndexNumber: 1, ParentIndexNumber: 1,
+		PremiereDate: "2026-01-01",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE items SET created_at = 2000 WHERE id = 'e21'`); err != nil {
+		t.Fatal(err)
+	}
+
+	items, _, err := db.QueryItems(ItemQuery{
+		Types:      []string{TypeSeries},
+		SortBy:     []string{"LatestEpisode"},
+		Descending: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].ID != "s2" || items[1].ID != "s1" {
+		t.Fatalf("order = %v, want s2, s1", itemIDs(items))
+	}
+}
+
 func itemIDs(items []*Item) []string {
 	out := make([]string, len(items))
 	for i, it := range items {
