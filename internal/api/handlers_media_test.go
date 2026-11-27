@@ -26,8 +26,8 @@ func TestSourceDisplayName(t *testing.T) {
 	if !strings.HasPrefix(got, "DV · 2160p · ") || !strings.HasSuffix(got, " Mbps") {
 		t.Fatalf("display name = %q", got)
 	}
-	// 帧率保留一位小数，大小和码率同时显示。
-	if !strings.Contains(got, "24.0fps") || !strings.Contains(got, "6.1GB") {
+	// 帧率四舍五入成整数，大小和码率同时显示。
+	if !strings.Contains(got, "24fps") || !strings.Contains(got, "6.1GB") {
 		t.Fatalf("display name missing fps/size: %q", got)
 	}
 

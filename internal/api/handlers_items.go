@@ -910,7 +910,7 @@ func sourceDisplayName(s *store.MediaSource, streams []*store.MediaStream, bitra
 			parts = append(parts, res)
 		}
 		if fps := video.FrameRate; fps > 0 && fps < 1000 {
-			parts = append(parts, fmt.Sprintf("%.1ffps", fps))
+			parts = append(parts, fmt.Sprintf("%.0ffps", fps))
 		}
 		if s.Size > 0 {
 			parts = append(parts, humanSize(s.Size))
