@@ -24,6 +24,7 @@ PanSave 慢或连不上时会自动回退原 302，不会把起播卡死。
 
 - **Jellyfin / Emby 兼容**：同时接受 `/emby/...` 前缀，PanSave 的 Emby 校验可直接通过
 - **302 直连**：服务端只发重定向，不吃带宽、不做转码
+- **多人同播**：同一视频第二台设备由 PanSave 自动分配网盘副本，避开同一直链并发 403（`LIME_MEDIA_PATH_STRM=true`）
 - **下载 / 离线缓存**：兼容 `Items/{id}/Download`、`Items/{id}/File`，默认 302 到 CDN；`LIME_DOWNLOAD_MODE=proxy` 可兜底不跟 302 的下载器
 - **STRM 索引**：扫描 `.strm`，自动识别电影 / 剧集 / 季 / 单集，同一部片多版本归并
 - **TMDB 刮削**：按目录里的 `{tmdb-ID}` 精确刮削，海报、背景、Logo、简介、演员、评分
@@ -125,6 +126,7 @@ docker run -d --name lime \
 | `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，直接给 CDN 地址；`auto` 500ms 超时并失败回退/熔断，`true` 严格，`false` 关闭 | `auto` |
 | `LIME_PLAYBACK_DIRECT_URL` | `DirectStreamUrl` 直接给 CDN 直链；`auto` 只对会用该字段的客户端预解析，`true` 对所有客户端，`false` 关闭 | `auto` |
 | `LIME_INTERNAL_URL` | PanSave 反代用的内网上游地址 | 空 |
+| `LIME_MEDIA_PATH_STRM` | `MediaSources[].Path` 返回 STRM 原文，供 PanSave 启用 115 复制同播 | `false` |
 | `LIME_REWRITE_ENABLED` | 改写 STRM 里的 302 地址 | `false` |
 | `LIME_REWRITE_FROM` / `LOCAL` / `PUBLIC` | 地址改写规则 | — |
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点强制校验 token | `false` |
