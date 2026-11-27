@@ -57,11 +57,13 @@ func (h *Handler) streamBase(r *http.Request) string {
 		origHost = hf
 	}
 	base := externalBase(r)
-	// MediaPathStrm 生效时（请求来自内网反代），客户端实际播放走反代入口，
-	// 地址必须取 X-Forwarded-Host；再用 InternalURL 覆盖会把它打回 LiMe 端口，
-	// 客户端直连 LiMe 就绕过了反代，拿不到 device_id，副本不会被分配。
-	if h.cfg.InternalURL != "" && isPrivateHost(origHost) && !h.mediaPathStrm(r) {
-		base = h.cfg.InternalURL
+	if h.cfg.InternalURL != "" && isPrivateHost(origHost) {
+		// 已经过反代（有 X-Forwarded-Host）时 externalBase 就是反代入口，
+		// 不能再覆盖回 LiMe 端口，否则客户端绕开反代拿不到副本。
+		// 私网直连 LiMe 时则覆盖成反代入口，把播放引导过去。
+		if !h.mediaPathStrm(r) || firstForwarded(r.Header.Get("X-Forwarded-Host")) == "" {
+			base = h.cfg.InternalURL
+		}
 	}
 	// 诊断日志：每个 PlaybackInfo / 详情请求都会走这里，反代下量很大
 	// （20 分钟 160+ 条），降成 Debug 避免刷屏，排查时再开级别看。
@@ -118,8 +120,13 @@ func (h *Handler) mediaPathStrm(r *http.Request) bool {
 	case "false", "0", "off", "no":
 		return false
 	}
-	xfh := firstForwarded(r.Header.Get("X-Forwarded-Host"))
-	return xfh != "" && isPrivateHost(xfh)
+	if xfh := firstForwarded(r.Header.Get("X-Forwarded-Host")); xfh != "" {
+		return isPrivateHost(xfh)
+	}
+	// 私网直连 LiMe 时，只有配了反代入口（LIME_INTERNAL_URL）才启用：
+	// 这种情况下播放地址会被引导到反代端口，副本才能分配。没配就保持
+	// 原行为，避免把 Path 换成客户端可能直接拿去播的内网 STRM 地址。
+	return h.cfg.InternalURL != "" && isPrivateHost(r.Host)
 }
 
 func (h *Handler) sourcePath(r *http.Request, itemID, sourceID, rawURL string, playSessionID ...string) string {

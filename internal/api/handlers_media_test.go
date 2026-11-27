@@ -426,6 +426,73 @@ func TestMediaPathStrmKeepsProxyHostOverInternalURL(t *testing.T) {
 	}
 }
 
+// 私网直连 LiMe（没有 X-Forwarded-Host）时，只要配了反代入口，也要把
+// 播放地址引导过去：客户端走 886 的请求根本不经过 PanSave，拿不到 device_id，
+// 只有把 DirectStreamUrl 指向反代端口才能分配副本。
+func TestMediaPathStrmGuidesPrivateDirectToProxy(t *testing.T) {
+	f := newUserFixtureWithConfig(t, func(c *config.Config) {
+		c.InternalURL = "http://192.168.1.10:1886"
+	})
+	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "m1", LibraryID: lib.ID, ParentID: lib.ID, Type: store.TypeMovie,
+		Name: "电影", SortName: "电影",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const raw = "http://192.168.1.10:16868/strm/115/drive?pickcode=abc"
+	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
+		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm", URL: raw,
+		Container: "mp4", FileName: "m1.mp4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://192.168.1.10:886/Items/m1?Fields=MediaSources", nil)
+	req.Header.Set("X-Emby-Token", f.adminTok)
+	rr := httptest.NewRecorder()
+	f.env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	var res struct {
+		MediaSources []struct {
+			Path            string `json:"Path"`
+			DirectStreamUrl string `json:"DirectStreamUrl"`
+		} `json:"MediaSources"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.MediaSources) != 1 {
+		t.Fatalf("sources = %d", len(res.MediaSources))
+	}
+	if got := res.MediaSources[0].Path; got != raw {
+		t.Fatalf("path = %q, want %q", got, raw)
+	}
+	if got := res.MediaSources[0].DirectStreamUrl; !strings.HasPrefix(got, "http://192.168.1.10:1886/") {
+		t.Fatalf("direct url = %q, want proxy entry", got)
+	}
+
+	// 外网（公网 Host）不引导，保持原行为。
+	req = httptest.NewRequest(http.MethodGet, "http://lime.example.com/Items/m1?Fields=MediaSources", nil)
+	req.Header.Set("X-Emby-Token", f.adminTok)
+	rr = httptest.NewRecorder()
+	f.env.handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("public status = %d", rr.Code)
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if got := res.MediaSources[0].Path; strings.HasPrefix(got, "http://192.168.1.10:16868") {
+		t.Fatalf("public path = %q, must stay on LiMe", got)
+	}
+}
+
 func TestSourceDisplayNameFallback(t *testing.T) {
 	s := &store.MediaSource{VersionName: "2160p · HDR · HEVC · 5.6GB"}
 	if got := sourceDisplayName(s, nil, 0); got != s.VersionName {

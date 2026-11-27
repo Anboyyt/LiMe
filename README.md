@@ -500,9 +500,18 @@ environment:
 ```yaml
 environment:
   LIME_MEDIA_PATH_STRM: "true"     # 强制开启；"false" 强制关闭
-  # LIME_INTERNAL_URL: "http://192.168.5.133:1888"  # auto 下不需要，地址取自 X-Forwarded-Host
-  # LIME_RESOLVE_REDIRECT: "false"                  # 走反代时 LiMe 的 stream 不被调用，auto 也不影响
+  # LIME_RESOLVE_REDIRECT: "false"  # 走反代时 LiMe 的 stream 不被调用，auto 也不影响
 ```
+
+如果客户端是**直连 LiMe 端口**（比如内网用 `886`，没经过 PanSave 反代），
+再补一条反代入口地址，LiMe 会把播放地址引导过去，同样能分配副本：
+
+```yaml
+environment:
+  LIME_INTERNAL_URL: "http://192.168.5.133:1886"   # PanSave Emby 反代端口
+```
+
+这种情况下只对私网请求生效，公网域名（Cloudflare 隧道）访问不受影响。
 
 字段分工：
 
