@@ -42,6 +42,15 @@ type Handler struct {
 	notifyMu   sync.Mutex
 	notifySeen map[string]time.Time
 
+	// 多人同播（PanSave 115 复制）运行时配置，面板可改，热生效。
+	sameMu      sync.RWMutex
+	sameMode    string   // auto / on / off
+	sameEntries []string // 反代入口，如 http://192.168.1.10:1886
+	sameHosts   []string // PanSave 反代的公网域名
+	// 最近见过的 Host / X-Forwarded-Host，面板里给用户勾选，避免手敲。
+	hostSeenMu sync.Mutex
+	hostSeen   map[string]time.Time
+
 	// 播放卡顿监控：按 PlaySessionId 记录上次进度和告警时间。
 	stallMu    sync.Mutex
 	stallWatch map[string]*stallState
@@ -155,6 +164,7 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	}
 	// 面板里保存的 Telegram 设置优先于环境变量；worker 常驻，改配置即时生效。
 	h.loadStallSettings()
+	h.loadSameStreamSettings()
 	resolveMode := playbackModeLabel(cfg.ResolveRedirect, cfg.ResolveRedirectAuto)
 	directMode := playbackModeLabel(cfg.PlaybackDirectURL, cfg.PlaybackDirectURLAuto)
 	if !cfg.ResolveRedirect {

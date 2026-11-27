@@ -57,12 +57,12 @@ func (h *Handler) streamBase(r *http.Request) string {
 		origHost = hf
 	}
 	base := externalBase(r)
-	if h.cfg.InternalURL != "" && isPrivateHost(origHost) {
+	if entry := h.sameStreamEntry(); entry != "" && isPrivateHost(origHost) {
 		// 已经过反代（有 X-Forwarded-Host）时 externalBase 就是反代入口，
 		// 不能再覆盖回 LiMe 端口，否则客户端绕开反代拿不到副本。
 		// 私网直连 LiMe 时则覆盖成反代入口，把播放引导过去。
 		if !h.mediaPathStrm(r) || firstForwarded(r.Header.Get("X-Forwarded-Host")) == "" {
-			base = h.cfg.InternalURL
+			base = entry
 		}
 	}
 	// 诊断日志：每个 PlaybackInfo / 详情请求都会走这里，反代下量很大
@@ -120,41 +120,50 @@ func (h *Handler) mediaStreamURL(r *http.Request, itemID, sourceID string, playS
 // Cloudflare 隧道转发的是公网域名。这样同一个容器既能服务内网反代
 // （开同播），又不会把外网客户端的 Path 改成它连不上的内网 STRM 地址。
 func (h *Handler) mediaPathStrm(r *http.Request) bool {
+	// 顺手记一下 host，面板里用「最近见过」的列表让用户勾选。
+	h.noteRequestHosts(r)
+
+	// 环境变量显式设置优先，已有部署行为不变。
 	switch h.cfg.MediaPathStrm {
 	case "true", "1", "on", "yes":
 		return true
 	case "false", "0", "off", "no":
 		return false
 	}
-	if xfh := firstForwarded(r.Header.Get("X-Forwarded-Host")); xfh != "" {
-		return isPrivateHost(xfh) || h.hostInProxyList(xfh)
-	}
-	// 私网直连 LiMe 时，只有配了反代入口（LIME_INTERNAL_URL）才启用：
-	// 这种情况下播放地址会被引导到反代端口，副本才能分配。没配就保持
-	// 原行为，避免把 Path 换成客户端可能直接拿去播的内网 STRM 地址。
-	if h.cfg.InternalURL != "" && isPrivateHost(r.Host) {
-		return true
-	}
-	// 公网域名直连（Cloudflare 隧道）时只有显式列在 LIME_PROXY_HOSTS 里
-	// 才算 PanSave 反代；否则 lime.974517.xyz 这种直连会被误判。
-	return h.hostInProxyList(r.Host)
-}
 
-// hostInProxyList 判断 host 是否在 LIME_PROXY_HOSTS 里（忽略端口）。
-func (h *Handler) hostInProxyList(host string) bool {
-	host = strings.ToLower(hostOnly(host))
-	if i := strings.LastIndexByte(host, ':'); i >= 0 {
-		host = host[:i]
-	}
-	if host == "" || len(h.cfg.ProxyHosts) == 0 {
+	// 面板开关：on / off / auto。
+	mode, entries, hosts := h.sameStreamConfig()
+	switch mode {
+	case "on":
+		return true
+	case "off":
 		return false
 	}
-	for _, p := range h.cfg.ProxyHosts {
-		if host == p {
+
+	if xfh := firstForwarded(r.Header.Get("X-Forwarded-Host")); xfh != "" {
+		return isPrivateHost(xfh) || hostInList(hosts, xfh) || h.hostInProxyList(xfh)
+	}
+	// 私网直连 LiMe 时，只有配了反代入口才启用：播放地址会被引导到反代
+	// 端口，副本才能分配。没配就保持原行为，避免把 Path 换成客户端可能
+	// 直接拿去播的内网 STRM 地址。
+	if isPrivateHost(r.Host) {
+		if h.sameStreamEntry() != "" {
 			return true
 		}
+		for _, e := range entries {
+			if isPrivateHost(e) {
+				return true
+			}
+		}
+		return false
 	}
-	return false
+	// 公网域名直连时只有显式列出的才算 PanSave 反代。
+	return hostInList(hosts, r.Host) || h.hostInProxyList(r.Host)
+}
+
+// hostInProxyList 判断 host 是否在环境变量 LIME_PROXY_HOSTS 里（忽略端口）。
+func (h *Handler) hostInProxyList(host string) bool {
+	return hostInList(h.cfg.ProxyHosts, host)
 }
 
 func (h *Handler) sourcePath(r *http.Request, itemID, sourceID, rawURL string, playSessionID ...string) string {

@@ -125,6 +125,9 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 		if !h.cfg.ResolveRedirect {
 			directMode = "off"
 		}
+		sameMode, sameEntries, sameHosts := h.sameStreamConfig()
+		sameEntry := h.sameStreamEntry()
+		seenPrivate, seenPublic := h.seenHosts()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"TMDBKeySet":              len(keys) > 0,
 			"TMDBKeyHint":             firstHint,
@@ -140,6 +143,14 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			"StallCooldownSeconds":    int(stallCooldown.Seconds()),
 			"ResolveMode":             resolveMode,
 			"PlaybackDirectMode":      directMode,
+			"SameStreamMode":          sameMode,
+			"SameStreamEntry":         sameEntry,
+			"SameStreamEntries":       strings.Join(sameEntries, ","),
+			"SameStreamHosts":         strings.Join(sameHosts, ","),
+			"SameStreamSeenPrivate":   seenPrivate,
+			"SameStreamSeenPublic":    seenPublic,
+			"SameStreamEnvEntry":      h.cfg.InternalURL,
+			"SameStreamEnvHosts":      h.cfg.ProxyHosts,
 			"ScanDailyAt":             scanDaily,
 			"ScrapeDailyAt":           scrapeDaily,
 			"RealtimeMonitor":         h.realtime != nil && h.realtime.Enabled(),
@@ -230,6 +241,11 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			IngestTGDelay     *string `json:"IngestTGDelay"`
 			IngestTGMaxWait   *string `json:"IngestTGMaxWait"`
 			IngestTGBulkLimit *int    `json:"IngestTGBulkLimit"`
+
+			// 多人同播（PanSave 115 复制）：开关、反代入口、反代域名。
+			SameStreamMode    *string `json:"SameStreamMode"`
+			SameStreamEntries *string `json:"SameStreamEntries"`
+			SameStreamHosts   *string `json:"SameStreamHosts"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -671,6 +687,23 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if ingestTGChanged && h.ingestNotifier != nil {
 			h.ingestNotifier.SetConfig(h.ingestTGConfig())
+		}
+
+		if p.SameStreamMode != nil || p.SameStreamEntries != nil || p.SameStreamHosts != nil {
+			mode, entries, hosts := h.sameStreamConfig()
+			if p.SameStreamMode != nil {
+				mode = *p.SameStreamMode
+			}
+			if p.SameStreamEntries != nil {
+				entries = splitProxyEntries(*p.SameStreamEntries)
+			}
+			if p.SameStreamHosts != nil {
+				hosts = splitProxyHosts(*p.SameStreamHosts)
+			}
+			if err := h.saveSameStreamSettings(mode, strings.Join(entries, ","), strings.Join(hosts, ",")); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
 		}
 
 		if h.scraper != nil {

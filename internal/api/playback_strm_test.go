@@ -25,14 +25,14 @@ func TestRefreshSourceFromSTRMUpdatesStaleURL(t *testing.T) {
 	}
 
 	path := filepath.Join(t.TempDir(), "ep1.strm")
-	newURL := "http://192.168.5.133:16868/strm/115/drive?drive_id=5&file_id=123&pickcode=new&size=100"
+	newURL := "http://192.168.1.10:16868/strm/115/drive?drive_id=5&file_id=123&pickcode=new&size=100"
 	if err := os.WriteFile(path, []byte(newURL+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	src := &store.MediaSource{
 		ID: "src1", ItemID: "ep1", StrmPath: path,
-		URL:   "http://192.168.5.133:16868/strm/115/drive?drive_id=5&file_id=123&pickcode=old&size=100",
+		URL:   "http://192.168.1.10:16868/strm/115/drive?drive_id=5&file_id=123&pickcode=old&size=100",
 		Cloud: "115", DriveID: "5", CloudFileID: "123", Size: 100,
 		ProbeStatus: "done",
 	}

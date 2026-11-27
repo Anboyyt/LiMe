@@ -54,9 +54,9 @@ services:
 
       # STRM 文件里原始地址的 host，必须完全一致才会改写；
       # 不一致（例如已经是 CDN 直链）就原样返回。
-      LIME_REWRITE_FROM: "192.168.5.133:16868"
+      LIME_REWRITE_FROM: "192.168.1.10:16868"
       # 局域网客户端用的地址（NAS 的局域网 IP + PanSave 端口）
-      LIME_REWRITE_LOCAL: "192.168.5.133:16868"
+      LIME_REWRITE_LOCAL: "192.168.1.10:16868"
       # 公网客户端用的地址（← 改成你的 PanSave 公网域名）
       LIME_REWRITE_PUBLIC: "https://pansave.example.com"
 
@@ -93,12 +93,12 @@ services:
 # 客户端不会接触到任何内网地址。
 #
 #   LIME_REWRITE_ENABLED: "false"        # 或 true，把 FROM/LOCAL 都设成内网地址
-#   LIME_REWRITE_FROM: "192.168.5.133:16868"
-#   LIME_REWRITE_LOCAL: "192.168.5.133:16868"
+#   LIME_REWRITE_FROM: "192.168.1.10:16868"
+#   LIME_REWRITE_LOCAL: "192.168.1.10:16868"
 #   LIME_REWRITE_PUBLIC: ""              # 用不到
 #   LIME_RESOLVE_REDIRECT: "auto"        # 默认就是 auto，可不写
 #   LIME_PLAYBACK_DIRECT_URL: "auto"     # 默认就是 auto，可不写
-#   LIME_INTERNAL_URL: "http://192.168.5.133:886"
+#   LIME_INTERNAL_URL: "http://192.168.1.10:886"
 #
 # 注意：
 #   1. RESOLVE_REDIRECT 会透传客户端 UA 去请求 PanSave，这是 115 直链

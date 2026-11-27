@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildProtocolURL(t *testing.T) {
-	httpURL := "http://192.168.5.133:886/Videos/abc/stream?static=true&MediaSourceId=def"
+	httpURL := "http://192.168.1.10:886/Videos/abc/stream?static=true&MediaSourceId=def"
 	cases := []struct {
 		key  string
 		want string

@@ -56,7 +56,7 @@ type Config struct {
 	MediaPathStrm string
 
 	// ProxyHosts 是 PanSave Emby 反代的公网域名（逗号分隔，如
-	// ps.974517.xyz）。内网地址靠私有网段判断，公网域名只能显式列出；
+	// ps.example.com）。内网地址靠私有网段判断，公网域名只能显式列出；
 	// 命中时 MediaPathStrm 同样按代理场景处理。
 	ProxyHosts []string
 

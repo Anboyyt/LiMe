@@ -245,7 +245,7 @@ func TestMediaPathStrmReturnsRawStrmURL(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	const raw = "http://192.168.5.133:16868/strm/115/drive?drive_id=5&pickcode=abc&file_name=x.mp4"
+	const raw = "http://192.168.1.10:16868/strm/115/drive?drive_id=5&pickcode=abc&file_name=x.mp4"
 	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
 		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm", URL: raw,
 		Container: "mp4", FileName: "m1.mp4",
@@ -328,7 +328,7 @@ func TestMediaPathStrmAutoByForwardedHost(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	const raw = "http://192.168.5.133:16868/strm/115/drive?pickcode=abc"
+	const raw = "http://192.168.1.10:16868/strm/115/drive?pickcode=abc"
 	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
 		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm", URL: raw,
 		Container: "mp4", FileName: "m1.mp4",
@@ -363,15 +363,15 @@ func TestMediaPathStrmAutoByForwardedHost(t *testing.T) {
 	}
 
 	// 直连：保持 LiMe 地址。
-	if got := get(""); strings.HasPrefix(got, "http://192.168.5.133:16868") {
+	if got := get(""); strings.HasPrefix(got, "http://192.168.1.10:16868") {
 		t.Fatalf("direct path = %q, want LiMe url", got)
 	}
 	// PanSave 内网反代：换成 STRM 原文。
-	if got := get("192.168.5.133:1888"); got != raw {
+	if got := get("192.168.1.10:1888"); got != raw {
 		t.Fatalf("proxy path = %q, want %q", got, raw)
 	}
 	// Cloudflare 隧道（公网域名）：不能换。
-	if got := get("lime.974517.xyz"); strings.HasPrefix(got, "http://192.168.5.133:16868") {
+	if got := get("lime.example.com"); strings.HasPrefix(got, "http://192.168.1.10:16868") {
 		t.Fatalf("public proxy path = %q, want LiMe url", got)
 	}
 }
@@ -381,7 +381,7 @@ func TestMediaPathStrmAutoByForwardedHost(t *testing.T) {
 // （X-Forwarded-Host），否则客户端直连 LiMe 端口会绕过反代，拿不到副本。
 func TestMediaPathStrmKeepsProxyHostOverInternalURL(t *testing.T) {
 	f := newUserFixtureWithConfig(t, func(c *config.Config) {
-		c.InternalURL = "http://192.168.5.133:888"
+		c.InternalURL = "http://192.168.1.10:888"
 	})
 	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
 	if err != nil {
@@ -395,7 +395,7 @@ func TestMediaPathStrmKeepsProxyHostOverInternalURL(t *testing.T) {
 	}
 	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
 		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm",
-		URL: "http://192.168.5.133:16868/strm/115/drive?pickcode=abc",
+		URL: "http://192.168.1.10:16868/strm/115/drive?pickcode=abc",
 		Container: "mp4", FileName: "m1.mp4",
 	}); err != nil {
 		t.Fatal(err)
@@ -403,7 +403,7 @@ func TestMediaPathStrmKeepsProxyHostOverInternalURL(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/Items/m1?Fields=MediaSources", nil)
 	req.Header.Set("X-Emby-Token", f.adminTok)
-	req.Header.Set("X-Forwarded-Host", "192.168.5.133:1888")
+	req.Header.Set("X-Forwarded-Host", "192.168.1.10:1888")
 	rr := httptest.NewRecorder()
 	f.env.handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
@@ -421,7 +421,7 @@ func TestMediaPathStrmKeepsProxyHostOverInternalURL(t *testing.T) {
 	if len(res.MediaSources) != 1 {
 		t.Fatalf("sources = %d", len(res.MediaSources))
 	}
-	if got := res.MediaSources[0].DirectStreamUrl; !strings.HasPrefix(got, "http://192.168.5.133:1888/") {
+	if got := res.MediaSources[0].DirectStreamUrl; !strings.HasPrefix(got, "http://192.168.1.10:1888/") {
 		t.Fatalf("direct url = %q, want proxy host", got)
 	}
 }
@@ -493,12 +493,12 @@ func TestMediaPathStrmGuidesPrivateDirectToProxy(t *testing.T) {
 	}
 }
 
-// PanSave 的 Emby 反代也可能是公网域名（ps.974517.xyz），这种只能靠
+// PanSave 的 Emby 反代也可能是公网域名（ps.example.com），这种只能靠
 // LIME_PROXY_HOSTS 显式列出。命中时同样要把 Path 换成 STRM 原文，
-// 播放地址留在该域名上；不在列表里的公网域名（lime.974517.xyz）保持原行为。
+// 播放地址留在该域名上；不在列表里的公网域名（lime.example.com）保持原行为。
 func TestMediaPathStrmProxyHostList(t *testing.T) {
 	f := newUserFixtureWithConfig(t, func(c *config.Config) {
-		c.ProxyHosts = []string{"ps.974517.xyz"}
+		c.ProxyHosts = []string{"ps.example.com"}
 	})
 	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
 	if err != nil {
@@ -510,7 +510,7 @@ func TestMediaPathStrmProxyHostList(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	const raw = "http://192.168.5.133:16868/strm/115/drive?pickcode=abc"
+	const raw = "http://192.168.1.10:16868/strm/115/drive?pickcode=abc"
 	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
 		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm", URL: raw,
 		Container: "mp4", FileName: "m1.mp4",
@@ -519,7 +519,7 @@ func TestMediaPathStrmProxyHostList(t *testing.T) {
 	}
 
 	get := func(xfh string) (string, string) {
-		req := httptest.NewRequest(http.MethodGet, "https://ps.974517.xyz/Items/m1?Fields=MediaSources", nil)
+		req := httptest.NewRequest(http.MethodGet, "https://ps.example.com/Items/m1?Fields=MediaSources", nil)
 		req.Header.Set("X-Emby-Token", f.adminTok)
 		req.Header.Set("X-Forwarded-Host", xfh)
 		req.Header.Set("X-Forwarded-Proto", "https")
@@ -543,16 +543,16 @@ func TestMediaPathStrmProxyHostList(t *testing.T) {
 		return res.MediaSources[0].Path, res.MediaSources[0].DirectStreamUrl
 	}
 
-	path, direct := get("ps.974517.xyz")
+	path, direct := get("ps.example.com")
 	if path != raw {
 		t.Fatalf("ps path = %q, want strm url", path)
 	}
-	if !strings.HasPrefix(direct, "https://ps.974517.xyz/") {
+	if !strings.HasPrefix(direct, "https://ps.example.com/") {
 		t.Fatalf("ps direct = %q, want ps host", direct)
 	}
 
-	path, _ = get("lime.974517.xyz")
-	if strings.HasPrefix(path, "http://192.168.5.133:16868") {
+	path, _ = get("lime.example.com")
+	if strings.HasPrefix(path, "http://192.168.1.10:16868") {
 		t.Fatalf("lime host path = %q, must stay on LiMe", path)
 	}
 }

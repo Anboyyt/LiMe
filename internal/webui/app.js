@@ -50,6 +50,7 @@
   };
   const PLAYBACK_MODE = { auto: '自动（失败回退）', strict: '强制解析', off: '关闭' };
   const playbackModeLabel = (m) => PLAYBACK_MODE[m] || m || '—';
+  const sameStreamLabel = (m) => (m === 'on' ? '强制开启' : m === 'off' ? '关闭' : '自动');
   // 与后端 localPlayers 保持一致；新增播放器两边都要改。
   const LOCAL_PLAYERS = [
     ['vlc', 'VLC'],
@@ -1299,7 +1300,7 @@
         </div>
         <div class="row" style="margin-top:12px">
           <input id="tmdbKey" placeholder="添加一个 API Key（留空不改）" style="max-width:320px">
-          <input id="tmdbProxy" placeholder="代理，如 http://192.168.5.133:7890"
+          <input id="tmdbProxy" placeholder="代理，如 http://192.168.1.10:7890"
             style="max-width:320px" value="${esc(settings.TMDBProxy || '')}">
           <button class="primary" data-action="save-settings">保存 TMDB 设置</button>
           ${settings.TMDBKeyCount ? '<button data-action="clear-tmdb-keys">清空 Key</button>' : ''}
@@ -1358,6 +1359,28 @@
           <div><b>DirectStreamUrl</b><span>${esc(playbackModeLabel(settings.PlaybackDirectMode))}</span></div>
         </div>
         <p class="muted" style="margin:8px 0 0">默认 auto：最多等 500ms，成功直接给 CDN 地址，失败/超时回退原 302；连续失败 3 次后熔断 5 分钟。可通过 LIME_RESOLVE_REDIRECT / LIME_PLAYBACK_DIRECT_URL 设为 auto/true/false，改环境变量后重启生效。</p>
+      </div>
+      <div class="panel" data-sys="playback"><h3>多人同播（115 复制）</h3>
+        <div class="kv">
+          <div><b>模式</b><span>${esc(sameStreamLabel(settings.SameStreamMode))}</span></div>
+          <div><b>反代入口</b><span>${esc(settings.SameStreamEntry || '未配置')}</span></div>
+          <div><b>反代域名</b><span>${esc(settings.SameStreamHosts || '未配置')}</span></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <select id="sameStreamMode">
+            <option value="auto" ${settings.SameStreamMode !== 'on' && settings.SameStreamMode !== 'off' ? 'selected' : ''}>自动（推荐）</option>
+            <option value="on" ${settings.SameStreamMode === 'on' ? 'selected' : ''}>强制开启</option>
+            <option value="off" ${settings.SameStreamMode === 'off' ? 'selected' : ''}>关闭</option>
+          </select>
+          <input id="sameStreamEntries" placeholder="反代入口，如 http://192.168.1.10:1886" style="min-width:250px"
+            value="${esc(settings.SameStreamEntries || '')}">
+          <input id="sameStreamHosts" placeholder="反代域名，如 ps.example.com" style="min-width:210px"
+            value="${esc(settings.SameStreamHosts || '')}">
+          <button class="primary" data-action="save-settings">保存同播</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">同一视频第二个设备播放时，由 PanSave 分配网盘副本，避开 115 同一直链并发 403。自动模式会在请求来自反代（内网端口或下面勾选的域名）时启用；第二台首次起播要等副本创建 1~2 秒。</p>
+        <p class="muted" style="margin:6px 0 0">最近检测到 —— 内网：${esc((settings.SameStreamSeenPrivate || []).join('、') || '无')}；公网：${esc((settings.SameStreamSeenPublic || []).join('、') || '无')}</p>
+        <p class="muted" style="margin:6px 0 0">环境变量 ${esc(settings.SameStreamEnvEntry || 'LIME_INTERNAL_URL')} / ${esc((settings.SameStreamEnvHosts || []).join(',') || 'LIME_PROXY_HOSTS')} 已设置时优先于这里。</p>
       </div>
       <div class="panel" data-sys="playback"><h3>播放预热</h3>
         <div class="kv">
@@ -1623,7 +1646,7 @@
           <input id="tgToken" type="password" placeholder="Bot Token（留空不改）" autocomplete="off" style="max-width:340px">
           <input id="tgChatId" placeholder="Chat ID，群组为负数" style="max-width:220px"
             value="${esc(settings.TGChatID || '')}">
-          <input id="tgProxy" placeholder="代理，如 http://192.168.5.133:7890" style="max-width:300px"
+          <input id="tgProxy" placeholder="代理，如 http://192.168.1.10:7890" style="max-width:300px"
             value="${esc(settings.TGProxy || '')}">
         </div>
         <div class="row" style="margin-top:12px">
@@ -1670,7 +1693,7 @@
           <input id="ingestTGToken" type="password" placeholder="独立 Bot Token（留空不改）" autocomplete="off" style="max-width:340px">
           <input id="ingestTGChatId" placeholder="Chat ID，群组为负数" style="max-width:220px"
             value="${esc(settings.IngestTGChatID || '')}">
-          <input id="ingestTGProxy" placeholder="代理，如 http://192.168.5.133:7890" style="max-width:300px"
+          <input id="ingestTGProxy" placeholder="代理，如 http://192.168.1.10:7890" style="max-width:300px"
             value="${esc(settings.IngestTGProxy || '')}">
         </div>
         <div class="row" style="margin-top:12px">
@@ -1803,6 +1826,12 @@
         }
         const realtimeEl = $('#realtimeMonitor');
         if (realtimeEl) body.RealtimeMonitor = realtimeEl.checked;
+        const sameModeEl = $('#sameStreamMode');
+        if (sameModeEl) {
+          body.SameStreamMode = sameModeEl.value;
+          body.SameStreamEntries = ($('#sameStreamEntries').value || '').trim();
+          body.SameStreamHosts = ($('#sameStreamHosts').value || '').trim();
+        }
         const probeWarmupEl = $('#probeWarmup');
         if (probeWarmupEl) {
           body.ProbeWarmup = probeWarmupEl.checked;
