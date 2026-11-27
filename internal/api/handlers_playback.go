@@ -95,7 +95,9 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 	// 可选：把第一个片源解析成 CDN 直链，客户端（VidHub）拿 DirectStreamUrl
 	// 就能直接连云盘，少一次经 Cloudflare 回到 LiMe 的 302。多版本时只解析
 	// 客户端实际要播的那个，避免串行等待多次 PanSave 探测。
-	if h.cfg.PlaybackDirectURL && h.cfg.ResolveRedirect && len(out) > 0 &&
+	// MediaPathStrm 生效时（走 PanSave 反代）不能给 CDN 直链：客户端拿到
+	// 直链就绕开了反代，副本分配不生效。这里必须保持反代地址。
+	if h.cfg.PlaybackDirectURL && h.cfg.ResolveRedirect && len(out) > 0 && !h.mediaPathStrm(r) &&
 		!usesRelativeStreamURL(r) && h.directURLClientAllowed(r.UserAgent()) {
 		final, err := h.resolveURL(r.Context(), preferred.URL, r.UserAgent(), autoResolveTimeout)
 		if err != nil {
