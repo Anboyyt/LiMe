@@ -176,6 +176,55 @@ func checkInt(t *testing.T, field string, got, want int) {
 	}
 }
 
+// 分盘后缀要从标题里剥掉，只留序号；否则条目名会变成 FC2-4972410-cd2。
+func TestParsePartSuffix(t *testing.T) {
+	cases := []struct {
+		in    string
+		part  int
+		title string
+	}{
+		{"FC2-4972410-cd2", 2, "FC2-4972410"},
+		{"MIRD-275-cd4", 4, "MIRD-275"},
+		{"FC2-3954834-C-cd2", 2, "FC2-3954834-C"},
+		{"SONE-266-CD-1", 1, "SONE-266"},
+		{"普通电影.mp4", 0, "普通电影"},
+	}
+	for _, c := range cases {
+		m := Parse(c.in)
+		if m.Part != c.part {
+			t.Errorf("%s: Part = %d, want %d", c.in, m.Part, c.part)
+		}
+		if m.Title != c.title {
+			t.Errorf("%s: Title = %q, want %q", c.in, m.Title, c.title)
+		}
+	}
+	if got := PartOf("FC2-4821696-cd1.mp4"); got != 1 {
+		t.Errorf("PartOf(cd1.mp4) = %d, want 1", got)
+	}
+	if got := PartOf("movie.mkv"); got != 0 {
+		t.Errorf("PartOf(movie.mkv) = %d, want 0", got)
+	}
+}
+
+// 番号识别：整个名字以「字母前缀-数字」开头才算，普通片名 + 年份不能误判。
+func TestCodeExtraction(t *testing.T) {
+	cases := map[string]string{
+		"SONE-266.strm":        "SONE-266",
+		"FC2-4972410-cd2.mp4":  "FC2-4972410",
+		"START-582-C.strm":     "START-582",
+		"MIRD-275-cd4.mkv":     "MIRD-275",
+		"YUJ-057/whatever.mkv": "YUJ-057", // 文件名不是番号时看父目录
+		"The.Matrix.1999.mkv":  "",
+		"Some-Movie-1999.mkv":  "",
+		"普通电影.mp4":          "",
+	}
+	for in, want := range cases {
+		if got := Code(in); got != want {
+			t.Errorf("Code(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func checkBool(t *testing.T, field string, got, want bool) {
 	t.Helper()
 	if got != want {

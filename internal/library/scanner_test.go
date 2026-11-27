@@ -35,6 +35,15 @@ func TestMovieIdentityKeyMergesSameDir(t *testing.T) {
 	}
 }
 
+// 同一番号被整理到不同演员目录时也要归并成一个条目、多个片源。
+func TestMovieIdentityKeyMergesSameCodeAcrossDirs(t *testing.T) {
+	a := movieIdentityKey(strm.Metadata{}, filepath.Join("艺术", "河北彩伽", "SONE-266", "SONE-266.strm"), "sone-266")
+	b := movieIdentityKey(strm.Metadata{}, filepath.Join("艺术", "河北彩花", "SONE-266", "SONE-266.strm"), "sone-266")
+	if a != b || a != "code:SONE-266" {
+		t.Fatalf("same code should merge: %q vs %q", a, b)
+	}
+}
+
 func TestVersionRankPrefersBest(t *testing.T) {
 	order := []strm.Metadata{
 		{Height: 2160, VideoRange: "DoVi"},

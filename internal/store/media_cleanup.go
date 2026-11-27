@@ -5,7 +5,89 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+
+	"lime/internal/strm"
 )
+
+// ReassignOrphanPlaystates 把「已经没有片源、但还留着播放记录」的电影
+// 条目的进度迁到同番号的新条目上。归并键从目录改成番号后，旧条目会
+// 变成空壳；不迁移的话，已看和续播会跟着丢。
+func (d *DB) ReassignOrphanPlaystates() (int64, error) {
+	rows, err := d.Query(`
+SELECT i.id, i.name FROM items i
+WHERE i.type = 'Movie'
+  AND EXISTS (SELECT 1 FROM playstates p WHERE p.item_id = i.id)
+  AND NOT EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = i.id)`)
+	if err != nil {
+		return 0, err
+	}
+	type orphan struct{ id, name string }
+	var list []orphan
+	for rows.Next() {
+		var o orphan
+		if err := rows.Scan(&o.id, &o.name); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		list = append(list, o)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	var moved int64
+	for _, o := range list {
+		code := strm.Code(o.name)
+		if code == "" {
+			continue
+		}
+		var target string
+		err := d.QueryRow(`
+SELECT i.id FROM items i
+WHERE i.type = 'Movie' AND i.id <> ? AND i.name LIKE ?
+  AND EXISTS (SELECT 1 FROM media_sources ms WHERE ms.item_id = i.id)
+LIMIT 1`, o.id, code+"%").Scan(&target)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return moved, err
+		}
+		if err := d.movePlaystates(o.id, target); err != nil {
+			return moved, err
+		}
+		moved++
+	}
+	return moved, nil
+}
+
+func (d *DB) movePlaystates(from, to string) error {
+	tx, err := d.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`
+INSERT INTO playstates (user_id, item_id, position_ticks, played, is_favorite, updated_at)
+SELECT user_id, ?, position_ticks, played, is_favorite, updated_at
+FROM playstates WHERE item_id = ?
+ON CONFLICT(user_id, item_id) DO UPDATE SET
+  played = MAX(playstates.played, excluded.played),
+  position_ticks = CASE
+    WHEN excluded.played = 1 THEN 0
+    WHEN excluded.position_ticks > playstates.position_ticks THEN excluded.position_ticks
+    ELSE playstates.position_ticks END,
+  is_favorite = MAX(playstates.is_favorite, excluded.is_favorite),
+  updated_at = MAX(playstates.updated_at, excluded.updated_at)`, to, from); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM playstates WHERE item_id = ?`, from); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
 
 // CountSources 返回库内片源数量，用于扫描进度估算，避免扫描前再遍历一遍目录。
 func (d *DB) CountSources(libraryID string) (int, error) {

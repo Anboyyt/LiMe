@@ -1017,6 +1017,12 @@ func movieIdentityKey(meta strm.Metadata, relPath, fallback string) string {
 	if meta.TmdbID != "" {
 		return "tmdb:" + meta.TmdbID
 	}
+	// 番号优先：同一部片常被整理到不同演员目录下（河北彩伽 / 河北彩花），
+	// 按目录归并会变成两张卡片。番号是天然的唯一键，还能把 cd1/cd2 并成
+	// 同一部片的多个片源。
+	if code := strm.Code(relPath); code != "" {
+		return "code:" + code
+	}
 	if dir := path.Dir(filepath.ToSlash(relPath)); dir != "" && dir != "." && dir != "/" {
 		return "dir:" + dir
 	}
@@ -1030,6 +1036,9 @@ func movieIdentityKey(meta strm.Metadata, relPath, fallback string) string {
 // "2160p · HDR10 · HEVC · 5.6GB"。
 func versionName(meta strm.Metadata, size int64) string {
 	var parts []string
+	if meta.Part > 0 {
+		parts = append(parts, fmt.Sprintf("CD%d", meta.Part))
+	}
 	switch {
 	case meta.Height >= 2000:
 		parts = append(parts, "2160p")

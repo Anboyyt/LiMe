@@ -899,7 +899,12 @@ func sourceDisplayName(s *store.MediaSource, streams []*store.MediaStream, bitra
 		}
 	}
 	if video != nil {
-		parts := make([]string, 0, 3)
+		parts := make([]string, 0, 4)
+		// 同一部片被切成分盘时，两个片源的分辨率/码率可能完全一样，
+		// 必须把 CD 序号放在最前面才分得清。
+		if part := strm.PartOf(s.FileName); part > 0 {
+			parts = append(parts, fmt.Sprintf("CD%d", part))
+		}
 		if r := rangeLabel(video.VideoRange); r != "" {
 			parts = append(parts, r)
 		}

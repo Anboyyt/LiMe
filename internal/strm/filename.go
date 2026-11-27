@@ -31,6 +31,9 @@ type Metadata struct {
 	ReleaseGroup  string
 	Container     string
 	TmdbID        string
+	// Part 是分盘序号：同一部片被切成 cd1/cd2/… 时，标题要剥掉后缀，
+	// 只把序号留在片源名里，否则条目名会变成 "FC2-4972410-cd2"。
+	Part int
 }
 
 var (
@@ -48,6 +51,11 @@ var (
 	reRange    = regexp.MustCompile(`(?i)(?:^|[.\s_\-])(SDR|HDR10\+|HDR10|HDR|DoVi|DV)(?:[.\s_\-]|$)`)
 	reSource   = regexp.MustCompile(`(?i)(?:^|[.\s_\-])(WEB-?DL|WEBRip|BluRay|BDRip|HDTV|Remux|WEB)(?:[.\s_\-]|$)`)
 	reGroup    = regexp.MustCompile(`-([A-Za-z0-9]+)$`)
+	// 分盘后缀，只认结尾：-cd1 / -cd-2 / _CD3 / .cd4。
+	rePart = regexp.MustCompile(`(?i)[-_.\s]cd[-_.\s]?(\d{1,2})$`)
+	// 番号：整个名字以「字母前缀-数字」开头，后面可以跟 -C / .1080p 等后缀。
+	// 前缀允许带数字（FC2），数字 2–7 位；四位年份会在 codeFrom 里排除。
+	reCode = regexp.MustCompile(`(?i)^([a-z]{2,6}\d{0,2})[-_](\d{2,7})(?:[-_. ].*)?$`)
 )
 
 // mediaExts 是可以安全当作容器扩展名去掉的后缀。
@@ -57,6 +65,53 @@ var mediaExts = map[string]bool{
 	"wmv": true, "flv": true, "webm": true, "ts": true, "m2ts": true,
 	"mpg": true, "mpeg": true, "rmvb": true, "rm": true, "iso": true,
 	"strm": true,
+}
+
+// Code 从文件名或所在目录提取番号，返回归一化的大写形式
+// （SONE-266 / FC2-4972410 / MIRD-275）。普通片名返回空串。
+// 只认「整个名字以番号开头」，避免把 "Some-Movie-1999" 这类当成番号。
+func Code(name string) string {
+	base := filepath.Base(name)
+	if ext := filepath.Ext(base); ext != "" {
+		base = strings.TrimSuffix(base, ext)
+	}
+	if code := codeFrom(base); code != "" {
+		return code
+	}
+	// 文件名不是番号时看父目录：道具/演员/SONE-266/xxx.mp4。
+	dir := filepath.Base(filepath.Dir(name))
+	if dir != "." && dir != "/" {
+		return codeFrom(dir)
+	}
+	return ""
+}
+
+func codeFrom(s string) string {
+	s = strings.TrimSpace(s)
+	if loc := rePart.FindStringSubmatchIndex(s); loc != nil {
+		s = s[:loc[0]]
+	}
+	loc := reCode.FindStringSubmatch(s)
+	if loc == nil {
+		return ""
+	}
+	// 四位且落在 1900–2099 的当成年份，不是番号。
+	if n := atoiSafe(loc[2]); len(loc[2]) == 4 && n >= 1900 && n <= 2099 {
+		return ""
+	}
+	return strings.ToUpper(loc[1]) + "-" + loc[2]
+}
+
+// PartOf 返回文件名里的分盘序号（cd1/cd2…），没有则返回 0。
+func PartOf(name string) int {
+	base := filepath.Base(name)
+	if ext := filepath.Ext(base); ext != "" {
+		base = strings.TrimSuffix(base, ext)
+	}
+	if loc := rePart.FindStringSubmatch(base); loc != nil {
+		return atoiSafe(loc[1])
+	}
+	return 0
 }
 
 // Parse 解析文件名。输入可以是完整路径或纯文件名。
@@ -78,6 +133,13 @@ func Parse(name string) Metadata {
 	}
 	if stem == "" {
 		stem = base
+	}
+
+	// 分盘后缀先剥掉：同一部片的 cd1/cd2 共用一个条目，标题里不该带
+	// "-cd2"。序号留给片源名区分。
+	if loc := rePart.FindStringSubmatchIndex(stem); loc != nil {
+		m.Part = atoiSafe(stem[loc[2]:loc[3]])
+		stem = stem[:loc[0]]
 	}
 
 	// 标题切点：优先 SxxExx，其次年份，最后技术标记。
