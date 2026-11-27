@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"lime/internal/store"
@@ -148,8 +149,9 @@ func TestYambyGetsRelativeStreamURL(t *testing.T) {
 		if len(res.MediaSources) != 1 {
 			t.Fatalf("%s media sources = %d", path, len(res.MediaSources))
 		}
-		if got := res.MediaSources[0].DirectStreamUrl; got != want {
-			t.Fatalf("%s DirectStreamUrl = %q, want %q", path, got, want)
+		// PlaybackInfo 的地址会多带一个 PlaySessionId，用前缀比对。
+		if got := res.MediaSources[0].DirectStreamUrl; !strings.HasPrefix(got, want) {
+			t.Fatalf("%s DirectStreamUrl = %q, want prefix %q", path, got, want)
 		}
 	}
 }

@@ -425,6 +425,7 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token | `false` |
 | `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
 | `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端。`auto`：最多等 500ms，失败/超时回退原 302，连续失败 3 次熔断 5 分钟；`true`：强制解析，失败可能返回 502；`false`：关闭 | `auto` |
+| `LIME_MEDIA_PATH_STRM` | `MediaSources[].Path` 返回 STRM 里的原始地址（仍按 rewrite 规则改写 host），`DirectStreamUrl` 保持本服务地址。PanSave 的 Emby 反代只对 `/strm` 形状的片源路径启用 **115 复制同播**，多人同时播放同一视频时需要打开。Yamby / 爆米花仍返回相对路径 | `false` |
 | `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链。`auto`：只对 VidHub / SenPlayer / Yamby / Infuse 等会用该字段的客户端预解析；`true`：对所有客户端；`false`：关闭。需 `LIME_RESOLVE_REDIRECT` 不为 false | `auto` |
 | `LIME_YAMBY_PROXY` | Yamby 跟 302 不稳时，把它的视频流改成服务端中转；会占用 NAS 上行 | `false` |
 | `LIME_STREAM_CACHE_MB` | 仅代理模式：每个片源预取的头部长度的 MB 数，`0` 关闭（尾部固定 2MB） | `0` |
@@ -482,6 +483,38 @@ environment:
 - CDN 直链的签名与请求 UA 绑定，LiMe 会透传客户端 UA，否则会 403 `invalid signature`
 - `RunTimeTicks = 0` 时部分客户端进度条异常，属已知限制；有 TMDB 时长后会自动回填
 - 多版本默认按画质排序，客户端不指定 `MediaSourceId` 时播最高画质
+
+### PanSave 115 复制同播（多人同时看同一部）
+
+115 的同一条直链并发播放会 403。PanSave 的 Emby 反代支持按 `device_id` 给
+第二个设备分配一份网盘副本，但它的前提是**片源的 `MediaSources[].Path` 必须是
+它自己生成的 `/strm` 地址**——它会观察 Item 详情里的 `media_source_path`，
+不是这个形状就当成普通外部 HTTP 源，不做副本分配。
+
+开启方式（三个条件缺一不可）：
+
+```yaml
+environment:
+  LIME_RESOLVE_REDIRECT: "false"                      # 不要自己解析成 CDN，否则 PanSave 只看到一条 302
+  LIME_INTERNAL_URL: "http://192.168.5.133:1888"      # PanSave 反代端口，客户端播放走这里
+  LIME_MEDIA_PATH_STRM: "true"                        # Path 返回 /strm 原文，供 PanSave 识别
+```
+
+字段分工：
+
+```
+MediaSources[].Path            = http://.../strm/115/drive?...   ← 只给 PanSave 观察
+MediaSources[].DirectStreamUrl = http://...:1888/Videos/.../stream ← 客户端实际播放，走反代拿副本
+```
+
+**不要把两个字段都设成 `/strm` 地址**：部分客户端（如 SenPlayer）会优先用
+`Path` 播放，直接打到 PanSave 的 `/strm` 通道，那条通道不识别设备，不会分配副本，
+多人播放照样 403。
+
+局限：第二个设备首次播放时 PanSave 要真正复制一份文件，约 1–1.5 秒；
+副本刚创建时 115 CDN 可能还没索引到，客户端立刻播放会收到 403，过几秒重进即可。
+这段等待发生在 PanSave/115 侧，LiMe 无法干预。Yamby / 爆米花仍返回相对路径，
+不参与该模式。
 
 ### 起播加速：默认 auto，不需要写环境变量
 

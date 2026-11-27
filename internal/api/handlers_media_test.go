@@ -230,6 +230,89 @@ func TestPlaybackInfoRequestedSourceFirst(t *testing.T) {
 	}
 }
 
+// PanSave 的 Emby 反代靠 Item 详情里的 media_source_path 判断片源是不是
+// 它自己的 /strm 源，只有那种形状才启用 115 复制同播。开启 MediaPathStrm
+// 后 Path 必须回 STRM 原始地址；Yamby/爆米花仍要相对地址，否则拼坏。
+func TestMediaPathStrmReturnsRawStrmURL(t *testing.T) {
+	f := newUserFixtureWithConfig(t, func(c *config.Config) { c.MediaPathStrm = true })
+	lib, err := f.env.db.UpsertLibrary("电影", "/strm", "movies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "m1", LibraryID: lib.ID, ParentID: lib.ID, Type: store.TypeMovie,
+		Name: "电影", SortName: "电影",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	const raw = "http://192.168.5.133:16868/strm/115/drive?drive_id=5&pickcode=abc&file_name=x.mp4"
+	if err := f.env.db.UpsertMediaSource(&store.MediaSource{
+		ID: "src1", ItemID: "m1", StrmPath: "/strm/m1.strm", URL: raw,
+		Container: "mp4", FileName: "m1.mp4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{
+		"/Items/m1?Fields=MediaSources",
+		"/Shows/m1/Episodes",
+	} {
+		rr := f.do(http.MethodGet, path, nil, f.adminTok)
+		if rr.Code != http.StatusOK {
+			// /Shows/{id}/Episodes 对电影不适用，跳过即可。
+			continue
+		}
+		var res struct {
+			MediaSources []struct {
+				Path            string `json:"Path"`
+				DirectStreamUrl string `json:"DirectStreamUrl"`
+			} `json:"MediaSources"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &res); err != nil {
+			t.Fatal(err)
+		}
+		if len(res.MediaSources) == 0 {
+			continue
+		}
+		// Path 给 PanSave 观察，必须是 /strm 原文。
+		if res.MediaSources[0].Path != raw {
+			t.Fatalf("%s path = %q, want raw strm url", path, res.MediaSources[0].Path)
+		}
+		// DirectStreamUrl 才是客户端播放地址，必须留在 LiMe 的端点上，
+		// 否则客户端直接打 16868 会绕过反代、拿不到副本。
+		if !strings.HasPrefix(res.MediaSources[0].DirectStreamUrl, "http://example.com/Videos/m1/stream") {
+			t.Fatalf("%s direct url = %q", path, res.MediaSources[0].DirectStreamUrl)
+		}
+	}
+
+	rr := f.do(http.MethodPost, "/Items/m1/PlaybackInfo", map[string]any{}, f.adminTok)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("playback info = %d: %s", rr.Code, rr.Body.String())
+	}
+	var info dto.PlaybackInfoResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if len(info.MediaSources) != 1 || info.MediaSources[0].Path != raw {
+		t.Fatalf("playback info path = %+v", info.MediaSources)
+	}
+	if !strings.HasPrefix(info.MediaSources[0].DirectStreamUrl, "http://example.com/Videos/m1/stream") {
+		t.Fatalf("playback direct url = %q", info.MediaSources[0].DirectStreamUrl)
+	}
+
+	// Yamby 会拼接服务器地址，MediaPathStrm 也必须给它相对路径。
+	rr = f.doUA(http.MethodPost, "/Items/m1/PlaybackInfo", map[string]any{}, "Yamby/2.1.0", f.adminTok)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("yamby playback info = %d", rr.Code)
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if got := info.MediaSources[0].Path; !strings.HasPrefix(got, "/Videos/m1/stream") {
+		t.Fatalf("yamby path = %q", got)
+	}
+}
+
 func TestSourceDisplayNameFallback(t *testing.T) {
 	s := &store.MediaSource{VersionName: "2160p · HDR · HEVC · 5.6GB"}
 	if got := sourceDisplayName(s, nil, 0); got != s.VersionName {

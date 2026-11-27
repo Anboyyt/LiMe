@@ -325,15 +325,18 @@ func (h *Handler) listMediaSources(r *http.Request, it *store.Item, srcs []*stor
 	for _, s := range srcs {
 		bitrate := sourceBitrate(s, it.RunTimeTicks)
 		ms, defaultAudio := h.mediaStreamDtos(nil, "", s, streamsBy[s.ID], bitrate, false)
-		streamURL := h.mediaStreamURL(r, it.ID, s.ID)
-		directURL := streamURL
-		if u := directURLFor(r.Context(), s.ID); u != "" {
-			directURL = u
+		pathURL := h.sourcePath(r, it.ID, s.ID, s.URL)
+		directURL := h.mediaStreamURL(r, it.ID, s.ID)
+		// MediaPathStrm 下直接给 CDN 直链会绕开 PanSave，同播就失效了。
+		if !h.cfg.MediaPathStrm {
+			if u := directURLFor(r.Context(), s.ID); u != "" {
+				directURL = u
+			}
 		}
 		out = append(out, dto.MediaSourceDto{
 			Protocol:                "Http",
 			Id:                      s.ID,
-			Path:                    streamURL,
+			Path:                    pathURL,
 			DirectStreamUrl:         directURL,
 			Type:                    "Default",
 			Name:                    sourceDisplayName(s, streamsBy[s.ID], bitrate),
@@ -989,12 +992,15 @@ func (h *Handler) mediaSourceDto(r *http.Request, itemID string, s *store.MediaS
 	ms, defaultAudio := h.mediaStreamDtos(r, itemID, s, streams, bitrate, true)
 
 	name := sourceDisplayName(s, streams, bitrate)
+	// Path 给 PanSave 观察（必须是 /strm 形状），DirectStreamUrl 才是客户端
+	// 实际播放的地址（必须走反代，否则 /strm 通道没有 device_id，不会分配副本）。
+	pathURL := h.sourcePath(r, itemID, s.ID, s.URL)
 	streamURL := h.mediaStreamURL(r, itemID, s.ID)
 
 	return dto.MediaSourceDto{
 		Protocol:                   "Http",
 		Id:                         s.ID,
-		Path:                       streamURL,
+		Path:                       pathURL,
 		DirectStreamUrl:            streamURL,
 		Type:                       "Default",
 		Name:                       name,

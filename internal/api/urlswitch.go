@@ -48,21 +48,41 @@ func (h *Handler) absoluteStreamURL(r *http.Request, itemID, sourceID string) st
 // 探测 302 会回环；客户端直接从公网域名（Cloudflare 隧道 / 端口映射）访问时
 // 给外部地址，否则它拿到的 http://192.168.x.x 根本连不上。
 func (h *Handler) streamBase(r *http.Request) string {
-	if h.cfg.InternalURL != "" && isPrivateHost(r.Host) {
-		return h.cfg.InternalURL
+	// 反代（PanSave/Cloudflare）转发时会把 Host 改成上游地址，必须优先看
+	// X-Forwarded-Host 才能判断客户端是从哪个入口进来的：
+	//   ps 域名 → 返回 ps 域名，播放继续走反代
+	//   lime 域名 → 返回 lime 域名，LiMe 自己 302
+	origHost := r.Host
+	if hf := firstForwarded(r.Header.Get("X-Forwarded-Host")); hf != "" {
+		origHost = hf
 	}
-	return externalBase(r)
+	base := externalBase(r)
+	if h.cfg.InternalURL != "" && isPrivateHost(origHost) {
+		base = h.cfg.InternalURL
+	}
+	// 诊断日志：每个 PlaybackInfo / 详情请求都会走这里，反代下量很大
+	// （20 分钟 160+ 条），降成 Debug 避免刷屏，排查时再开级别看。
+	if xfh := r.Header.Get("X-Forwarded-Host"); xfh != "" {
+		h.log.Debug("stream base via proxy", "host", r.Host, "xfh", xfh, "base", base)
+	}
+	return base
 }
 
-func (h *Handler) streamPath(itemID, sourceID string) string {
-	return "/Videos/" + itemID + "/stream?static=true&MediaSourceId=" + url.QueryEscape(sourceID)
+// streamPath 生成播放路径。playSessionID 可选：PlaybackInfo 会带上，
+// 反代（PanSave）据此区分不同播放会话；列表场景没有会话就不带。
+func (h *Handler) streamPath(itemID, sourceID string, playSessionID ...string) string {
+	u := "/Videos/" + itemID + "/stream?static=true&MediaSourceId=" + url.QueryEscape(sourceID)
+	if len(playSessionID) > 0 && playSessionID[0] != "" {
+		u += "&PlaySessionId=" + url.QueryEscape(playSessionID[0])
+	}
+	return u
 }
 
 // mediaStreamURL 生成 MediaSources 里的播放地址。
 // 播放器不会带 Authorization 头，开启流鉴权时必须把 token 放进 api_key，
 // 否则拿 DirectStreamUrl 直连会 401。
-func (h *Handler) mediaStreamURL(r *http.Request, itemID, sourceID string) string {
-	u := h.streamPath(itemID, sourceID)
+func (h *Handler) mediaStreamURL(r *http.Request, itemID, sourceID string, playSessionID ...string) string {
+	u := h.streamPath(itemID, sourceID, playSessionID...)
 	// Yamby 会把服务器地址和 DirectStreamUrl 直接拼接，给绝对地址会变成
 	// /embyhttps://cdn... 这种非法路径。对它只返回相对路径。
 	if !usesRelativeStreamURL(r) {
@@ -76,9 +96,27 @@ func (h *Handler) mediaStreamURL(r *http.Request, itemID, sourceID string) strin
 	return u
 }
 
+// sourcePath 生成 MediaSources[].Path / DirectStreamUrl。
+//
+// 默认给本服务的 302 端点；开启 MediaPathStrm 时直接给 STRM 里的原始地址。
+// PanSave 的 Emby 反代只认 /strm 形状的片源路径来启用 115 复制同播：返回
+// /Videos/... 会被当成普通外部 HTTP 源，第二个设备拿到的还是同一条直链，
+// 播放时就 403。地址仍过一遍 streamLocation，保证 rewrite 后的 host 可达。
+func (h *Handler) sourcePath(r *http.Request, itemID, sourceID, rawURL string, playSessionID ...string) string {
+	// Yamby / 爆米花会把服务器地址和这个字段直接拼接，绝对地址会拼成
+	// /embyhttps://... 这种非法路径，对它们保持 LiMe 的相对地址。
+	if h.cfg.MediaPathStrm && strings.TrimSpace(rawURL) != "" && !usesRelativeStreamURL(r) {
+		return h.streamLocation(r, rawURL)
+	}
+	return h.mediaStreamURL(r, itemID, sourceID, playSessionID...)
+}
+
 // usesRelativeStreamURL 判断客户端是否要求 MediaSources 里的播放地址是相对路径。
+// Yamby 和网易爆米花（Filmly）都会把服务器地址和拿到的地址直接拼接：
+// 给绝对地址会变成 "/embyhttps://cdn..." 这种非法路径，直接播不了。
 func usesRelativeStreamURL(r *http.Request) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(r.UserAgent())), "yamby/")
+	ua := strings.ToLower(strings.TrimSpace(r.UserAgent()))
+	return strings.HasPrefix(ua, "yamby/") || strings.HasPrefix(ua, "filmly/")
 }
 
 // streamLocation 返回最终的 302 目标地址：STRM 里的原始 URL，

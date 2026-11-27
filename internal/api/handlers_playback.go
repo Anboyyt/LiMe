@@ -73,13 +73,16 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 		wantSource = queryAny(r, "MediaSourceId", "mediaSourceId")
 	}
 
+	// 播放会话 ID 要同时出现在 PlaybackInfo 响应和 stream 地址里。
+	// Jellyfin 客户端和反代（PanSave）靠它区分「不同设备/不同播放」。
+	sessionID := store.MustRandomHex(16)
 	out := make([]dto.MediaSourceDto, 0, len(sources))
 	for _, s := range sources {
 		if wantSource != "" && s.ID == wantSource {
-			out = append([]dto.MediaSourceDto{h.playbackSourceDto(r, itemID, s, it.RunTimeTicks)}, out...)
+			out = append([]dto.MediaSourceDto{h.playbackSourceDto(r, itemID, s, it.RunTimeTicks, sessionID)}, out...)
 			continue
 		}
-		out = append(out, h.playbackSourceDto(r, itemID, s, it.RunTimeTicks))
+		out = append(out, h.playbackSourceDto(r, itemID, s, it.RunTimeTicks, sessionID))
 	}
 
 	preferred := sources[0]
@@ -113,14 +116,17 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, dto.PlaybackInfoResponse{
 		MediaSources:  out,
-		PlaySessionId: store.MustRandomHex(16),
+		PlaySessionId: sessionID,
 	})
 }
 
-func (h *Handler) playbackSourceDto(r *http.Request, itemID string, s *store.MediaSource, runtimeTicks int64) dto.MediaSourceDto {
+func (h *Handler) playbackSourceDto(r *http.Request, itemID string, s *store.MediaSource, runtimeTicks int64, sessionID string) dto.MediaSourceDto {
 	d := h.mediaSourceDto(r, itemID, s, runtimeTicks)
-	// PlaybackInfo 里 Path 指向本服务的 302 端点，客户端据此播放。
-	d.Path = h.mediaStreamURL(r, itemID, s.ID)
+	// Path 只用于给 PanSave 观察（MediaPathStrm 时是 /strm 原始地址）；
+	// 客户端播放必须走 DirectStreamUrl 指向的本服务端点，否则请求会直接
+	// 打到 PanSave 的 /strm 通道，那里没有 device_id，不会分配副本。
+	d.Path = h.sourcePath(r, itemID, s.ID, s.URL, sessionID)
+	d.DirectStreamUrl = h.mediaStreamURL(r, itemID, s.ID, sessionID)
 	return d
 }
 
