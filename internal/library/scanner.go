@@ -1072,6 +1072,9 @@ func versionName(meta strm.Metadata, size int64) string {
 	default:
 		parts = append(parts, strings.ToUpper(meta.VideoCodec))
 	}
+	if meta.FrameRate > 0 && meta.FrameRate < 1000 {
+		parts = append(parts, fmt.Sprintf("%.1ffps", meta.FrameRate))
+	}
 	if size > 0 {
 		if size >= 1_000_000_000 {
 			parts = append(parts, fmt.Sprintf("%.1fGB", float64(size)/1e9))

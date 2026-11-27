@@ -627,8 +627,7 @@ func (h *Handler) favoriteItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q := parseItemQuery(r)
-	q.UserID = user.ID
+	q := parseItemQuery(r, user.ID)
 	q.FavoriteOnly = true
 	q.Limit = h.clampListLimit(q.Limit, 100)
 
@@ -674,9 +673,8 @@ func (h *Handler) queryItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	q := parseItemQuery(r)
-	// 播放状态/收藏/续播筛选都需要用户 ID。
-	q.UserID = user.ID
+	// 播放状态/收藏/续播筛选/播放日期排序都需要用户 ID。
+	q := parseItemQuery(r, user.ID)
 
 	// 客户端点演员时通常传 PersonIds（32 位哈希 ID），这里还原成名字再查。
 	if ids := splitCSV(r.URL.Query().Get("PersonIds")); len(ids) > 0 {
@@ -899,7 +897,7 @@ func sourceDisplayName(s *store.MediaSource, streams []*store.MediaStream, bitra
 		}
 	}
 	if video != nil {
-		parts := make([]string, 0, 4)
+		parts := make([]string, 0, 6)
 		// 同一部片被切成分盘时，两个片源的分辨率/码率可能完全一样，
 		// 必须把 CD 序号放在最前面才分得清。
 		if part := strm.PartOf(s.FileName); part > 0 {
@@ -911,10 +909,14 @@ func sourceDisplayName(s *store.MediaSource, streams []*store.MediaStream, bitra
 		if res := resolutionLabel(video.Height); res != "" {
 			parts = append(parts, res)
 		}
+		if fps := video.FrameRate; fps > 0 && fps < 1000 {
+			parts = append(parts, fmt.Sprintf("%.1ffps", fps))
+		}
+		if s.Size > 0 {
+			parts = append(parts, humanSize(s.Size))
+		}
 		if bitrate > 0 {
 			parts = append(parts, fmt.Sprintf("%.1f Mbps", float64(bitrate)/1e6))
-		} else if s.Size > 0 {
-			parts = append(parts, humanSize(s.Size))
 		}
 		if len(parts) > 0 {
 			return strings.Join(parts, " · ")
@@ -1471,10 +1473,11 @@ func (h *Handler) nextUp(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func parseItemQuery(r *http.Request) store.ItemQuery {
+func parseItemQuery(r *http.Request, userID string) store.ItemQuery {
 	v := r.URL.Query()
 	filters := splitCSV(v.Get("Filters"))
 	return store.ItemQuery{
+		UserID:          userID,
 		IDs:             splitCSV(v.Get("Ids")),
 		NameStartsWith:  v.Get("NameStartsWith"),
 		ParentID:        v.Get("ParentId"),

@@ -899,7 +899,7 @@ type ItemQuery struct {
 func (d *DB) QueryItems(q ItemQuery) ([]*Item, int, error) {
 	where, args := d.buildItemWhere(q)
 
-	order := buildOrderBy(q)
+	order, orderArgs := buildOrderBy(q)
 
 	// 随机排序要先知道总数才能算出随机窗口；SkipTotal 只负责普通分页，
 	// 这里必须补 COUNT，否则 total=0 会让 offset 恒为 0，每次都返回
@@ -924,7 +924,8 @@ func (d *DB) QueryItems(q ItemQuery) ([]*Item, int, error) {
 	if len(where) > 0 {
 		sqlText += " WHERE " + strings.Join(where, " AND ")
 	}
-	if q.Limit > 0 && strings.Contains(order, "RANDOM()") {
+	randomWindow := q.Limit > 0 && strings.Contains(order, "RANDOM()")
+	if randomWindow {
 		// 大库上 ORDER BY RANDOM() 会全表排序。改成在 rowid 上取一个随机窗口，
 		// 再在窗口内随机排序；结果仍是随机的，但只扫 1000-10000 行。
 		cand := q.Limit * 50
@@ -953,7 +954,13 @@ func (d *DB) QueryItems(q ItemQuery) ([]*Item, int, error) {
 		}
 	}
 
-	rows, err := d.Query(sqlText, args...)
+	// ORDER BY 里可能带占位符（DatePlayed 的用户 ID），追加在 WHERE 参数之后。
+	// 随机窗口分支的 SQL 里没有 ORDER BY，不能带这部分参数。
+	queryArgs := append([]any{}, args...)
+	if !randomWindow {
+		queryArgs = append(queryArgs, orderArgs...)
+	}
+	rows, err := d.Query(sqlText, queryArgs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1195,7 +1202,7 @@ const latestEpisodeOrder = `COALESCE(
    WHERE e.type = 'Episode' AND e.series_id = items.id),
   items.created_at)`
 
-func buildOrderBy(q ItemQuery) string {
+func buildOrderBy(q ItemQuery) (string, []any) {
 	dir := "ASC"
 	if q.Descending {
 		dir = "DESC"
@@ -1204,17 +1211,37 @@ func buildOrderBy(q ItemQuery) string {
 	if len(q.SortBy) == 0 {
 		for _, t := range q.Types {
 			if t == TypeEpisode {
-				return "parent_index_number ASC, index_number ASC, " + sortKeyExpr + " ASC"
+				return "parent_index_number ASC, index_number ASC, " + sortKeyExpr + " ASC", nil
 			}
 		}
-		return sortKeyExpr + " " + dir + ", name " + dir
+		return sortKeyExpr + " " + dir + ", name " + dir, nil
 	}
 
+	var orderArgs []any
 	var parts []string
 	for _, s := range q.SortBy {
+		if s == "DatePlayed" {
+			// 当前用户最后一次播放的时间。没有播放记录的条目在降序时
+			// 自然排到最后（MAX 返回 NULL），符合「最近看的在前」。
+			if q.UserID == "" {
+				continue
+			}
+			parts = append(parts, `(SELECT MAX(p.updated_at) FROM playstates p
+  WHERE p.item_id = items.id AND p.user_id = ?) `+dir)
+			orderArgs = append(orderArgs, q.UserID)
+			continue
+		}
 		if s == "LatestEpisode" {
 			// 「最新一集」天然是倒序，不受 SortOrder 影响
 			parts = append(parts, latestEpisodeOrder+" DESC")
+			continue
+		}
+		if s == "LastEpisodeAirDate" || s == "DateLastEpisodeAirDate" ||
+			s == "DateLastEpisode" || s == "LastEpisodePremiereDate" ||
+			s == "LastEpisodeDate" {
+			// 「最后一集发行日期」：各客户端叫法不统一，这里多认几种。
+			// 取单集 premiere_date 的 MAX，没有日期时回退入库时间。
+			parts = append(parts, latestEpisodeOrder+" "+dir)
 			continue
 		}
 		if s == "DateLastContentAdded" || s == "DateLastMediaAdded" {
@@ -1239,9 +1266,9 @@ func buildOrderBy(q ItemQuery) string {
 		parts = append(parts, col+" "+dir)
 	}
 	if len(parts) == 0 {
-		return sortKeyExpr + " ASC"
+		return sortKeyExpr + " ASC", orderArgs
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, ", "), orderArgs
 }
 
 // isASCIILetters 判断是否纯英文字母，决定要不要追加拼音检索条件。

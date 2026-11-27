@@ -89,6 +89,46 @@ func TestSortByDateLastContentAdded(t *testing.T) {
 	}
 }
 
+// 播放日期按当前用户的 playstates.updated_at 排；没有播放记录的条目
+// 在降序时排最后。
+func TestSortByDatePlayed(t *testing.T) {
+	db := newTestDB(t)
+	seedPlaybackFixture(t, db) // lib + u1 + m1
+
+	for _, id := range []string{"m2", "m3"} {
+		if err := db.UpsertItem(&Item{
+			ID: id, LibraryID: "lib", ParentID: "lib", Type: TypeMovie, Name: id, SortName: id,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.UpsertPlaystate("u1", "m1", 100, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertPlaystate("u1", "m2", 100, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE playstates SET updated_at = 1000 WHERE item_id = 'm1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE playstates SET updated_at = 2000 WHERE item_id = 'm2'`); err != nil {
+		t.Fatal(err)
+	}
+
+	items, _, err := db.QueryItems(ItemQuery{
+		UserID:     "u1",
+		Types:      []string{TypeMovie},
+		SortBy:     []string{"DatePlayed"},
+		Descending: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 || items[0].ID != "m2" || items[1].ID != "m1" || items[2].ID != "m3" {
+		t.Fatalf("order = %v, want m2, m1, m3", itemIDs(items))
+	}
+}
+
 func itemIDs(items []*Item) []string {
 	out := make([]string, len(items))
 	for i, it := range items {

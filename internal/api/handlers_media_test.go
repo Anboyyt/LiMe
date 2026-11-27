@@ -17,7 +17,7 @@ import (
 func TestSourceDisplayName(t *testing.T) {
 	// 6.1GB / 45 分钟 ≈ 18.1 Mbps
 	s := &store.MediaSource{Size: 6_126_692_694}
-	streams := []*store.MediaStream{{Type: "Video", Height: 2160, VideoRange: "DoVi"}}
+	streams := []*store.MediaStream{{Type: "Video", Height: 2160, VideoRange: "DoVi", FrameRate: 23.976}}
 	bitrate := sourceBitrate(s, 45*60*10_000_000)
 	if bitrate < 18_000_000 || bitrate > 18_300_000 {
 		t.Fatalf("bitrate = %d", bitrate)
@@ -25,6 +25,10 @@ func TestSourceDisplayName(t *testing.T) {
 	got := sourceDisplayName(s, streams, bitrate)
 	if !strings.HasPrefix(got, "DV · 2160p · ") || !strings.HasSuffix(got, " Mbps") {
 		t.Fatalf("display name = %q", got)
+	}
+	// 帧率保留一位小数，大小和码率同时显示。
+	if !strings.Contains(got, "24.0fps") || !strings.Contains(got, "6.1GB") {
+		t.Fatalf("display name missing fps/size: %q", got)
 	}
 
 	sdr := &store.MediaSource{Size: 1_900_000_000}
