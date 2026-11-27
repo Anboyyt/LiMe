@@ -472,6 +472,49 @@ WHERE i.library_id = ?`, libraryID)
 //
 // 只挑 probe_status='none' 的，探测过的不会重复。
 // mode: favorites（收藏）/ watching（收藏 + 在追）/ recent（最近新增）/ all（全库）。
+// SourcesMissingRuntime 取「条目没有时长、片源还没探测成功」的片源，
+// 供后台低速补齐用。冷门老剧从来没人点开，warmup 的 scope 覆盖不到，
+// 它们的时长会一直是 0，已看判定和进度条都受影响。
+func (d *DB) SourcesMissingRuntime(limit int) ([]*MediaSource, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	q := `
+SELECT ms.id, ms.item_id, ms.strm_path, ms.url, ms.cloud, ms.drive_id, ms.cloud_file_id, ms.sha1_etag,
+       ms.size, ms.container, ms.file_name, ms.version_name, ms.sort_rank,
+       ms.duration_ticks, ms.probe_status, ms.strm_mtime, ms.strm_size, ms.updated_at
+FROM media_sources ms
+JOIN items i ON i.id = ms.item_id
+WHERE (i.run_time_ticks IS NULL OR i.run_time_ticks = 0)
+  AND ms.url <> ''
+  AND ms.probe_status <> 'done'
+ORDER BY i.created_at DESC
+LIMIT ?`
+	rows, err := d.Query(q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]*MediaSource, 0, limit)
+	for rows.Next() {
+		var (
+			s   MediaSource
+			upd int64
+		)
+		if err := rows.Scan(
+			&s.ID, &s.ItemID, &s.StrmPath, &s.URL, &s.Cloud, &s.DriveID, &s.CloudFileID,
+			&s.SHA1ETag, &s.Size, &s.Container, &s.FileName, &s.VersionName, &s.SortRank,
+			&s.DurationTicks, &s.ProbeStatus, &s.StrmMtime, &s.StrmSize, &upd,
+		); err != nil {
+			return nil, err
+		}
+		s.UpdatedAt = time.Unix(upd, 0)
+		out = append(out, &s)
+	}
+	return out, rows.Err()
+}
+
 func (d *DB) SourcesForProbeWarmup(since int64, limit int, mode string) ([]*MediaSource, error) {
 	if limit <= 0 {
 		limit = 50

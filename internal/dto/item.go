@@ -75,6 +75,8 @@ type BaseItemDto struct {
 	Overview                 string           `json:"Overview,omitempty"`
 	OfficialRating           string           `json:"OfficialRating,omitempty"`
 	CommunityRating          *float64         `json:"CommunityRating,omitempty"`
+	// Status 是剧集状态：Continuing / Ended。客户端用它显示「连载中/已完结」。
+	Status string `json:"Status,omitempty"`
 	UserData                 *UserItemDataDto `json:"UserData"`
 	MediaSources             []MediaSourceDto `json:"MediaSources,omitempty"`
 }

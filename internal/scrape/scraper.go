@@ -1458,6 +1458,7 @@ func (s *Scraper) scrapeSeries(ctx context.Context, it *store.Item) error {
 		Genres:          genresJSON(tv.Genres),
 		People:          peopleJSON(tv.Credits.Cast),
 		OfficialRating:  tv.ContentRating(),
+		SeriesStatus:    tv.Status,
 	})
 }
 

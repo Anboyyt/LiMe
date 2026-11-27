@@ -61,6 +61,9 @@ type Item struct {
 	SeriesID          string
 	SeasonID          string
 	TmdbID            string
+	// SeriesStatus 是 TMDB 的剧集状态原文（Returning Series / Ended 等），
+	// 响应时映射成 Jellyfin 的 Continuing / Ended。
+	SeriesStatus      string
 	RunTimeTicks      int64
 	OfficialRating    string
 	RatingScore       int
@@ -94,9 +97,9 @@ INSERT INTO items (
   id, library_id, parent_id, type, name, original_title, sort_name,
   sort_key, pinyin, pinyin_abbr, overview,
   production_year, index_number, parent_index_number, series_id, season_id, tmdb_id,
-  run_time_ticks, official_rating, community_rating, premiere_date, image_path,
+  series_status, run_time_ticks, official_rating, community_rating, premiere_date, image_path,
   backdrop_path, logo_path, genres, people, scraped_at, created_at, updated_at
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
   library_id = excluded.library_id,
   parent_id = excluded.parent_id,
@@ -122,6 +125,8 @@ ON CONFLICT(id) DO UPDATE SET
   series_id = excluded.series_id,
   season_id = excluded.season_id,
   tmdb_id = excluded.tmdb_id,
+  series_status = CASE WHEN excluded.series_status <> ''
+                       THEN excluded.series_status ELSE items.series_status END,
   run_time_ticks = MAX(excluded.run_time_ticks, items.run_time_ticks),
   official_rating = CASE WHEN excluded.official_rating <> ''
                          THEN excluded.official_rating ELSE items.official_rating END,
@@ -139,7 +144,7 @@ ON CONFLICT(id) DO UPDATE SET
 		it.ID, it.LibraryID, it.ParentID, it.Type, it.Name, it.OriginalTitle, it.SortName,
 		it.SortKey, it.Pinyin, it.PinyinAbbr, it.Overview,
 		it.ProductionYear, it.IndexNumber, it.ParentIndexNumber, it.SeriesID, it.SeasonID, it.TmdbID,
-		it.RunTimeTicks, it.OfficialRating, it.CommunityRating, it.PremiereDate, it.ImagePath,
+		it.SeriesStatus, it.RunTimeTicks, it.OfficialRating, it.CommunityRating, it.PremiereDate, it.ImagePath,
 		it.BackdropPath, it.LogoPath, it.Genres, it.People, it.ScrapedAt, it.CreatedAt.Unix(), now,
 	)
 	return err
@@ -190,6 +195,8 @@ type MetadataUpdate struct {
 	Genres          string
 	People          string
 	OfficialRating  string
+	// SeriesStatus 是 TMDB 的剧集状态原文，只对 Series 有意义。
+	SeriesStatus string
 }
 
 // UpdateItemMetadata 写回电影/剧集/季的刮削结果，并打上 scraped_at。
@@ -215,6 +222,7 @@ UPDATE items SET
   genres           = CASE WHEN ? <> '' THEN ? ELSE genres END,
   people           = CASE WHEN ? <> '' THEN ? ELSE people END,
   official_rating  = CASE WHEN ? <> '' THEN ? ELSE official_rating END,
+  series_status    = CASE WHEN ? <> '' THEN ? ELSE series_status END,
   rating_score     = CASE WHEN ? > 0 THEN ? ELSE rating_score END,
   scraped_at       = ?
 WHERE id = ?`,
@@ -234,6 +242,7 @@ WHERE id = ?`,
 		m.Genres, m.Genres,
 		m.People, m.People,
 		m.OfficialRating, m.OfficialRating,
+		m.SeriesStatus, m.SeriesStatus,
 		score, score,
 		now, id,
 	)
@@ -748,7 +757,7 @@ LIMIT 1`, seriesID, season, episode)
 const itemColumns = `id, library_id, parent_id, type, name, original_title, sort_name,
   sort_key, pinyin, pinyin_abbr, overview,
   production_year, index_number, parent_index_number, COALESCE(series_id,''), COALESCE(season_id,''),
-  COALESCE(tmdb_id,''), run_time_ticks, official_rating, rating_score, community_rating, premiere_date, image_path,
+  COALESCE(tmdb_id,''), COALESCE(series_status,''), run_time_ticks, official_rating, rating_score, community_rating, premiere_date, image_path,
   backdrop_path, logo_path, genres, people, scraped_at, created_at, updated_at`
 
 // LatestSeries 返回某库中「最近有新单集」的剧集，按最新单集添加时间倒序。
@@ -1355,7 +1364,7 @@ func scanItem(row interface {
 		&it.ID, &it.LibraryID, &it.ParentID, &it.Type, &it.Name, &it.OriginalTitle,
 		&it.SortName, &it.SortKey, &it.Pinyin, &it.PinyinAbbr,
 		&it.Overview, &it.ProductionYear, &it.IndexNumber, &it.ParentIndexNumber,
-		&it.SeriesID, &it.SeasonID, &it.TmdbID, &it.RunTimeTicks, &it.OfficialRating,
+		&it.SeriesID, &it.SeasonID, &it.TmdbID, &it.SeriesStatus, &it.RunTimeTicks, &it.OfficialRating,
 		&it.RatingScore, &it.CommunityRating,
 		&it.PremiereDate, &it.ImagePath, &it.BackdropPath, &it.LogoPath, &it.Genres, &it.People,
 		&it.ScrapedAt, &createdAt, &updatedAt,

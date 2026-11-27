@@ -61,6 +61,10 @@ type Config struct {
 	// PlaybackDirectURLAuto 是 auto 模式：只对会用 DirectStreamUrl 的
 	// 客户端预解析，其余客户端保持 LiMe 地址，不额外等解析。
 	PlaybackDirectURLAuto bool
+	// DirectURLClients 是会用 DirectStreamUrl 起播的客户端 UA 关键字
+	// （逗号分隔、小写匹配）。留空时用内置的 vidhub/senplayer/yamby/
+	// infuse/fileball。
+	DirectURLClients []string
 
 	// Yamby 对 302 跳转兼容性差时，可把它的视频流改成服务端中转。
 	// 媒体轨道（尤其是内嵌封面）修正后 302 已能正常播放，默认关闭；
@@ -179,6 +183,7 @@ func Load() Config {
 		ResolveRedirectAuto:     resolveAuto,
 		PlaybackDirectURL:       playbackDirect,
 		PlaybackDirectURLAuto:   playbackDirectAuto,
+		DirectURLClients:        splitClients(os.Getenv("LIME_DIRECT_URL_CLIENTS")),
 		ProxyYamby:              getbool("LIME_YAMBY_PROXY", false),
 		StreamCacheMB:           getint("LIME_STREAM_CACHE_MB", 0),
 		StreamCacheMaxMB:        getint("LIME_STREAM_CACHE_MAX_MB", 4096),
@@ -356,6 +361,17 @@ func getbool(key string, def bool) bool {
 // getboolAuto 解析三态开关：未设置 / auto → (true, true)，
 // true / false → 对应布尔值且非 auto。无效值按 auto 处理，保证
 // 老部署不会因为写错一个值就失去播放能力。
+// splitClients 解析逗号分隔的客户端 UA 关键字，统一小写。
+func splitClients(raw string) []string {
+	out := make([]string, 0, 4)
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.ToLower(strings.TrimSpace(p)); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // normalizeDownloadMode 把 LIME_DOWNLOAD_MODE 归一到 redirect/proxy/off。
 // 未配置或未知值按 redirect 处理，保持下载能力可用。
 func normalizeDownloadMode(raw string) string {

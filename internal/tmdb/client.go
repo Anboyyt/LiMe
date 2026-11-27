@@ -214,6 +214,7 @@ type TV struct {
 	OriginalName   string     `json:"original_name"`
 	Overview       string     `json:"overview"`
 	FirstAirDate   string     `json:"first_air_date"`
+	Status         string     `json:"status"`
 	VoteAverage    float64    `json:"vote_average"`
 	PosterPath     string     `json:"poster_path"`
 	BackdropPath   string     `json:"backdrop_path"`

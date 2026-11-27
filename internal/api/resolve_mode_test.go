@@ -112,7 +112,8 @@ func TestStreamAutoFallsBackOnUpstreamError(t *testing.T) {
 }
 
 // 显式 true 保持原有严格行为：上游 4xx 直接 502。
-func TestStreamStrictReturnsBadGateway(t *testing.T) {
+// strict 解析失败也不再 502：回退原始 302，让客户端自己跟一跳。
+func TestStreamStrictFallsBackToUpstream(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 	}))
@@ -139,7 +140,10 @@ func TestStreamStrictReturnsBadGateway(t *testing.T) {
 	}
 
 	rr := f.doUA(http.MethodGet, "/Videos/m1/stream?static=true", nil, "SenPlayer/1.0", f.adminTok)
-	if rr.Code != http.StatusBadGateway {
-		t.Fatalf("strict status = %d, want 502: %s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusFound {
+		t.Fatalf("strict status = %d, want 302: %s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Location"); got != upstream.URL {
+		t.Fatalf("location = %q, want %q", got, upstream.URL)
 	}
 }

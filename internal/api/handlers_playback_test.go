@@ -97,3 +97,32 @@ func TestSessionPlayingUnknownItemReturnsNoContent(t *testing.T) {
 		t.Fatalf("status = %d, body = %s, want 204", rr.Code, rr.Body.String())
 	}
 }
+
+// 剧/季本身没有播放进度，客户端上报也要吞掉，不能落库。
+func TestProgressIgnoresSeriesItems(t *testing.T) {
+	f := newUserFixture(t)
+	lib, err := f.env.db.UpsertLibrary("剧集2", "/strm/tv2", "tvshows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.db.UpsertItem(&store.Item{
+		ID: "srv1", LibraryID: lib.ID, ParentID: lib.ID,
+		Type: store.TypeSeries, Name: "某某剧", SortName: "某某剧",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := f.do(http.MethodPost, "/Sessions/Playing", map[string]any{
+		"ItemId": "srv1", "PlaySessionId": "sess-series", "PositionTicks": 100,
+	}, f.bobTok)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rr.Code)
+	}
+	states, err := f.env.db.Playstates(f.bob.ID, []string{"srv1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 0 {
+		t.Fatalf("series should not get a playstate: %+v", states)
+	}
+}

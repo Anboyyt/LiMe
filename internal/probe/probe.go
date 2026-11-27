@@ -257,6 +257,7 @@ func (p *Prober) StartWarmup(cfg WarmupConfig) {
 	go p.runWarmup()
 	go p.runFingerprintBackfill()
 	go p.runSegmentTargets()
+	go p.runRuntimeBackfill()
 }
 
 // runFingerprintBackfill 在预热时间窗内慢速补齐「整季都没有片头片尾」的收藏/在追剧。
@@ -274,6 +275,44 @@ func (p *Prober) runFingerprintBackfill() {
 			continue
 		}
 		time.Sleep(5 * time.Minute)
+	}
+}
+
+// runRuntimeBackfill 低速补齐「条目没有时长」的冷门片源。这些条目
+// 从来没人点开，warmup 的 favorites/watching scope 覆盖不到，时长会
+// 一直是 0，影响已看判定和进度条。只在预热时间窗内跑，每轮最多 5 条，
+// 间隔 30 秒，避免和播放抢 PanSave / CDN。
+func (p *Prober) runRuntimeBackfill() {
+	time.Sleep(10 * time.Minute)
+	for {
+		cfg := p.warmupConfig()
+		if !cfg.Enabled || !cfg.open(time.Now()) {
+			time.Sleep(5 * time.Minute)
+			continue
+		}
+		srcs, err := p.db.SourcesMissingRuntime(5)
+		if err != nil {
+			p.log.Warn("runtime backfill query failed", "err", err)
+			time.Sleep(5 * time.Minute)
+			continue
+		}
+		if len(srcs) == 0 {
+			time.Sleep(time.Hour)
+			continue
+		}
+		queued := 0
+		for _, s := range srcs {
+			if p.Enqueue(s) != nil {
+				queued++
+			}
+		}
+		if queued == 0 {
+			// 这批都因为 done/失败冷却被跳过，歇久一点，避免空转。
+			time.Sleep(5 * time.Minute)
+			continue
+		}
+		p.log.Info("runtime backfill queued", "sources", len(srcs), "queued", queued)
+		time.Sleep(30 * time.Second)
 	}
 }
 

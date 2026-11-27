@@ -180,19 +180,33 @@ func noCache(next http.Handler) http.Handler {
 	})
 }
 
+// 关键请求即使没开 LIME_HTTP_LOG 也记一条：下载失败、起播 4xx/5xx
+// 是排障最常查的，但 /Items/ 以前整个被排除，出问题只剩黑盒。
+func alwaysLoggable(path string) bool {
+	return strings.HasSuffix(path, "/Download") || strings.HasSuffix(path, "/File") ||
+		strings.HasSuffix(path, "/download") || strings.HasSuffix(path, "/file")
+}
+
+func isStreamPath(path string) bool {
+	return strings.Contains(path, "/stream") || strings.HasSuffix(path, "/original")
+}
+
 func withLogging(log *slog.Logger, verbose bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
+
+		path := r.URL.Path
+		quiet := path == "/health" || strings.HasPrefix(path, "/app/") ||
+			strings.HasPrefix(path, "/web/style.css") || strings.HasPrefix(path, "/web/app.js")
+		// 串流请求量大，只在出错时记录，避免正常播放把日志刷满。
+		streamErr := isStreamPath(path) && sw.status >= http.StatusBadRequest
 		// /web/api/ 也记录：面板排障时能看到实际请求和状态码。
-		if verbose && r.URL.Path != "/health" && !strings.HasPrefix(r.URL.Path, "/Items/") &&
-			!strings.HasPrefix(r.URL.Path, "/app/") &&
-			!strings.HasPrefix(r.URL.Path, "/web/style.css") &&
-			!strings.HasPrefix(r.URL.Path, "/web/app.js") {
+		if !quiet && (verbose || alwaysLoggable(path) || streamErr) {
 			log.Info("http",
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", path,
 				"query", loggableQuery(r),
 				"status", sw.status,
 				"dur", time.Since(start).String(),
@@ -203,7 +217,7 @@ func withLogging(log *slog.Logger, verbose bool, next http.Handler) http.Handler
 		}
 		log.Debug("http",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", path,
 			"status", sw.status,
 			"dur", time.Since(start).String(),
 		)

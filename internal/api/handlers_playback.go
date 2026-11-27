@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -200,20 +201,11 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 	if h.cfg.ResolveRedirect {
 		// 115 的直链签名和请求 UA 有关，必须透传客户端 UA，
 		// 否则 PanSave 按 LiMe 的 UA 生成链接，播放器拿到会 403 invalid signature。
+		// 解析失败一律回退原始 302：宁可让客户端自己跟一跳，也不要 502 断播。
 		final, err := h.resolveURL(r.Context(), location, r.UserAgent(), autoResolveTimeout)
 		if err != nil {
-			if h.cfg.ResolveRedirectAuto {
-				// auto 模式绝不阻断播放：解析失败就按原地址 302。
-				if !errors.Is(err, errAutoResolveBlocked) {
-					h.log.Debug("resolve redirect fallback", "item", itemID, "err", err)
-				}
-			} else {
-				h.log.Warn("resolve redirect failed", "item", itemID, "err", err)
-				var se upstreamStatusError
-				if errors.As(err, &se) {
-					writeError(w, http.StatusBadGateway, "upstream unavailable")
-					return
-				}
+			if !errors.Is(err, errAutoResolveBlocked) {
+				h.log.Warn("resolve redirect fallback", "item", itemID, "err", err)
 			}
 		} else if final != "" {
 			location = safeLocation(final)
@@ -265,9 +257,14 @@ var redirectResolver = &http.Client{
 }
 
 // 115 直链和请求 UA 绑定，链接有效期约两周（t 参数）。按
-// (原始地址, UA) 缓存十分钟：同一集连续起播/切集不用重复问 PanSave，
-// 过期或解析失败都会回退到实时解析，不影响正确性。
-const resolvedLinkTTL = 10 * time.Minute
+// (原始地址, UA) 缓存一小时：同一集连续起播/切集不用重复问 PanSave，
+// 冷门剧隔一段时间再看也能命中。过期或解析失败都会回退到实时解析。
+const resolvedLinkTTL = time.Hour
+
+// resolvedLinkMaxEntries 是缓存条数硬上限。单条约 1–2KB，5000 条约
+// 10MB，足够覆盖一小时的活跃片源；超出时丢最早过期的，避免批量
+// 预解析把内存越堆越大。
+const resolvedLinkMaxEntries = 5000
 
 // resolveFailTTL 是解析失败（上游 4xx/5xx、超时）的负缓存时间。
 // 没有它，PanSave 挂掉时每个列表请求都会重新打一遍。
@@ -297,6 +294,19 @@ var resolveInflight = struct {
 	m map[string]*resolveCall
 }{m: make(map[string]*resolveCall)}
 
+// lookupResolvedLink 只读缓存，不发起解析。列表页用它决定能不能
+// 直接带上直链，没命中就交给后台预热，不阻塞列表响应。
+func lookupResolvedLink(raw, userAgent string) (string, bool) {
+	key := raw + "\x00" + userAgent
+	now := time.Now()
+	resolvedLinks.Lock()
+	defer resolvedLinks.Unlock()
+	if e, ok := resolvedLinks.m[key]; ok && now.Before(e.expires) && e.err == nil && e.url != "" {
+		return e.url, true
+	}
+	return "", false
+}
+
 func cachedResolveRedirect(ctx context.Context, raw, userAgent string) (string, error) {
 	key := raw + "\x00" + userAgent
 	now := time.Now()
@@ -310,6 +320,21 @@ func cachedResolveRedirect(ctx context.Context, raw, userAgent string) (string, 
 	for k, e := range resolvedLinks.m {
 		if now.After(e.expires) {
 			delete(resolvedLinks.m, k)
+		}
+	}
+	// 过期清理兜不住时按条数硬裁：丢最早过期的。
+	if len(resolvedLinks.m) > resolvedLinkMaxEntries {
+		type expEntry struct {
+			key string
+			exp time.Time
+		}
+		entries := make([]expEntry, 0, len(resolvedLinks.m))
+		for k, e := range resolvedLinks.m {
+			entries = append(entries, expEntry{k, e.expires})
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].exp.Before(entries[j].exp) })
+		for i := 0; i < len(entries)-resolvedLinkMaxEntries; i++ {
+			delete(resolvedLinks.m, entries[i].key)
 		}
 	}
 	resolvedLinks.Unlock()
@@ -532,6 +557,12 @@ func (h *Handler) saveProgress(w http.ResponseWriter, r *http.Request, event pla
 	// 进度上报也要走库权限/分级校验，不能给看不到的条目写播放状态。
 	if !h.canAccessLibrary(user, it.LibraryID) || !ratingAllowed(user, it) {
 		writeError(w, http.StatusNotFound, "item not found")
+		return
+	}
+	// 剧/季本身没有进度：部分客户端会把 Series 当播放项上报，写进去
+	// 只会污染续播和统计。直接吞掉，仍然回 204 让客户端正常走。
+	if it.Type == store.TypeSeries || it.Type == store.TypeSeason {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 

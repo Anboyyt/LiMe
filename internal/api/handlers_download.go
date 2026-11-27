@@ -78,19 +78,11 @@ func (h *Handler) downloadItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.cfg.ResolveRedirect {
+		// 和播放一样：解析失败回退原始 302，不返回 502 把下载卡死。
 		final, err := h.resolveURL(r.Context(), location, r.UserAgent(), autoResolveTimeout)
 		if err != nil {
-			if h.cfg.ResolveRedirectAuto {
-				if !errors.Is(err, errAutoResolveBlocked) {
-					h.log.Debug("download resolve fallback", "item", itemID, "err", err)
-				}
-			} else {
-				h.log.Warn("download resolve failed", "item", itemID, "err", err)
-				var se upstreamStatusError
-				if errors.As(err, &se) {
-					writeError(w, http.StatusBadGateway, "upstream unavailable")
-					return
-				}
+			if !errors.Is(err, errAutoResolveBlocked) {
+				h.log.Warn("download resolve fallback", "item", itemID, "err", err)
 			}
 		} else if final != "" {
 			location = safeLocation(final)

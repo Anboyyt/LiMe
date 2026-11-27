@@ -166,6 +166,20 @@ func (f itemFields) has(name string) bool {
 	return f[strings.ToLower(name)]
 }
 
+// jellyfinSeriesStatus 把 TMDB 的剧集状态映射成 Jellyfin 的 Status 值。
+// 只有 Ended / Canceled 算完结，其余（Returning Series / In Production 等）
+// 按连载中处理；空值不输出，避免客户端自行猜测。
+func jellyfinSeriesStatus(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return ""
+	case "ended", "canceled", "cancelled":
+		return "Ended"
+	default:
+		return "Continuing"
+	}
+}
+
 func (h *Handler) itemToDto(it *store.Item, ps *store.Playstate, fields ...itemFields) *dto.BaseItemDto {
 	var f itemFields
 	if len(fields) > 0 {
@@ -197,6 +211,7 @@ func (h *Handler) itemToDto(it *store.Item, ps *store.Playstate, fields ...itemF
 		SeasonId:          it.SeasonID,
 		IsFolder:          it.Type == store.TypeSeries || it.Type == store.TypeSeason,
 		OfficialRating:    it.OfficialRating,
+		Status:            jellyfinSeriesStatus(it.SeriesStatus),
 		Genres:            parseGenres(it.Genres),
 		People:            []dto.PersonDto{},
 		UserData:          buildUserData(it.ID, it.RunTimeTicks, ps),
@@ -503,6 +518,31 @@ func (h *Handler) itemsToDto(r *http.Request, user *store.User, items []*store.I
 		}
 	}
 
+	// 父项兜底查询：老库里的单集可能没写 SeriesID/SeasonID（早期扫描器
+	// 的字段），但 Season 记录里有 SeriesID。按需补查一次并缓存，避免
+	// 整页几百条集各查一遍。
+	var extraParents map[string]*store.Item
+	getParent := func(id string) *store.Item {
+		if id == "" {
+			return nil
+		}
+		if p := parentItems[id]; p != nil {
+			return p
+		}
+		if p, ok := extraParents[id]; ok {
+			return p
+		}
+		p, err := h.db.GetItem(id)
+		if err != nil {
+			p = nil
+		}
+		if extraParents == nil {
+			extraParents = make(map[string]*store.Item)
+		}
+		extraParents[id] = p
+		return p
+	}
+
 	for _, it := range items {
 		var ps *store.Playstate
 		if s, ok := states[it.ID]; ok {
@@ -529,15 +569,34 @@ func (h *Handler) itemsToDto(r *http.Request, user *store.User, items []*store.I
 				d.ChildCount = &n
 			}
 		case store.TypeEpisode:
-			if p := parentItems[it.SeriesID]; p != nil {
-				d.SeriesName = p.Name
-				if tag := imageTag(p.ImagePath); tag != "" {
-					d.SeriesPrimaryImageTag = tag
-					d.SeriesPrimaryImageItemId = p.ID
+			season := getParent(it.SeasonID)
+			if season == nil {
+				season = getParent(it.ParentID)
+			}
+			series := getParent(it.SeriesID)
+			// 单集没写 SeriesID 时用所属季反推剧集；否则 SeriesName 缺失，
+			// 客户端会把名字显示成字面量 "null.S01E01"。
+			if series == nil && season != nil {
+				series = getParent(season.SeriesID)
+				if series == nil {
+					series = getParent(season.ParentID)
 				}
 			}
-			if p := parentItems[it.SeasonID]; p != nil {
-				d.SeasonName = p.Name
+			if series != nil {
+				d.SeriesName = series.Name
+				if d.SeriesId == "" {
+					d.SeriesId = series.ID
+				}
+				if tag := imageTag(series.ImagePath); tag != "" {
+					d.SeriesPrimaryImageTag = tag
+					d.SeriesPrimaryImageItemId = series.ID
+				}
+			}
+			if season != nil {
+				d.SeasonName = season.Name
+				if d.SeasonId == "" {
+					d.SeasonId = season.ID
+				}
 			}
 			if srcs := sourcesByItem[it.ID]; len(srcs) > 0 {
 				d.MediaSourceCount = len(srcs)
