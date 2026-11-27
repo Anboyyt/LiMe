@@ -424,6 +424,7 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_REWRITE_PUBLIC` | 外网客户端使用的地址 | — |
 | `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token | `false` |
 | `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
+| `LIME_PROXY_HOSTS` | PanSave Emby 反代的公网域名，逗号分隔（如 `ps.974517.xyz`）。命中的请求按反代场景处理，参与 115 复制同播；内网地址不需要列 | 空 |
 | `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端。`auto`：最多等 500ms，失败/超时回退原 302，连续失败 3 次熔断 5 分钟；`true`：强制解析，失败可能返回 502；`false`：关闭 | `auto` |
 | `LIME_MEDIA_PATH_STRM` | `MediaSources[].Path` 返回 STRM 里的原始地址（仍按 rewrite 规则改写 host），`DirectStreamUrl` 保持本服务地址。PanSave 的 Emby 反代只对 `/strm` 形状的片源路径启用 **115 复制同播**。`auto`（默认）：请求带 `X-Forwarded-Host` 且是内网地址（即从 PanSave 反代端口进来）时启用，Cloudflare 隧道等公网域名访问保持原行为；`true` / `false` 强制开关。Yamby / 爆米花仍返回相对路径 | `auto` |
 | `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链。`auto`：只对 VidHub / SenPlayer / Yamby / Infuse 等会用该字段的客户端预解析；`true`：对所有客户端；`false`：关闭。需 `LIME_RESOLVE_REDIRECT` 不为 false | `auto` |
@@ -512,6 +513,17 @@ environment:
 ```
 
 这种情况下只对私网请求生效，公网域名（Cloudflare 隧道）访问不受影响。
+
+如果客户端是通过 **PanSave 反代的公网域名**访问（例如 `ps.974517.xyz` 指向
+1886、`part.974517.xyz` 指向 1888），把域名列进去，公网入口也能分配副本：
+
+```yaml
+environment:
+  LIME_PROXY_HOSTS: "ps.974517.xyz"
+```
+
+内网地址靠私有网段自动识别，不用列；没列进去的公网域名（如直连 LiMe 的
+`lime.974517.xyz`）保持原来的 CDN 直连行为。
 
 字段分工：
 

@@ -121,12 +121,34 @@ func (h *Handler) mediaPathStrm(r *http.Request) bool {
 		return false
 	}
 	if xfh := firstForwarded(r.Header.Get("X-Forwarded-Host")); xfh != "" {
-		return isPrivateHost(xfh)
+		return isPrivateHost(xfh) || h.hostInProxyList(xfh)
 	}
 	// 私网直连 LiMe 时，只有配了反代入口（LIME_INTERNAL_URL）才启用：
 	// 这种情况下播放地址会被引导到反代端口，副本才能分配。没配就保持
 	// 原行为，避免把 Path 换成客户端可能直接拿去播的内网 STRM 地址。
-	return h.cfg.InternalURL != "" && isPrivateHost(r.Host)
+	if h.cfg.InternalURL != "" && isPrivateHost(r.Host) {
+		return true
+	}
+	// 公网域名直连（Cloudflare 隧道）时只有显式列在 LIME_PROXY_HOSTS 里
+	// 才算 PanSave 反代；否则 lime.974517.xyz 这种直连会被误判。
+	return h.hostInProxyList(r.Host)
+}
+
+// hostInProxyList 判断 host 是否在 LIME_PROXY_HOSTS 里（忽略端口）。
+func (h *Handler) hostInProxyList(host string) bool {
+	host = strings.ToLower(hostOnly(host))
+	if i := strings.LastIndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	if host == "" || len(h.cfg.ProxyHosts) == 0 {
+		return false
+	}
+	for _, p := range h.cfg.ProxyHosts {
+		if host == p {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Handler) sourcePath(r *http.Request, itemID, sourceID, rawURL string, playSessionID ...string) string {

@@ -55,6 +55,11 @@ type Config struct {
 	// true / false 强制开关。
 	MediaPathStrm string
 
+	// ProxyHosts 是 PanSave Emby 反代的公网域名（逗号分隔，如
+	// ps.974517.xyz）。内网地址靠私有网段判断，公网域名只能显式列出；
+	// 命中时 MediaPathStrm 同样按代理场景处理。
+	ProxyHosts []string
+
 	// 返回 302 前先跟随一次上游跳转（PanSave → 云盘 CDN），
 	// 把最终 CDN 地址交给客户端。适用于只暴露 PanSave 反代、没有公网
 	// PanSave 直链域名的部署。
@@ -190,6 +195,7 @@ func Load() Config {
 		MaxItems:                getint("LIME_MAX_ITEMS", 20000),
 		InternalURL:             strings.TrimRight(os.Getenv("LIME_INTERNAL_URL"), "/"),
 		MediaPathStrm:           strings.ToLower(strings.TrimSpace(getenv("LIME_MEDIA_PATH_STRM", "auto"))),
+		ProxyHosts:              splitClients(os.Getenv("LIME_PROXY_HOSTS")),
 		ResolveRedirect:         resolveRedirect,
 		ResolveRedirectAuto:     resolveAuto,
 		PlaybackDirectURL:       playbackDirect,
