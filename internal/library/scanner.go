@@ -526,6 +526,15 @@ func (s *Scanner) scanLibrary(lib *store.Library, fast bool) (int, error) {
 		return count, nil
 	}
 
+	// 归并键变化（例如改成番号优先）会让旧条目先失去片源、变成空壳。
+	// prune 删空壳时会级联删掉 playstates，所以必须先把进度迁到同番号
+	// 的新条目，再清理。
+	if n, err := s.db.ReassignOrphanPlaystates(); err != nil {
+		s.log.Warn("reassign orphan playstates", "err", err)
+	} else if n > 0 {
+		s.log.Info("orphan playstates reassigned", "count", n)
+	}
+
 	// 不能简单地「没被本次扫描写入就删」：文件临时读不到（挂载抖动、
 	// 权限变化）时条目没被 upsert，会被误删并级联删掉播放进度。
 	// 改成确认片源文件确实不存在后再删。

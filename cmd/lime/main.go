@@ -298,13 +298,6 @@ func main() {
 				return
 			}
 			logger.Info("initial scan done", "strm", count, "dur", time.Since(start).String())
-			// 归并键改成番号后，旧条目会变成空壳；把它们的播放记录
-			// 迁到同番号的新条目上，别让续播跟着丢。
-			if n, err := db.ReassignOrphanPlaystates(); err != nil {
-				logger.Warn("reassign orphan playstates", "err", err)
-			} else if n > 0 {
-				logger.Info("orphan playstates reassigned", "count", n)
-			}
 		}()
 	} else if len(libs) > 0 {
 		logger.Info("startup scan disabled; POST /Library/Refresh to scan manually")
@@ -323,11 +316,6 @@ func main() {
 					continue
 				}
 				logger.Info("periodic scan done", "strm", count, "dur", time.Since(start).String())
-				if n, err := db.ReassignOrphanPlaystates(); err != nil {
-					logger.Warn("reassign orphan playstates", "err", err)
-				} else if n > 0 {
-					logger.Info("orphan playstates reassigned", "count", n)
-				}
 			}
 		}()
 	}
@@ -399,11 +387,6 @@ func runDailyScanOnce(cfg config.Config, db *store.DB, scanner *library.Scanner,
 		return
 	}
 	logger.Info("daily scan done", "strm", count, "dur", time.Since(start).String())
-	if n, err := db.ReassignOrphanPlaystates(); err != nil {
-		logger.Warn("reassign orphan playstates", "err", err)
-	} else if n > 0 {
-		logger.Info("orphan playstates reassigned", "count", n)
-	}
 	cleanupImageCache(cfg.DataDir, logger)
 }
 
