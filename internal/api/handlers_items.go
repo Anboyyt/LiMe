@@ -1106,7 +1106,61 @@ func (h *Handler) mediaStreamDtos(r *http.Request, itemID string, s *store.Media
 		}
 	}
 
+	ms = orderSubtitles(ms)
 	return ms, defaultAudio
+}
+
+// orderSubtitles 把字幕排到简中、繁中、其他中文、其他语言，并把第一条
+// 简体中文标成默认。蓝光圆盘常有几十条字幕轨，按顺序返回时客户端默认
+// 可能选到日文/注释轨，起播也要多初始化一批渲染器。
+const maxSubtitleStreams = 20
+
+func orderSubtitles(ms []dto.MediaStreamDto) []dto.MediaStreamDto {
+	subs := make([]dto.MediaStreamDto, 0, 8)
+	others := make([]dto.MediaStreamDto, 0, len(ms))
+	for _, m := range ms {
+		if m.Type == "Subtitle" {
+			m.IsDefault = false
+			subs = append(subs, m)
+		} else {
+			others = append(others, m)
+		}
+	}
+	if len(subs) == 0 {
+		return ms
+	}
+	sort.SliceStable(subs, func(i, j int) bool {
+		ri, rj := subtitleRank(subs[i]), subtitleRank(subs[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return subs[i].Index < subs[j].Index
+	})
+	// 极端情况（60+ 条）截断，简繁总会保留在前面。
+	if len(subs) > maxSubtitleStreams {
+		subs = subs[:maxSubtitleStreams]
+	}
+	if subtitleRank(subs[0]) <= 1 {
+		subs[0].IsDefault = true
+	}
+	return append(others, subs...)
+}
+
+// subtitleRank：0 简体、1 繁体、2 其他中文、3 其他语言。
+func subtitleRank(m dto.MediaStreamDto) int {
+	s := strings.ToLower(m.Language + " " + m.Title + " " + m.DisplayTitle)
+	switch {
+	case strings.Contains(s, "simplified"), strings.Contains(s, "简体"),
+		strings.Contains(s, "hans"), strings.Contains(s, "chs"):
+		return 0
+	case strings.Contains(s, "traditional"), strings.Contains(s, "繁体"),
+		strings.Contains(s, "hant"), strings.Contains(s, "cht"):
+		return 1
+	case strings.HasPrefix(strings.ToLower(m.Language), "zh"), strings.EqualFold(m.Language, "chi"):
+		return 2
+	default:
+		return 3
+	}
 }
 
 func (h *Handler) userViews(w http.ResponseWriter, r *http.Request) {
