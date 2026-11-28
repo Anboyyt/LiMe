@@ -60,10 +60,10 @@ services:
       # STRM 文件里写的那个 PanSave host，必须完全一致才会改写；
       # 不一致（例如已经是 CDN 直链）就原样返回。
       # ← 用一个 .strm 文件确认：head -1 xxx.strm
-      LIME_REWRITE_FROM: "192.168.5.155:16868"
+      LIME_REWRITE_FROM: "192.168.1.10:16868"
 
       # 局域网客户端用的地址（NAS 的局域网 IP + PanSave 端口）
-      LIME_REWRITE_LOCAL: "192.168.5.155:16868"
+      LIME_REWRITE_LOCAL: "192.168.1.10:16868"
 
       # 公网客户端用的地址 ← 改成你的 PanSave 公网域名
       # 不带端口就写 https://pansave.example.com
@@ -126,7 +126,7 @@ services:
 #     | grep -i '^location'
 #   期望：location: https://pansave.example.com/strm/115/drive?...（不再是 192.168.x.x）
 #
-# 局域网访问时同一请求应返回 192.168.5.155:16868 开头的地址。
+# 局域网访问时同一请求应返回 192.168.1.10:16868 开头的地址。
 #
 # 如果公网拿到的是内网地址，检查反代是否透传了 X-Forwarded-Proto / Host；
 # 如果局域网也拿到公网地址，检查请求是否经过 DNS 回环到了公网入口。
