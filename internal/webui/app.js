@@ -1357,8 +1357,26 @@
         <div class="kv">
           <div><b>服务端跟跳</b><span>${esc(playbackModeLabel(settings.ResolveMode))}</span></div>
           <div><b>DirectStreamUrl</b><span>${esc(playbackModeLabel(settings.PlaybackDirectMode))}</span></div>
+          <div><b>播放鉴权</b><span>${settings.StreamRequireAuth ? '需要 token' : '不校验'}</span></div>
         </div>
-        <p class="muted" style="margin:8px 0 0">默认 auto：最多等 500ms，成功直接给 CDN 地址，失败/超时回退原 302；连续失败 3 次后熔断 5 分钟。可通过 LIME_RESOLVE_REDIRECT / LIME_PLAYBACK_DIRECT_URL 设为 auto/true/false，改环境变量后重启生效。</p>
+        <div class="row" style="margin-top:12px">
+          <select id="resolveMode">
+            <option value="auto" ${settings.ResolveMode === 'auto' ? 'selected' : ''}>跟跳：自动（推荐）</option>
+            <option value="strict" ${settings.ResolveMode === 'strict' ? 'selected' : ''}>跟跳：强制解析</option>
+            <option value="off" ${settings.ResolveMode === 'off' ? 'selected' : ''}>跟跳：关闭</option>
+          </select>
+          <select id="directMode">
+            <option value="auto" ${settings.PlaybackDirectMode === 'auto' ? 'selected' : ''}>DirectStreamUrl：自动</option>
+            <option value="strict" ${settings.PlaybackDirectMode === 'strict' ? 'selected' : ''}>DirectStreamUrl：强制</option>
+            <option value="off" ${settings.PlaybackDirectMode === 'off' ? 'selected' : ''}>DirectStreamUrl：关闭</option>
+          </select>
+          <label class="check-field">
+            <input type="checkbox" id="streamRequireAuth" ${settings.StreamRequireAuth ? 'checked' : ''}>
+            <span>播放端点校验 token</span>
+          </label>
+          <button class="primary" data-action="save-settings">保存起播</button>
+        </div>
+        <p class="muted" style="margin:8px 0 0">跟跳 auto 最多等 500ms，成功直接给 CDN 地址，失败/超时回退原 302，连续失败 3 次熔断 5 分钟。走 PanSave 反代且开启多人同播时，这里会被同播逻辑接管，DirectStreamUrl 保持反代地址。保存即时生效，不用重启。</p>
       </div>
       <div class="panel" data-sys="playback"><h3>多人同播（115 复制）</h3>
         <div class="kv">
@@ -1826,6 +1844,14 @@
         }
         const realtimeEl = $('#realtimeMonitor');
         if (realtimeEl) body.RealtimeMonitor = realtimeEl.checked;
+        const resolveModeEl = $('#resolveMode');
+        if (resolveModeEl) {
+          body.ResolveMode = resolveModeEl.value;
+          const directModeEl = $('#directMode');
+          if (directModeEl) body.DirectMode = directModeEl.value;
+          const authEl = $('#streamRequireAuth');
+          if (authEl) body.StreamRequireAuth = authEl.checked;
+        }
         const sameModeEl = $('#sameStreamMode');
         if (sameModeEl) {
           body.SameStreamMode = sameModeEl.value;

@@ -77,7 +77,7 @@ func (h *Handler) downloadItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.cfg.ResolveRedirect {
+	if h.resolveRedirect.Load() {
 		// 和播放一样：解析失败回退原始 302，不返回 502 把下载卡死。
 		final, err := h.resolveURL(r.Context(), location, r.UserAgent(), autoResolveTimeout)
 		if err != nil {

@@ -25,10 +25,10 @@ var errAutoResolveBlocked = errors.New("auto resolve circuit open")
 // 两种模式都有单次预算，解析失败由调用方回退原始 302，不阻断播放：
 // strict 用 2 秒且不熔断；auto 用 500ms，连续失败后熔断 5 分钟。
 func (h *Handler) resolveURL(ctx context.Context, raw, ua string, budget time.Duration) (string, error) {
-	if !h.cfg.ResolveRedirect {
+	if !h.resolveRedirect.Load() {
 		return "", nil
 	}
-	if !h.cfg.ResolveRedirectAuto {
+	if !h.resolveAuto.Load() {
 		return h.resolveBounded(ctx, raw, ua, strictResolveTimeout)
 	}
 	if h.resolveBlocked() {
@@ -108,7 +108,7 @@ func (h *Handler) isDirectURLClient(ua string) bool {
 }
 
 func (h *Handler) directURLClientAllowed(ua string) bool {
-	if !h.cfg.PlaybackDirectURLAuto {
+	if !h.playbackDirectAt.Load() {
 		return true
 	}
 	return h.isDirectURLClient(ua)

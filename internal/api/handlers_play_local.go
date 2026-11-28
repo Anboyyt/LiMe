@@ -129,7 +129,7 @@ func (h *Handler) webPlayTarget(w http.ResponseWriter, r *http.Request) {
 
 	m3u := externalBase(r) + "/web/api/playlist.m3u?itemId=" + url.QueryEscape(itemID) +
 		"&sourceId=" + url.QueryEscape(src.ID)
-	if h.cfg.StreamRequireAuth {
+	if h.streamAuth.Load() {
 		m3u += "&api_key=" + url.QueryEscape(parseAuth(r).Token)
 	}
 
@@ -148,7 +148,7 @@ func (h *Handler) webPlayTarget(w http.ResponseWriter, r *http.Request) {
 // 播放器不会带 Authorization 头，必须把 token 放进 api_key。
 func (h *Handler) localStreamURL(r *http.Request, itemID, sourceID string) string {
 	u := h.absoluteStreamURL(r, itemID, sourceID)
-	if h.cfg.StreamRequireAuth {
+	if h.streamAuth.Load() {
 		u += "&api_key=" + url.QueryEscape(parseAuth(r).Token)
 	}
 	return u
@@ -166,7 +166,7 @@ func buildProtocolURL(spec localPlayer, httpURL string) string {
 
 // webPlaylist 输出 .m3u 播放列表，作为协议唤不起时的通用回退。
 func (h *Handler) webPlaylist(w http.ResponseWriter, r *http.Request) {
-	if h.cfg.StreamRequireAuth {
+	if h.streamAuth.Load() {
 		if _, ok := h.requireUser(w, r); !ok {
 			return
 		}

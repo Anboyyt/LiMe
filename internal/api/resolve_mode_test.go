@@ -15,10 +15,13 @@ import (
 )
 
 func testResolveHandler(auto bool) *Handler {
-	return &Handler{
+	h := &Handler{
 		cfg: config.Config{ResolveRedirect: true, ResolveRedirectAuto: auto},
 		log: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError})),
 	}
+	h.resolveRedirect.Store(true)
+	h.resolveAuto.Store(auto)
+	return h
 }
 
 func TestResolveURLAutoFallsBackAndBreaksCircuit(t *testing.T) {
@@ -60,6 +63,7 @@ func TestResolveURLStrictReturnsUpstreamError(t *testing.T) {
 
 func TestDirectURLClientAllowed(t *testing.T) {
 	h := &Handler{cfg: config.Config{PlaybackDirectURLAuto: true}}
+	h.playbackDirectAt.Store(true)
 	if !h.directURLClientAllowed("SenPlayer/1.0") {
 		t.Fatal("SenPlayer should be allowed")
 	}
@@ -69,7 +73,7 @@ func TestDirectURLClientAllowed(t *testing.T) {
 	if h.directURLClientAllowed("Mozilla/5.0 Chrome/120") {
 		t.Fatal("browser should not pre-resolve DirectStreamUrl")
 	}
-	h.cfg.PlaybackDirectURLAuto = false
+	h.playbackDirectAt.Store(false)
 	if !h.directURLClientAllowed("Mozilla/5.0 Chrome/120") {
 		t.Fatal("strict explicit mode should allow all clients")
 	}

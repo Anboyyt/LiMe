@@ -31,7 +31,7 @@ var warmGate = make(chan struct{}, 1)
 // resolveDirectURLs 只把缓存命中的直链带进列表响应，未命中的片源
 // 丢给后台预热。以前这里同步等 600ms，剧集页会固定被拖慢。
 func (h *Handler) resolveDirectURLs(r *http.Request, items []*store.Item) map[string]string {
-	if !h.cfg.PlaybackDirectURL || !h.cfg.ResolveRedirect || len(items) == 0 ||
+	if !h.playbackDirect.Load() || !h.resolveRedirect.Load() || len(items) == 0 ||
 		usesRelativeStreamURL(r) || !h.isDirectURLClient(r.UserAgent()) {
 		return nil
 	}

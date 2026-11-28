@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lime/internal/config"
@@ -41,6 +42,14 @@ type Handler struct {
 	// 播放通知去重：同一会话同一事件短时间内只推一次。
 	notifyMu   sync.Mutex
 	notifySeen map[string]time.Time
+
+	// 播放开关的运行时值：面板可改、即时生效。用 atomic 是因为 stream
+	// 热路径会读，不能每次拿锁。启动时用环境变量的值兜底。
+	resolveRedirect  atomic.Bool
+	resolveAuto      atomic.Bool
+	playbackDirect   atomic.Bool
+	playbackDirectAt atomic.Bool
+	streamAuth       atomic.Bool
 
 	// 多人同播（PanSave 115 复制）运行时配置，面板可改，热生效。
 	sameMu      sync.RWMutex
@@ -165,12 +174,17 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	// 面板里保存的 Telegram 设置优先于环境变量；worker 常驻，改配置即时生效。
 	h.loadStallSettings()
 	h.loadSameStreamSettings()
-	resolveMode := playbackModeLabel(cfg.ResolveRedirect, cfg.ResolveRedirectAuto)
-	directMode := playbackModeLabel(cfg.PlaybackDirectURL, cfg.PlaybackDirectURLAuto)
-	if !cfg.ResolveRedirect {
-		directMode = "off"
-	}
-	log.Info("playback acceleration", "resolve", resolveMode, "direct_stream_url", directMode)
+	// 播放开关先取环境变量的值，面板里存过的再覆盖。
+	h.resolveRedirect.Store(cfg.ResolveRedirect)
+	h.resolveAuto.Store(cfg.ResolveRedirectAuto)
+	h.playbackDirect.Store(cfg.PlaybackDirectURL)
+	h.playbackDirectAt.Store(cfg.PlaybackDirectURLAuto)
+	h.streamAuth.Store(cfg.StreamRequireAuth)
+	h.loadPlaybackSettings()
+	log.Info("playback acceleration",
+		"resolve", h.resolveModeLabel(),
+		"direct_stream_url", h.directModeLabel(),
+		"stream_auth", h.streamAuth.Load())
 	// 全库统计和图片目录统计都不适合等用户点开页面才算；后台先热一次。
 	// 错开执行：多个全表扫描同时跑会把不同连接的 SQLite 页缓存一起填满，
 	// 启动瞬间容器内存会冲到很高，其实随后都会被回收。

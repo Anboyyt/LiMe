@@ -120,9 +120,9 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			episodeStills = h.scraper.EpisodeStills()
 		}
 		stallAfter, stallCooldown := h.stallSettings()
-		resolveMode := playbackModeLabel(h.cfg.ResolveRedirect, h.cfg.ResolveRedirectAuto)
-		directMode := playbackModeLabel(h.cfg.PlaybackDirectURL, h.cfg.PlaybackDirectURLAuto)
-		if !h.cfg.ResolveRedirect {
+		resolveMode := playbackModeLabel(h.resolveRedirect.Load(), h.resolveAuto.Load())
+		directMode := playbackModeLabel(h.playbackDirect.Load(), h.playbackDirectAt.Load())
+		if !h.resolveRedirect.Load() {
 			directMode = "off"
 		}
 		sameMode, sameEntries, sameHosts := h.sameStreamConfig()
@@ -143,6 +143,7 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			"StallCooldownSeconds":    int(stallCooldown.Seconds()),
 			"ResolveMode":             resolveMode,
 			"PlaybackDirectMode":      directMode,
+			"StreamRequireAuth":       h.streamAuth.Load(),
 			"SameStreamMode":          sameMode,
 			"SameStreamEntry":         sameEntry,
 			"SameStreamEntries":       strings.Join(sameEntries, ","),
@@ -246,6 +247,11 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 			SameStreamMode    *string `json:"SameStreamMode"`
 			SameStreamEntries *string `json:"SameStreamEntries"`
 			SameStreamHosts   *string `json:"SameStreamHosts"`
+
+			// 播放开关，面板可配，不需要写 compose。
+			ResolveMode       *string `json:"ResolveMode"`
+			DirectMode        *string `json:"DirectMode"`
+			StreamRequireAuth *bool   `json:"StreamRequireAuth"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&p); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request body")
@@ -701,6 +707,32 @@ func (h *Handler) webSettings(w http.ResponseWriter, r *http.Request) {
 				hosts = splitProxyHosts(*p.SameStreamHosts)
 			}
 			if err := h.saveSameStreamSettings(mode, strings.Join(entries, ","), strings.Join(hosts, ",")); err != nil {
+				writeError(w, http.StatusInternalServerError, "save setting failed")
+				return
+			}
+		}
+
+		if p.ResolveMode != nil || p.DirectMode != nil || p.StreamRequireAuth != nil {
+			rm := h.resolveModeLabel()
+			dm := h.directModeLabel()
+			sa := "0"
+			if h.streamAuth.Load() {
+				sa = "1"
+			}
+			if p.ResolveMode != nil {
+				rm = *p.ResolveMode
+			}
+			if p.DirectMode != nil {
+				dm = *p.DirectMode
+			}
+			if p.StreamRequireAuth != nil {
+				if *p.StreamRequireAuth {
+					sa = "1"
+				} else {
+					sa = "0"
+				}
+			}
+			if err := h.savePlaybackSettings(rm, dm, sa); err != nil {
 				writeError(w, http.StatusInternalServerError, "save setting failed")
 				return
 			}

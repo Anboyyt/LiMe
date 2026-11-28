@@ -99,7 +99,7 @@ func (h *Handler) mediaStreamURL(r *http.Request, itemID, sourceID string, playS
 	if !usesRelativeStreamURL(r) {
 		u = h.streamBase(r) + u
 	}
-	if h.cfg.StreamRequireAuth {
+	if h.streamAuth.Load() {
 		if tok := parseAuth(r).Token; tok != "" {
 			u += "&api_key=" + url.QueryEscape(tok)
 		}

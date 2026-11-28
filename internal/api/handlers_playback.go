@@ -97,11 +97,11 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 	// 客户端实际要播的那个，避免串行等待多次 PanSave 探测。
 	// MediaPathStrm 生效时（走 PanSave 反代）不能给 CDN 直链：客户端拿到
 	// 直链就绕开了反代，副本分配不生效。这里必须保持反代地址。
-	if h.cfg.PlaybackDirectURL && h.cfg.ResolveRedirect && len(out) > 0 && !h.mediaPathStrm(r) &&
+	if h.playbackDirect.Load() && h.resolveRedirect.Load() && len(out) > 0 && !h.mediaPathStrm(r) &&
 		!usesRelativeStreamURL(r) && h.directURLClientAllowed(r.UserAgent()) {
 		final, err := h.resolveURL(r.Context(), preferred.URL, r.UserAgent(), autoResolveTimeout)
 		if err != nil {
-			if h.cfg.ResolveRedirectAuto {
+			if h.resolveAuto.Load() {
 				h.log.Debug("resolve playback direct url fallback", "item", itemID, "err", err)
 			} else {
 				h.log.Warn("resolve playback direct url", "item", itemID, "err", err)
@@ -154,7 +154,7 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var streamUser *store.User
-	if h.cfg.StreamRequireAuth {
+	if h.streamAuth.Load() {
 		u, ok := h.requireUser(w, r)
 		if !ok {
 			return
@@ -206,7 +206,7 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 		h.proxyStream(w, r, src, location)
 		return
 	}
-	if h.cfg.ResolveRedirect {
+	if h.resolveRedirect.Load() {
 		// 115 的直链签名和请求 UA 有关，必须透传客户端 UA，
 		// 否则 PanSave 按 LiMe 的 UA 生成链接，播放器拿到会 403 invalid signature。
 		// 解析失败一律回退原始 302：宁可让客户端自己跟一跳，也不要 502 断播。

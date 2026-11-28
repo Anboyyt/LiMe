@@ -19,7 +19,7 @@ func (h *Handler) subtitleStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if h.cfg.StreamRequireAuth {
+	if h.streamAuth.Load() {
 		if _, ok := h.requireUser(w, r); !ok {
 			return
 		}
