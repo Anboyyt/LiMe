@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -73,6 +74,15 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 		wantSource = queryAny(r, "MediaSourceId", "mediaSourceId")
 	}
 
+	// CDN 直链和 UA 绑定，缓存 key 要带上 UA；设备 ID 用来区分同播副本。
+	cacheKey := h.requestDeviceID(r) + "|" + itemID + "|" + wantSource + "|" + r.UserAgent()
+	if body, ok := h.playbackInfoCacheGet(cacheKey); ok {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(body)
+		return
+	}
+
 	// 播放会话 ID 要同时出现在 PlaybackInfo 响应和 stream 地址里。
 	// Jellyfin 客户端和反代（PanSave）靠它区分「不同设备/不同播放」。
 	// 同一设备短时间内重进同一个视频要复用，否则 PanSave 每换一个会话
@@ -118,10 +128,21 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 		h.warmStreamCache(r, preferred, h.streamLocation(r, preferred.URL))
 	}
 
-	writeJSON(w, http.StatusOK, dto.PlaybackInfoResponse{
+	resp := dto.PlaybackInfoResponse{
 		MediaSources:  out,
 		PlaySessionId: sessionID,
-	})
+	}
+	// 先序列化再写：客户端起播前通常连发几次 PlaybackInfo，外网每次
+	// 都要过 Cloudflare（1~2 秒），缓存 30 秒能省掉重复往返。
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(resp)
+	h.playbackInfoCachePut(cacheKey, buf.Bytes())
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (h *Handler) playbackSourceDto(r *http.Request, itemID string, s *store.MediaSource, runtimeTicks int64, sessionID string) dto.MediaSourceDto {

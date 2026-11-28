@@ -56,6 +56,11 @@ type Handler struct {
 	playSessionMu sync.Mutex
 	playSessions  map[string]playSessionEntry
 
+	// PlaybackInfo 响应短缓存。外网走 Cloudflare 时单次往返 1~2 秒，
+	// 客户端起播前往往连发多次，命中缓存能省掉重复的隧道往返。
+	pbCacheMu sync.Mutex
+	pbCache   map[string]pbCacheEntry
+
 	// 多人同播（PanSave 115 复制）运行时配置，面板可改，热生效。
 	sameMu      sync.RWMutex
 	sameMode    string   // auto / on / off
