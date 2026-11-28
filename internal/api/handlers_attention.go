@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"lime/internal/store"
@@ -18,27 +19,36 @@ func (h *Handler) webAttention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 默认每类 100 条：一次返回四份列表，200 条时响应能到 70KB+，
+	// 外网或慢客户端首屏会明显卡顿。需要更多用 ?limit= 显式要。
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
 	failureCounts, health, err := h.cachedFailureSummary()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	failures, err := h.db.ScrapeFailures(200)
+	failures, err := h.db.ScrapeFailures(limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	noTmdb, err := h.db.ItemsMissingTmdbID(200)
+	noTmdb, err := h.db.ItemsMissingTmdbID(limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	missingArt, err := h.db.ItemsMissingArtwork(200)
+	missingArt, err := h.db.ItemsMissingArtwork(limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	duplicates, err := h.db.DuplicateTmdbGroups(100)
+	duplicates, err := h.db.DuplicateTmdbGroups(limit / 2)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

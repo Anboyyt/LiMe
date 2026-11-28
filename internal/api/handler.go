@@ -202,6 +202,12 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	h.prober.StartWarmup(h.warmupConfig())
 	go h.runHealthMonitor()
 	h.prober.SetSegmentsEnabled(h.segmentExtractEnabled())
+	// 待处理页的计数要扫一遍电影/剧集，启动后先在后台算好，避免首次
+	// 打开面板时等这几百毫秒。
+	go func() {
+		time.Sleep(20 * time.Second)
+		_, _, _ = h.cachedFailureSummary()
+	}()
 	go h.refreshProbeCounts() // 内部先等 20 秒
 	go func() {
 		time.Sleep(10 * time.Second)

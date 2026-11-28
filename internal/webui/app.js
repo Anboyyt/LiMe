@@ -270,10 +270,17 @@
   }
 
   // ---------- 待处理 ----------
-  async function renderAttention() {
+  async function renderAttention(force) {
     $('#crumb').textContent = '待处理';
+    // 来回切页面时直接复用 60 秒内的数据，避免每次进待处理都重新拉 4 份列表。
+    const stale = !state.attentionAt || Date.now() - state.attentionAt > 60000;
+    if (!force && !stale) {
+      paintAttention();
+      return;
+    }
     const data = await api('/web/api/attention');
     state.attention = data;
+    state.attentionAt = Date.now();
     if (!state.attentionTab) state.attentionTab = 'notmdb';
     paintAttention();
   }
@@ -360,7 +367,7 @@
         body: JSON.stringify({ ItemIds: list }),
       });
       toast(`已提交 ${r.Items || list.length} 条，后台重新刮削中`);
-      setTimeout(renderAttention, 4000);
+      setTimeout(() => renderAttention(true), 4000);
     } catch (e) {
       toast(e.message, true);
     }
@@ -1804,7 +1811,7 @@
         paintAttention();
         break;
       case 'attention-refresh':
-        await renderAttention();
+        await renderAttention(true);
         break;
       case 'retry-one':
         await retryAttention([el.dataset.id]);
