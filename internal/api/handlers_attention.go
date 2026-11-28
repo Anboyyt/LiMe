@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"lime/internal/store"
 )
@@ -28,28 +29,41 @@ func (h *Handler) webAttention(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	failureCounts, health, err := h.cachedFailureSummary()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	failures, err := h.db.ScrapeFailures(limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	noTmdb, err := h.db.ItemsMissingTmdbID(limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	missingArt, err := h.db.ItemsMissingArtwork(limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	duplicates, err := h.db.DuplicateTmdbGroups(limit / 2)
-	if err != nil {
+	// 四类数据互不依赖，并行查：串行时每个 50~70ms 会叠成 200ms+，
+	// 这是首屏卡顿的主要来源。SQLite 读在 WAL 下可以并发，连接池也够。
+	var (
+		failureCounts                                      map[string]int
+		health                                             store.ScrapeHealth
+		failures                                           []store.ScrapeFailure
+		noTmdb                                             []store.AttentionItem
+		missingArt                                         []store.AttentionItem
+		duplicates                                         []store.DuplicateGroup
+		errSummary, errFailures, errNoTmdb, errArt, errDup error
+	)
+	var wg sync.WaitGroup
+	wg.Add(5)
+	go func() {
+		defer wg.Done()
+		failureCounts, health, errSummary = h.cachedFailureSummary()
+	}()
+	go func() {
+		defer wg.Done()
+		failures, errFailures = h.db.ScrapeFailures(limit)
+	}()
+	go func() {
+		defer wg.Done()
+		noTmdb, errNoTmdb = h.db.ItemsMissingTmdbID(limit)
+	}()
+	go func() {
+		defer wg.Done()
+		missingArt, errArt = h.db.ItemsMissingArtwork(limit)
+	}()
+	go func() {
+		defer wg.Done()
+		duplicates, errDup = h.db.DuplicateTmdbGroups(limit / 2)
+	}()
+	wg.Wait()
+	if errSummary != nil || errFailures != nil || errNoTmdb != nil || errArt != nil || errDup != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
