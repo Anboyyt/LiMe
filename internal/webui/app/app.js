@@ -378,9 +378,11 @@
     const latestItems = latest.Items || [];
     if (latestItems.length) html += rail('最近添加', latestItems);
 
-    // 每个媒体库单独一行「最新入库」，数据已经按库拉好。
+    // 每个媒体库单独一行「最新入库」。Jellyfin 的 /Items/Latest 返回的是
+    // 数组本身（不是 {Items:[]}），两种形态都兼容一下。
     state.views.forEach((v, i) => {
-      const items = (libLatest[i] && libLatest[i].Items) || [];
+      const res = libLatest[i];
+      const items = Array.isArray(res) ? res : (res && res.Items) || [];
       if (!items.length) return;
       html += rail(`${v.Name} · 最新`, items, card, {
         href: `#/library/${encodeURIComponent(v.Id)}`,
