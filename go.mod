@@ -4,6 +4,7 @@ go 1.24
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/lionsoul2014/ip2region/binding/golang v0.0.0-20261124061657-f1781b7f9b7a
 	github.com/mozillazg/go-pinyin v0.20.0
 	golang.org/x/crypto v0.31.0
 	golang.org/x/image v0.20.0

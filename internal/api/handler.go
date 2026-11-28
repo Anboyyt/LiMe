@@ -43,6 +43,12 @@ type Handler struct {
 	notifyMu   sync.Mutex
 	notifySeen map[string]time.Time
 
+	// 访问控制规则：保存后整体替换指针，中间件只读。
+	accessRules atomic.Pointer[accessRules]
+	// 管理员身份缓存，避免每个请求都查一次 token。
+	adminMu    sync.Mutex
+	adminCache map[string]adminCacheEntry
+
 	// 播放开关的运行时值：面板可改、即时生效。用 atomic 是因为 stream
 	// 热路径会读，不能每次拿锁。启动时用环境变量的值兜底。
 	resolveRedirect  atomic.Bool
@@ -181,6 +187,7 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 		serverID:   serverID,
 		startedAt:  time.Now(),
 
+		adminCache:   make(map[string]adminCacheEntry, 8),
 		loginLimiter: newLoginLimiter(),
 	}
 	// 面板里保存的 Telegram 设置优先于环境变量；worker 常驻，改配置即时生效。
@@ -193,6 +200,8 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	h.playbackDirectAt.Store(cfg.PlaybackDirectURLAuto)
 	h.streamAuth.Store(cfg.StreamRequireAuth)
 	h.loadPlaybackSettings()
+	h.reloadGeo()
+	h.loadAccessControl()
 	log.Info("playback acceleration",
 		"resolve", h.resolveModeLabel(),
 		"direct_stream_url", h.directModeLabel(),
@@ -277,7 +286,8 @@ func writeStatus(w http.ResponseWriter, status int) {
 func (h *Handler) userDto(u *store.User) *dto.UserDto {
 	policy := dto.DefaultPolicy(u.IsAdmin)
 	policy.IsDisabled = u.IsDisabled
-	policy.EnableContentDownloading = h.downloadEnabled()
+	policy.EnableContentDownloading = u.AllowDownload && h.downloadEnabled()
+	policy.EnableMediaPlayback = u.AllowPlayback
 	if u.MaxParentalRating > 0 {
 		v := u.MaxParentalRating
 		policy.MaxParentalRating = &v

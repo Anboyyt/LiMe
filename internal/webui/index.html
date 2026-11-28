@@ -82,6 +82,37 @@
     </div>
   </div>
 
+  <!-- 设备管理弹窗 -->
+  <div id="deviceModal" class="modal hidden">
+    <div class="modal-card device-modal">
+      <h3 id="deviceTitle">设备管理</h3>
+      <p class="muted" style="margin-top:0">下线会立刻吊销该设备的登录凭据，下次打开客户端需要重新登录。</p>
+      <div id="deviceList" class="device-list"></div>
+      <div class="modal-actions">
+        <button type="button" id="deviceClose">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 用户权限弹窗 -->
+  <div id="userCtlModal" class="modal hidden">
+    <form class="modal-card" id="userCtlForm">
+      <h3 id="userCtlTitle">用户权限</h3>
+      <label class="ctl-row">
+        <span>同时播放数</span>
+        <input id="ctlSessions" type="number" min="0" max="100" step="1" style="max-width:100px">
+      </label>
+      <p class="muted" style="margin:-4px 0 12px">0 表示不限制；超过上限时新起的播放会被拒绝。</p>
+      <label class="ctl-row"><input id="ctlDownload" type="checkbox"><span>允许下载</span></label>
+      <label class="ctl-row"><input id="ctlPlayback" type="checkbox"><span>允许播放</span></label>
+      <p class="muted" style="margin:8px 0 0">关闭播放后仍然可以浏览媒体库，但拿不到播放地址。</p>
+      <div class="modal-actions">
+        <button type="button" id="userCtlCancel">取消</button>
+        <button type="submit" class="primary">保存</button>
+      </div>
+    </form>
+  </div>
+
   <!-- 密码弹窗 -->
   <div id="pwModal" class="modal hidden">
     <form class="modal-card" id="pwForm">
@@ -98,6 +129,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="app.js?v=55"></script>
+  <script src="app.js?v=56"></script>
 </body>
 </html>

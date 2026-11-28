@@ -108,7 +108,7 @@ func (h *Handler) authenticateByName(w http.ResponseWriter, r *http.Request) {
 		deviceName = a.Client
 	}
 
-	if err := h.db.UpsertDevice(user.ID, deviceID, a.Client, deviceName); err != nil {
+	if err := h.db.UpsertDevice(user.ID, deviceID, a.Client, deviceName, h.clientIPString(r)); err != nil {
 		h.log.Warn("upsert device", "err", err)
 	}
 

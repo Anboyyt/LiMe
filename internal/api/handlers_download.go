@@ -25,7 +25,7 @@ func (h *Handler) downloadItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !h.downloadEnabled() {
+	if !h.downloadEnabled() || !user.AllowDownload {
 		writeError(w, http.StatusForbidden, "downloading is disabled")
 		return
 	}

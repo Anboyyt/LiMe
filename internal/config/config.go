@@ -159,6 +159,10 @@ type Config struct {
 	TMDBImageBase string
 	TMDBProxy     string
 
+	// ---- 访问控制 ----
+	// GeoIPDir 存放 ip2region 的 v4/v6 xdb 文件，空表示 data/geoip。
+	GeoIPDir string
+
 	// ---- Telegram 播放通知 ----
 	// Token/ChatID 也可在面板里配置（数据库优先于环境变量）。
 	TelegramToken  string
@@ -239,6 +243,7 @@ func Load() Config {
 		TMDBBaseURL:             getenv("LIME_TMDB_BASE_URL", "https://api.themoviedb.org/3"),
 		TMDBImageBase:           getenv("LIME_TMDB_IMAGE_BASE", "https://image.tmdb.org/t/p"),
 		TMDBProxy:               strings.TrimSpace(os.Getenv("LIME_TMDB_PROXY")),
+		GeoIPDir:                strings.TrimSpace(os.Getenv("LIME_GEOIP_DIR")),
 		TelegramToken:           strings.TrimSpace(os.Getenv("LIME_TG_BOT_TOKEN")),
 		TelegramChatID:          strings.TrimSpace(os.Getenv("LIME_TG_CHAT_ID")),
 		TelegramProxy:           strings.TrimSpace(os.Getenv("LIME_TG_PROXY")),

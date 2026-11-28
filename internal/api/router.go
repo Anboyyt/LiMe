@@ -66,6 +66,13 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /web/api/libraries/reorder", h.webLibraryReorder)
 	mux.HandleFunc("GET /web/api/users/{userId}/libraries", h.userLibraries)
 	mux.HandleFunc("PUT /web/api/users/{userId}/libraries", h.userLibraries)
+	mux.HandleFunc("GET /web/api/users", h.webUsers)
+	mux.HandleFunc("GET /web/api/users/{userId}/devices", h.webUserDevices)
+	mux.HandleFunc("DELETE /web/api/users/{userId}/devices/{deviceId}", h.webUserDeviceDelete)
+	// 必须带方法：无方法的整段路径会和静态文件兜底 "GET /" 冲突。
+	mux.HandleFunc("GET /web/api/access-control", h.webAccessControl)
+	mux.HandleFunc("PUT /web/api/access-control", h.webAccessControl)
+	mux.HandleFunc("POST /web/api/access-control/geoip", h.webGeoIPDownload)
 	mux.HandleFunc("GET /web/api/settings", h.webSettings)
 	mux.HandleFunc("PUT /web/api/settings", h.webSettings)
 	mux.HandleFunc("POST /web/api/backup", h.webBackup)
@@ -255,5 +262,5 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /Sessions", h.listSessions)
 
 	return withGzip(withCORS(withLogging(h.log, h.cfg.HTTPLog,
-		withRecovery(h.log, withQueryAliases(stripEmbyPrefix(mux))))))
+		withRecovery(h.log, h.withAccessControl(withQueryAliases(stripEmbyPrefix(mux)))))))
 }

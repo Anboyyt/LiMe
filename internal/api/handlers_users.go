@@ -267,9 +267,13 @@ type updatePolicyRequest struct {
 	IsAdministrator   *bool `json:"IsAdministrator"`
 	IsDisabled        *bool `json:"IsDisabled"`
 	MaxParentalRating *int  `json:"MaxParentalRating"`
+	MaxActiveSessions *int  `json:"MaxActiveSessions"`
+	// 面板用的字段名，与 Jellyfin Policy 保持一致。
+	EnableContentDownloading *bool `json:"EnableContentDownloading"`
+	EnableMediaPlayback      *bool `json:"EnableMediaPlayback"`
 }
 
-// updateUserPolicy 只处理管理员和禁用状态，其余策略字段先忽略。
+// updateUserPolicy 处理管理员、禁用、分级、并发和播放/下载开关。
 func (h *Handler) updateUserPolicy(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {
 		return
@@ -325,6 +329,32 @@ func (h *Handler) updateUserPolicy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.MaxActiveSessions != nil {
+		v := *req.MaxActiveSessions
+		if v < 0 || v > 100 {
+			writeError(w, http.StatusBadRequest, "MaxActiveSessions must be 0-100")
+			return
+		}
+		if err := h.db.SetUserMaxActiveSessions(target.ID, v); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+	if req.EnableContentDownloading != nil {
+		if err := h.db.SetUserAllowDownload(target.ID, *req.EnableContentDownloading); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+	if req.EnableMediaPlayback != nil {
+		if err := h.db.SetUserAllowPlayback(target.ID, *req.EnableMediaPlayback); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	// 权限变更后清掉管理员缓存，避免中间件继续用旧身份放行。
+	h.invalidateAdminCache()
 
 	updated, err := h.db.GetUserByID(target.ID)
 	if err != nil {

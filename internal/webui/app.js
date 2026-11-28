@@ -1084,6 +1084,14 @@
   }
 
   // ---------- 用户 ----------
+  const PROVINCES = [
+    '北京', '天津', '河北', '山西', '内蒙古', '辽宁', '吉林', '黑龙江',
+    '上海', '江苏', '浙江', '安徽', '福建', '江西', '山东', '河南',
+    '湖北', '湖南', '广东', '广西', '海南', '重庆', '四川', '贵州',
+    '云南', '西藏', '陕西', '甘肃', '青海', '宁夏', '新疆',
+    '台湾', '香港', '澳门',
+  ];
+
   const RATING_LABELS = {
     0: '不限制',
     1: '1 级 · G/TV-Y',
@@ -1104,37 +1112,68 @@
   async function renderUsers() {
     $('#crumb').textContent = '用户';
     const admin = isAdmin();
-    const all = await api('/Users');
-    const users = admin ? all : all.filter((u) => u.Id === state.user.Id);
+
+    let users;
+    let ac = null;
+    if (admin) {
+      [users, ac] = await Promise.all([api('/web/api/users'), api('/web/api/access-control')]);
+    } else {
+      const all = await api('/Users');
+      users = all.filter((u) => u.Id === state.user.Id).map((u) => ({
+        Id: u.Id,
+        Name: u.Name,
+        IsAdmin: (u.Policy || {}).IsAdministrator,
+        IsDisabled: (u.Policy || {}).IsDisabled,
+        MaxParentalRating: (u.Policy || {}).MaxParentalRating || 0,
+        MaxActiveSessions: 0,
+        AllowDownload: true,
+        AllowPlayback: true,
+        LastLoginAt: u.LastLoginDate,
+        DeviceCount: 0,
+      }));
+    }
+
+    state.userCache = users;
 
     const rows = users.map((u) => {
-      const policy = u.Policy || {};
       const self = u.Id === state.user.Id;
-      const lastLogin = u.LastLoginDate
-        ? new Date(u.LastLoginDate).toLocaleString('zh-CN', { hour12: false }) : '—';
-      const maxRating = policy.MaxParentalRating || 0;
-      const ratingCell = admin && !policy.IsAdministrator
-        ? `<select data-action="set-rating" data-id="${esc(u.Id)}">${ratingOptions(maxRating)}</select>`
-        : `<span class="muted">${maxRating ? ratingLabel(maxRating) : '不限制'}</span>`;
+      const lastLogin = u.LastLoginAt
+        ? new Date(u.LastLoginAt).toLocaleString('zh-CN', { hour12: false }) : '—';
+      const ratingCell = admin && !u.IsAdmin
+        ? `<select data-action="set-rating" data-id="${esc(u.Id)}">${ratingOptions(u.MaxParentalRating)}</select>`
+        : `<span class="muted">${u.MaxParentalRating ? ratingLabel(u.MaxParentalRating) : '不限制'}</span>`;
+      const limits = admin ? `
+        <div class="muted" style="font-size:12px">并发 ${u.MaxActiveSessions ? u.MaxActiveSessions : '不限'}</div>
+        <div style="font-size:12px">
+          <span class="${u.AllowPlayback ? 'badge ok' : 'badge warn'}">${u.AllowPlayback ? '可播放' : '禁播'}</span>
+          <span class="${u.AllowDownload ? 'badge ok' : 'badge'}">${u.AllowDownload ? '可下载' : '禁下载'}</span>
+        </div>` : '<span class="muted">—</span>';
+      const deviceCell = admin && !u.IsAdmin
+        ? `<button data-action="user-devices" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">
+             ${u.DeviceCount ? `设备 ${u.DeviceCount}` : '设备'}</button>`
+        : '<span class="muted">—</span>';
       return `<tr>
         <td>${esc(u.Name)}${self ? ' <span class="badge">当前</span>' : ''}</td>
-        <td>${policy.IsAdministrator ? '<span class="badge ok">管理员</span>' : '<span class="badge">普通用户</span>'}</td>
-        <td>${policy.IsDisabled ? '<span class="badge warn">已禁用</span>' : '<span class="badge ok">正常</span>'}</td>
+        <td>${u.IsAdmin ? '<span class="badge ok">管理员</span>' : '<span class="badge">普通用户</span>'}</td>
+        <td>${u.IsDisabled ? '<span class="badge warn">已禁用</span>' : '<span class="badge ok">正常</span>'}</td>
         <td>${ratingCell}</td>
+        <td>${limits}</td>
+        <td>${deviceCell}</td>
         <td class="muted">${esc(lastLogin)}</td>
         <td style="white-space:nowrap">
-          <button data-action="rename-user" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">重命名</button>
+          ${admin && !u.IsAdmin ? `
+            <button data-action="user-ctl" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">权限</button>
+            <button data-action="user-libs" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">库</button>` : ''}
           <button data-action="reset-pw" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">
-            ${self ? '修改密码' : '重置密码'}</button>
-          ${admin && !policy.IsAdministrator ? `
-            <button data-action="user-libs" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">库权限</button>` : ''}
+            ${self ? '改密' : '密码'}</button>
+          <button data-action="rename-user" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">改名</button>
           ${admin && !self ? `
-            <button data-action="toggle-disabled" data-id="${esc(u.Id)}" data-disabled="${policy.IsDisabled ? '1' : '0'}">
-              ${policy.IsDisabled ? '启用' : '禁用'}</button>
+            <button data-action="toggle-disabled" data-id="${esc(u.Id)}" data-disabled="${u.IsDisabled ? '1' : '0'}">
+              ${u.IsDisabled ? '启用' : '禁用'}</button>
             <button data-action="delete-user" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">删除</button>` : ''}
         </td>
       </tr>`;
-    }).join('') || '<tr><td colspan="6" class="muted">没有用户</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="muted">没有用户</td></tr>';
 
     const createPanel = admin ? `
       <div class="panel">
@@ -1148,14 +1187,119 @@
       </div>` : `
       <div class="panel"><p class="muted" style="margin:0">普通用户只能修改自己的密码和用户名。</p></div>`;
 
-    $('#view').innerHTML = `${createPanel}
+    const accessPanel = admin ? renderAccessPanel(ac) : '';
+
+    $('#view').innerHTML = `${createPanel}${accessPanel}
       <div class="panel">
         <h3>用户</h3>
         <table>
-          <thead><tr><th>用户名</th><th>权限</th><th>状态</th><th>分级限制</th><th>最后登录</th><th></th></tr></thead>
+          <thead><tr><th>用户名</th><th>权限</th><th>状态</th><th>分级限制</th><th>播放限制</th><th>设备</th><th>最后登录</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>`;
+  }
+
+  // ---------- 访问控制 ----------
+  function renderAccessPanel(ac) {
+    if (!ac) return '';
+    const cfg = ac.Config || {};
+    const selected = new Set(cfg.Provinces || []);
+    const chips = PROVINCES.map((p) =>
+      `<button type="button" class="prov-chip${selected.has(p) ? ' on' : ''}" data-prov="${p}">${p}</button>`
+    ).join('');
+
+    const geo = ac.GeoReady
+      ? '<span class="badge ok">已加载</span>'
+      : `<span class="badge warn">未加载</span><span class="muted">缺 ${esc((ac.GeoMissing || []).join('、'))}</span>`;
+    const dl = ac.Download || {};
+    const dlText = dl.Running ? '<span class="muted">正在下载…</span>'
+      : (dl.Error ? `<span class="err">${esc(dl.Error)}</span>` : '');
+
+    return `<div class="panel">
+      <h3>访问控制</h3>
+      <p class="muted" style="margin-top:0">
+        按省份或 IP 限制谁能访问。只影响接口和播放地址，已经拿到 CDN 直链的会话不受影响。
+      </p>
+      <label class="ctl-row" style="margin-bottom:12px">
+        <input id="acEnabled" type="checkbox" ${cfg.Enabled ? 'checked' : ''}>
+        <span>启用访问限制</span>
+      </label>
+
+      <div class="ctl-grid">
+        <label>模式
+          <select id="acMode">
+            <option value="whitelist"${cfg.Mode !== 'blacklist' ? ' selected' : ''}>白名单：只允许列表内</option>
+            <option value="blacklist"${cfg.Mode === 'blacklist' ? ' selected' : ''}>黑名单：拒绝列表内</option>
+          </select>
+        </label>
+        <label>国家（逗号分隔）
+          <input id="acCountries" value="${esc((cfg.Countries || []).join(','))}" placeholder="中国">
+        </label>
+        <label>查不到归属地时
+          <select id="acUnknown">
+            <option value="allow"${cfg.UnknownPolicy !== 'deny' ? ' selected' : ''}>放行</option>
+            <option value="deny"${cfg.UnknownPolicy === 'deny' ? ' selected' : ''}>拒绝</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="ctl-block">
+        <div class="ctl-label">省份 <span class="muted">留空表示不限省份</span></div>
+        <div class="prov-grid">${chips}</div>
+      </div>
+
+      <div class="ctl-grid">
+        <label>IP / CIDR 白名单<textarea id="acIPAllow" rows="3" placeholder="1.2.3.4&#10;10.0.0.0/8">${esc((cfg.IPAllow || []).join('\n'))}</textarea></label>
+        <label>IP / CIDR 黑名单<textarea id="acIPDeny" rows="3" placeholder="5.6.7.8">${esc((cfg.IPDeny || []).join('\n'))}</textarea></label>
+      </div>
+
+      <div class="row" style="margin:4px 0 12px">
+        <label class="ctl-row"><input id="acLAN" type="checkbox" ${cfg.AllowLAN ? 'checked' : ''}><span>内网放行</span></label>
+        <label class="ctl-row"><input id="acAdmins" type="checkbox" ${cfg.AllowAdmins ? 'checked' : ''}><span>管理员不受限</span></label>
+      </div>
+
+      <div class="ac-status">
+        <div><span class="muted">当前 IP</span> <code id="acClientIP">${esc(ac.ClientIP || '—')}</code>
+          <span class="muted">归属</span> <span>${esc(ac.ClientRegion || '未知')}</span></div>
+        <div id="acVerdict">按当前规则：${ac.ClientAllow
+          ? `<span class="badge ok">放行</span>`
+          : `<span class="badge warn">拒绝</span>`} <span class="muted">${esc(ac.ClientReason || '')}</span></div>
+      </div>
+
+      <div class="row" style="margin-bottom:10px">
+        <button data-action="save-ac" class="primary">保存规则</button>
+        <button data-action="allow-my-ip">把当前 IP 加入白名单</button>
+      </div>
+
+      <div class="ac-geo">
+        <span class="muted">地理库</span> ${geo} ${dlText}
+        <span class="muted">· ${esc(ac.GeoDir || '')}</span>
+        <button data-action="download-geoip" style="margin-left:8px">下载 / 更新</button>
+      </div>
+    </div>`;
+  }
+
+  function readAccessForm() {
+    const lines = (v) => String(v || '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+    return {
+      Enabled: $('#acEnabled').checked,
+      Mode: $('#acMode').value,
+      Countries: lines($('#acCountries').value),
+      Provinces: Array.from(document.querySelectorAll('.prov-chip.on')).map((b) => b.dataset.prov),
+      IPAllow: lines($('#acIPAllow').value),
+      IPDeny: lines($('#acIPDeny').value),
+      AllowLAN: $('#acLAN').checked,
+      AllowAdmins: $('#acAdmins').checked,
+      UnknownPolicy: $('#acUnknown').value,
+    };
+  }
+
+  function renderVerdict(st) {
+    const el = $('#acVerdict');
+    if (!el) return;
+    el.innerHTML = st.ClientAllow
+      ? `<span class="badge ok">放行</span> <span class="muted">${esc(st.ClientReason || '')}</span>`
+      : `<span class="badge warn">拒绝</span> <span class="muted">${esc(st.ClientReason || '')}</span>`;
   }
 
   // ---------- 日志 ----------
@@ -2261,6 +2405,50 @@
       case 'user-libs':
         await openUserLibs(el.dataset.id, el.dataset.name);
         break;
+      case 'user-devices':
+        await openUserDevices(el.dataset.id, el.dataset.name);
+        break;
+      case 'user-ctl':
+        openUserCtl(el.dataset.id, el.dataset.name);
+        break;
+      case 'kick-device': {
+        if (!confirm('确定让这台设备下线？该设备需要重新登录。')) break;
+        await api(`/web/api/users/${encodeURIComponent(el.dataset.user)}/devices/${encodeURIComponent(el.dataset.device)}`,
+          { method: 'DELETE' });
+        toast('设备已下线');
+        await openUserDevices(el.dataset.user, el.dataset.userName || '');
+        break;
+      }
+      case 'save-ac': {
+        const cfg = readAccessForm();
+        const preview = await api('/web/api/access-control',
+          { method: 'PUT', body: JSON.stringify({ ...cfg, DryRun: true }) });
+        if (!preview.ClientAllow &&
+          !confirm(`保存后当前 IP（${preview.ClientIP}）会被拒绝：${preview.ClientReason}\n\n仍然保存？`)) {
+          break;
+        }
+        const saved = await api('/web/api/access-control',
+          { method: 'PUT', body: JSON.stringify(cfg) });
+        renderVerdict(saved);
+        toast('访问规则已保存');
+        break;
+      }
+      case 'allow-my-ip': {
+        const ip = ($('#acClientIP') || {}).textContent || '';
+        if (!ip || ip === '—') throw new Error('拿不到当前 IP');
+        const box = $('#acIPAllow');
+        const list = box.value.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+        if (!list.includes(ip)) list.push(ip);
+        box.value = list.join('\n');
+        toast('已写入白名单，记得点保存');
+        break;
+      }
+      case 'download-geoip': {
+        await api('/web/api/access-control/geoip', { method: 'POST' });
+        toast('已开始下载地理库，完成后会自动刷新');
+        pollGeoDownload();
+        break;
+      }
       case 'toggle-disabled': {
         const wasDisabled = el.dataset.disabled === '1';
         await api(`/Users/${encodeURIComponent(el.dataset.id)}/Policy`,
@@ -2306,6 +2494,90 @@
       case 'play':
         showPlayer(el.dataset.path, el.dataset.container);
         break;
+    }
+  }
+
+  // ---------- 设备管理弹窗 ----------
+  let deviceTarget = null;
+
+  async function openUserDevices(id, name) {
+    deviceTarget = { id, name };
+    const data = await api(`/web/api/users/${encodeURIComponent(id)}/devices`);
+    const list = data.Devices || [];
+    $('#deviceTitle').textContent = `设备管理：${name}`;
+    $('#deviceList').innerHTML = list.map((d) => `
+      <div class="device-row">
+        <div class="device-info">
+          <div>${esc(d.Name || d.Client || d.DeviceId)}</div>
+          <div class="muted" style="font-size:12px">
+            ${esc(d.Client || '未知客户端')} · ${esc(d.LastIP || '—')} ·
+            ${d.LastSeenAt ? new Date(d.LastSeenAt).toLocaleString('zh-CN', { hour12: false }) : '—'}
+          </div>
+        </div>
+        <button data-action="kick-device" data-user="${esc(id)}" data-user-name="${esc(name)}"
+          data-device="${esc(d.DeviceId)}" ${d.TokenCount ? '' : 'disabled'}>下线</button>
+      </div>`).join('') || '<p class="muted">该用户还没有登录过的设备。</p>';
+    $('#deviceModal').classList.remove('hidden');
+  }
+
+  function closeDeviceModal() {
+    deviceTarget = null;
+    $('#deviceModal').classList.add('hidden');
+  }
+
+  // ---------- 用户权限弹窗 ----------
+  let userCtlTarget = null;
+
+  function openUserCtl(id, name) {
+    const u = (state.userCache || []).find((x) => x.Id === id);
+    if (!u) throw new Error('用户信息已过期，请刷新页面');
+    userCtlTarget = { id, name };
+    $('#userCtlTitle').textContent = `用户权限：${name}`;
+    $('#ctlSessions').value = u.MaxActiveSessions || 0;
+    $('#ctlDownload').checked = !!u.AllowDownload;
+    $('#ctlPlayback').checked = !!u.AllowPlayback;
+    $('#userCtlModal').classList.remove('hidden');
+  }
+
+  function closeUserCtl() {
+    userCtlTarget = null;
+    $('#userCtlModal').classList.add('hidden');
+  }
+
+  async function submitUserCtl(ev) {
+    ev.preventDefault();
+    if (!userCtlTarget) return;
+    const n = Number($('#ctlSessions').value);
+    if (!Number.isFinite(n) || n < 0 || n > 100) throw new Error('同时播放数需要是 0-100');
+    await api(`/Users/${encodeURIComponent(userCtlTarget.id)}/Policy`, {
+      method: 'POST',
+      body: JSON.stringify({
+        MaxActiveSessions: Math.floor(n),
+        EnableContentDownloading: $('#ctlDownload').checked,
+        EnableMediaPlayback: $('#ctlPlayback').checked,
+      }),
+    });
+    closeUserCtl();
+    toast('权限已保存');
+    await route();
+  }
+
+  // ---------- 地理库下载轮询 ----------
+  async function pollGeoDownload() {
+    for (let i = 0; i < 240; i++) {
+      await new Promise((r) => setTimeout(r, 5000));
+      if (!location.hash.startsWith('#users')) return;
+      let st;
+      try {
+        st = await api('/web/api/access-control');
+      } catch {
+        return;
+      }
+      if (!st.Download || !st.Download.Running) {
+        toast(st.GeoReady ? '地理库已就绪' : '地理库下载失败，请查看日志');
+        await route();
+        return;
+      }
     }
   }
 
@@ -2402,6 +2674,12 @@
 
   // ---------- 事件绑定 ----------
   document.addEventListener('click', (e) => {
+    const chip = e.target.closest('.prov-chip');
+    if (chip) {
+      e.preventDefault();
+      chip.classList.toggle('on');
+      return;
+    }
     const el = e.target.closest('[data-action]');
     if (!el) return;
     if (el.tagName === 'SELECT') return; // select 交给 change 处理
@@ -2443,6 +2721,17 @@
   });
   $('#libAccessModal').addEventListener('click', (e) => {
     if (e.target.id === 'libAccessModal') e.target.classList.add('hidden');
+  });
+  $('#deviceClose').addEventListener('click', closeDeviceModal);
+  $('#deviceModal').addEventListener('click', (e) => {
+    if (e.target.id === 'deviceModal') closeDeviceModal();
+  });
+  $('#userCtlForm').addEventListener('submit', (e) => {
+    submitUserCtl(e).catch((err) => toast(err.message, true));
+  });
+  $('#userCtlCancel').addEventListener('click', closeUserCtl);
+  $('#userCtlModal').addEventListener('click', (e) => {
+    if (e.target.id === 'userCtlModal') closeUserCtl();
   });
   $('#scanBtn').addEventListener('click', () => {
     handleAction('scan', $('#scanBtn')).catch((err) => toast(err.message, true));

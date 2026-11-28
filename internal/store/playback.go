@@ -109,6 +109,19 @@ WHERE played = 0 AND position_ticks > 0
 	return res.RowsAffected()
 }
 
+// ActiveSessionCountExcluding 统计用户在 since 之后仍有心跳的会话数。
+// excludeDevice 用来排除当前设备：同一台机器切集时旧会话还在表里，
+// 不排除会把自己算成多路并发。
+func (d *DB) ActiveSessionCountExcluding(userID, excludeDevice string, since time.Time) (int, error) {
+	var n int
+	err := d.QueryRow(
+		`SELECT COUNT(*) FROM playback_sessions
+		  WHERE user_id = ? AND updated_at > ? AND (? = '' OR device_id <> ?)`,
+		userID, since.Unix(), excludeDevice, excludeDevice,
+	).Scan(&n)
+	return n, err
+}
+
 // PurgeStalePlaybackSessions 删除超过 TTL 没更新的会话记录。
 func (d *DB) PurgeStalePlaybackSessions(before time.Time) (int64, error) {
 	res, err := d.Exec(`DELETE FROM playback_sessions WHERE updated_at < ?`, before.Unix())

@@ -23,9 +23,16 @@ type User struct {
 	IsAdmin           bool
 	IsDisabled        bool
 	MaxParentalRating int // 0 = 不限制
+	MaxActiveSessions int // 0 = 不限制
+	AllowDownload     bool
+	AllowPlayback     bool
 	CreatedAt         time.Time
 	LastLoginAt       *time.Time
 }
+
+// userColumns 保持所有查询列顺序一致，scanUser 依赖它。
+const userColumns = `id, name, password_hash, is_admin, is_disabled, max_parental_rating,
+	max_active_sessions, allow_download, allow_playback, created_at, last_login_at`
 
 // ---------- 口令哈希（argon2id） ----------
 
@@ -91,24 +98,24 @@ func (d *DB) CreateUser(name, passwordHash string, isAdmin bool) (*User, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &User{ID: id, Name: name, PasswordHash: passwordHash, IsAdmin: isAdmin, CreatedAt: time.Unix(now, 0)}, nil
+	return d.GetUserByID(id)
 }
 
 func (d *DB) GetUserByName(name string) (*User, error) {
 	return d.scanUser(d.QueryRow(
-		`SELECT id, name, password_hash, is_admin, is_disabled, max_parental_rating, created_at, last_login_at FROM users WHERE name = ?`, name,
+		`SELECT `+userColumns+` FROM users WHERE name = ?`, name,
 	))
 }
 
 func (d *DB) GetUserByID(id string) (*User, error) {
 	return d.scanUser(d.QueryRow(
-		`SELECT id, name, password_hash, is_admin, is_disabled, max_parental_rating, created_at, last_login_at FROM users WHERE id = ?`, id,
+		`SELECT `+userColumns+` FROM users WHERE id = ?`, id,
 	))
 }
 
 func (d *DB) ListUsers() ([]*User, error) {
 	rows, err := d.Query(
-		`SELECT id, name, password_hash, is_admin, is_disabled, max_parental_rating, created_at, last_login_at FROM users ORDER BY name`,
+		`SELECT ` + userColumns + ` FROM users ORDER BY name`,
 	)
 	if err != nil {
 		return nil, err
@@ -136,8 +143,11 @@ func (d *DB) scanUser(row interface {
 		isAdmin     int
 		isDisabled  int
 		maxRating   int
+		allowDL     int
+		allowPlay   int
 	)
-	if err := row.Scan(&u.ID, &u.Name, &u.PasswordHash, &isAdmin, &isDisabled, &maxRating, &createdAt, &lastLoginAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Name, &u.PasswordHash, &isAdmin, &isDisabled, &maxRating,
+		&u.MaxActiveSessions, &allowDL, &allowPlay, &createdAt, &lastLoginAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -146,6 +156,8 @@ func (d *DB) scanUser(row interface {
 	u.IsAdmin = isAdmin != 0
 	u.IsDisabled = isDisabled != 0
 	u.MaxParentalRating = maxRating
+	u.AllowDownload = allowDL != 0
+	u.AllowPlayback = allowPlay != 0
 	u.CreatedAt = time.Unix(createdAt, 0)
 	if lastLoginAt.Valid {
 		t := time.Unix(lastLoginAt.Int64, 0)
@@ -200,6 +212,22 @@ func (d *DB) SetUserMaxRating(userID string, rating int) error {
 	return err
 }
 
+// SetUserMaxActiveSessions 设置并发播放上限，0 表示不限制。
+func (d *DB) SetUserMaxActiveSessions(userID string, n int) error {
+	_, err := d.Exec(`UPDATE users SET max_active_sessions = ? WHERE id = ?`, n, userID)
+	return err
+}
+
+func (d *DB) SetUserAllowDownload(userID string, allow bool) error {
+	_, err := d.Exec(`UPDATE users SET allow_download = ? WHERE id = ?`, boolToInt(allow), userID)
+	return err
+}
+
+func (d *DB) SetUserAllowPlayback(userID string, allow bool) error {
+	_, err := d.Exec(`UPDATE users SET allow_playback = ? WHERE id = ?`, boolToInt(allow), userID)
+	return err
+}
+
 // SetUserDisabled 禁用用户时顺手吊销其所有 token。
 func (d *DB) SetUserDisabled(userID string, disabled bool) error {
 	if _, err := d.Exec(`UPDATE users SET is_disabled = ? WHERE id = ?`, boolToInt(disabled), userID); err != nil {
@@ -222,22 +250,130 @@ func (d *DB) CountAdmins() (int, error) {
 	return n, err
 }
 
+// UserSummary 是运维面板用户列表用的扁平结构，一次查询带上设备数。
+type UserSummary struct {
+	ID                string
+	Name              string
+	IsAdmin           bool
+	IsDisabled        bool
+	MaxParentalRating int
+	MaxActiveSessions int
+	AllowDownload     bool
+	AllowPlayback     bool
+	LastLoginAt       *time.Time
+	DeviceCount       int
+}
+
+func (d *DB) UserSummaries() ([]*UserSummary, error) {
+	rows, err := d.Query(
+		`SELECT u.id, u.name, u.is_admin, u.is_disabled, u.max_parental_rating,
+		        u.max_active_sessions, u.allow_download, u.allow_playback, u.last_login_at,
+		        (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id)
+		   FROM users u
+		  ORDER BY u.name`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]*UserSummary, 0, 4)
+	for rows.Next() {
+		var (
+			v         UserSummary
+			admin     int
+			disabled  int
+			allowDL   int
+			allowPlay int
+			last      sql.NullInt64
+		)
+		if err := rows.Scan(&v.ID, &v.Name, &admin, &disabled, &v.MaxParentalRating,
+			&v.MaxActiveSessions, &allowDL, &allowPlay, &last, &v.DeviceCount); err != nil {
+			return nil, err
+		}
+		v.IsAdmin = admin != 0
+		v.IsDisabled = disabled != 0
+		v.AllowDownload = allowDL != 0
+		v.AllowPlayback = allowPlay != 0
+		if last.Valid {
+			t := time.Unix(last.Int64, 0)
+			v.LastLoginAt = &t
+		}
+		out = append(out, &v)
+	}
+	return out, rows.Err()
+}
+
 // ---------- 设备 ----------
 
-func (d *DB) UpsertDevice(userID, deviceID, client, name string) error {
+func (d *DB) UpsertDevice(userID, deviceID, client, name, ip string) error {
 	if deviceID == "" {
 		deviceID = "unknown"
 	}
 	now := time.Now().Unix()
 	_, err := d.Exec(
-		`INSERT INTO devices (id, user_id, device_id, client, name, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO devices (id, user_id, device_id, client, name, last_ip, last_seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (user_id, device_id) DO UPDATE SET
 		   client = excluded.client,
 		   name = excluded.name,
+		   last_ip = CASE WHEN excluded.last_ip <> '' THEN excluded.last_ip ELSE devices.last_ip END,
 		   last_seen_at = excluded.last_seen_at`,
-		mustID(), userID, deviceID, client, name, now,
+		mustID(), userID, deviceID, client, name, ip, now,
 	)
+	return err
+}
+
+// Device 是「设备管理」列表的一行。
+type Device struct {
+	DeviceID   string
+	Client     string
+	Name       string
+	LastIP     string
+	LastSeenAt time.Time
+	TokenCount int
+}
+
+// ListDevices 列出某个用户登录过的设备，附带该设备当前有效的 token 数。
+func (d *DB) ListDevices(userID string) ([]*Device, error) {
+	rows, err := d.Query(
+		`SELECT d.device_id, d.client, d.name, d.last_ip, COALESCE(d.last_seen_at, 0),
+		        (SELECT COUNT(*) FROM access_tokens t WHERE t.user_id = d.user_id AND t.device_id = d.device_id)
+		   FROM devices d
+		  WHERE d.user_id = ?
+		  ORDER BY COALESCE(d.last_seen_at, 0) DESC`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]*Device, 0, 4)
+	for rows.Next() {
+		var (
+			v    Device
+			seen int64
+		)
+		if err := rows.Scan(&v.DeviceID, &v.Client, &v.Name, &v.LastIP, &seen, &v.TokenCount); err != nil {
+			return nil, err
+		}
+		if seen > 0 {
+			v.LastSeenAt = time.Unix(seen, 0)
+		}
+		out = append(out, &v)
+	}
+	return out, rows.Err()
+}
+
+// DeleteDevice 吊销该设备的登录凭据并移除设备记录。
+func (d *DB) DeleteDevice(userID, deviceID string) error {
+	if _, err := d.Exec(
+		`DELETE FROM access_tokens WHERE user_id = ? AND device_id = ?`, userID, deviceID,
+	); err != nil {
+		return err
+	}
+	_, err := d.Exec(`DELETE FROM devices WHERE user_id = ? AND device_id = ?`, userID, deviceID)
 	return err
 }
 

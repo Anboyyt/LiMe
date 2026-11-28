@@ -30,6 +30,12 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 播放权限在查条目前面判断：没有播放权就不该再花一次查询。
+	if !user.AllowPlayback {
+		writeError(w, http.StatusForbidden, "该账号已被管理员关闭播放权限")
+		return
+	}
+
 	itemID := r.PathValue("itemId")
 	it, err := h.db.GetItem(itemID)
 	if err != nil {
@@ -39,6 +45,18 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 	if !h.canAccessLibrary(user, it.LibraryID) || !ratingAllowed(user, it) {
 		writeError(w, http.StatusNotFound, "item not found")
 		return
+	}
+	// 并发上限：排除同一台设备，切集时旧会话还在表里。
+	if user.MaxActiveSessions > 0 {
+		if n := h.activeSessionCount(user.ID, h.requestDeviceID(r)); n >= user.MaxActiveSessions {
+			h.log.Info("playback rejected: too many sessions",
+				"user", user.Name, "active", n, "limit", user.MaxActiveSessions)
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{
+				"error": "同时播放数已达上限",
+				"limit": user.MaxActiveSessions,
+			})
+			return
+		}
 	}
 
 	sources, err := h.db.MediaSourcesByItem(itemID)
@@ -198,6 +216,10 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 
 	itemID := r.PathValue("itemId")
 	if streamUser != nil {
+		if !streamUser.AllowPlayback {
+			writeError(w, http.StatusForbidden, "该账号已被管理员关闭播放权限")
+			return
+		}
 		if it, err := h.db.GetItem(itemID); err == nil &&
 			(!h.canAccessLibrary(streamUser, it.LibraryID) || !ratingAllowed(streamUser, it)) {
 			writeError(w, http.StatusNotFound, "item not found")

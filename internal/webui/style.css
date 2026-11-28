@@ -991,3 +991,110 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 6%, var(--panel
 }
 [data-sys] { display: none; }
 [data-sys].sys-active { display: block; }
+
+/* ---------- 用户权限 / 设备管理 / 访问控制 ---------- */
+.ctl-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ctl-row span { color: var(--fg); }
+
+.ctl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.ctl-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ctl-grid textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.ctl-block { margin-bottom: 14px; }
+.ctl-label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.ctl-label .muted { font-weight: 400; }
+
+.prov-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.prov-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.prov-chip:hover { border-color: var(--accent); color: var(--fg); }
+.prov-chip.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.ac-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel2);
+  font-size: 13px;
+}
+.ac-status code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--chip-bg, rgba(127, 127, 127, .12));
+  font-size: 12px;
+}
+.ac-geo {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.device-modal { width: min(560px, 100%); }
+.device-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55vh;
+  overflow: auto;
+  margin: 10px 0;
+}
+.device-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel2);
+}
+.device-info { min-width: 0; }
+.device-info > div:first-child {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
