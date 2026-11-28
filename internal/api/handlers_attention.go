@@ -9,7 +9,10 @@ import (
 	"lime/internal/store"
 )
 
-// webAttention 汇总需要人工处理的条目：没有 TMDB ID、刮削失败、缺图、重复。
+// webAttention 汇总需要人工处理的条目。
+//
+// 首屏只返回计数（各类列表留空），前端按标签页再请求 ?kind=xxx 拉具体列表：
+// 四类全查要 0.6 秒以上，首屏等全部数据会明显卡顿。
 func (h *Handler) webAttention(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.requireAdmin(w, r); !ok {
 		return
@@ -19,61 +22,29 @@ func (h *Handler) webAttention(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 默认每类 50 条：一次返回四份列表，200 条时响应能到 70KB+，
-	// 外网或慢客户端首屏会明显卡顿。需要更多用 ?limit= 显式要。
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
 			limit = n
 		}
 	}
+	kind := strings.ToLower(r.URL.Query().Get("kind"))
 
-	// 注意：不要把这几个查询改成 goroutine 并行。实测 modernc SQLite 在
-	// 同一进程内并发读时连接竞争反而更慢（0.27s → 0.40s），串行更稳。
 	failureCounts, health, err := h.cachedFailureSummary()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	failures, err := h.db.ScrapeFailures(limit)
+	dupCount, err := h.db.DuplicateTmdbCount()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	noTmdb, err := h.db.ItemsMissingTmdbID(limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	missingArt, err := h.db.ItemsMissingArtwork(limit)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	duplicates, err := h.db.DuplicateTmdbGroups(limit / 2)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	if failures == nil {
-		failures = []store.ScrapeFailure{}
-	}
-	if noTmdb == nil {
-		noTmdb = []store.AttentionItem{}
-	}
-	if missingArt == nil {
-		missingArt = []store.AttentionItem{}
-	}
-	if duplicates == nil {
-		duplicates = []store.DuplicateGroup{}
-	}
-
 	failureTotal := 0
 	for _, n := range failureCounts {
 		failureTotal += n
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"Counts": map[string]int{
 			"NoTmdb":          health.NoTmdbID,
 			"Unscraped":       health.Unscraped,
@@ -81,13 +52,62 @@ func (h *Handler) webAttention(w http.ResponseWriter, r *http.Request) {
 			"MissingBackdrop": health.MissingBackdrop,
 			"MissingArtwork":  health.MissingArtwork,
 			"Failures":        failureTotal,
-			"Duplicates":      len(duplicates),
+			"Duplicates":      dupCount,
 		},
-		"NoTmdb":     noTmdb,
-		"Failures":   failures,
-		"MissingArt": missingArt,
-		"Duplicates": duplicates,
-	})
+		"NoTmdb":     []store.AttentionItem{},
+		"Failures":   []store.ScrapeFailure{},
+		"MissingArt": []store.AttentionItem{},
+		"Duplicates": []store.DuplicateGroup{},
+	}
+
+	switch kind {
+	case "":
+		// 只要计数
+	case "notmdb":
+		items, err := h.db.ItemsMissingTmdbID(limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if items == nil {
+			items = []store.AttentionItem{}
+		}
+		resp["NoTmdb"] = items
+	case "failures":
+		items, err := h.db.ScrapeFailures(limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if items == nil {
+			items = []store.ScrapeFailure{}
+		}
+		resp["Failures"] = items
+	case "missing":
+		items, err := h.db.ItemsMissingArtwork(limit)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if items == nil {
+			items = []store.AttentionItem{}
+		}
+		resp["MissingArt"] = items
+	case "dups":
+		items, err := h.db.DuplicateTmdbGroups(limit / 2)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if items == nil {
+			items = []store.DuplicateGroup{}
+		}
+		resp["Duplicates"] = items
+	default:
+		writeError(w, http.StatusBadRequest, "unknown kind")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // webAttentionRetry 对选中的条目立即重新刮削。

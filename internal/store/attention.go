@@ -159,3 +159,15 @@ LIMIT ?`, tmdbID, typ, limit)
 	}
 	return out, rows.Err()
 }
+
+// DuplicateTmdbCount 只数重复组数量，首页计数用，不展开每组条目。
+func (d *DB) DuplicateTmdbCount() (int, error) {
+	var n int
+	err := d.QueryRow(`
+SELECT COUNT(*) FROM (
+  SELECT tmdb_id, type FROM items
+  WHERE tmdb_id IS NOT NULL AND tmdb_id <> '' AND type IN (?, ?)
+  GROUP BY tmdb_id, type HAVING COUNT(*) > 1
+)`, TypeMovie, TypeSeries).Scan(&n)
+	return n, err
+}

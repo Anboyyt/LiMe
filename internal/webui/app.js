@@ -272,17 +272,38 @@
   // ---------- 待处理 ----------
   async function renderAttention(force) {
     $('#crumb').textContent = '待处理';
-    // 来回切页面时直接复用 60 秒内的数据，避免每次进待处理都重新拉 4 份列表。
+    // 首屏只拉计数（很快），具体列表按当前标签页再请求，切标签时按需加载。
     const stale = !state.attentionAt || Date.now() - state.attentionAt > 60000;
-    if (!force && !stale) {
-      paintAttention();
+    if (force || stale || !state.attention) {
+      state.attention = await api('/web/api/attention');
+      state.attentionAt = Date.now();
+      state.attentionList = {};
+    }
+    if (!state.attentionTab) state.attentionTab = 'notmdb';
+    await ensureAttentionList(state.attentionTab, force);
+    paintAttention();
+  }
+
+  // 单类列表最多缓存 60 秒；切回同一个标签不再请求。
+  async function ensureAttentionList(kind, force) {
+    state.attentionList = state.attentionList || {};
+    const hit = state.attentionList[kind];
+    if (!force && hit && Date.now() - hit.at < 60000) {
+      mergeAttentionList(kind, hit.data);
       return;
     }
-    const data = await api('/web/api/attention');
-    state.attention = data;
-    state.attentionAt = Date.now();
-    if (!state.attentionTab) state.attentionTab = 'notmdb';
-    paintAttention();
+    const data = await api(`/web/api/attention?kind=${encodeURIComponent(kind)}`);
+    state.attentionList[kind] = { at: Date.now(), data };
+    mergeAttentionList(kind, data);
+  }
+
+  function mergeAttentionList(kind, data) {
+    if (!data) return;
+    if (data.Counts) state.attention.Counts = data.Counts;
+    if (kind === 'notmdb') state.attention.NoTmdb = data.NoTmdb || [];
+    else if (kind === 'failures') state.attention.Failures = data.Failures || [];
+    else if (kind === 'missing') state.attention.MissingArt = data.MissingArt || [];
+    else if (kind === 'dups') state.attention.Duplicates = data.Duplicates || [];
   }
 
   function paintAttention() {
@@ -1809,6 +1830,7 @@
       case 'attention-tab':
         state.attentionTab = el.dataset.tab || 'notmdb';
         paintAttention();
+        ensureAttentionList(state.attentionTab).then(paintAttention);
         break;
       case 'attention-refresh':
         await renderAttention(true);
