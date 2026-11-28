@@ -51,6 +51,11 @@ type Handler struct {
 	playbackDirectAt atomic.Bool
 	streamAuth       atomic.Bool
 
+	// 同一设备同一视频短时间内重复 PlaybackInfo 时复用会话 ID。
+	// PanSave 的副本分配按播放会话区分，每次都换 ID 会不停复制新文件。
+	playSessionMu sync.Mutex
+	playSessions  map[string]playSessionEntry
+
 	// 多人同播（PanSave 115 复制）运行时配置，面板可改，热生效。
 	sameMu      sync.RWMutex
 	sameMode    string   // auto / on / off

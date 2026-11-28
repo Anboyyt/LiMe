@@ -75,7 +75,9 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 
 	// 播放会话 ID 要同时出现在 PlaybackInfo 响应和 stream 地址里。
 	// Jellyfin 客户端和反代（PanSave）靠它区分「不同设备/不同播放」。
-	sessionID := store.MustRandomHex(16)
+	// 同一设备短时间内重进同一个视频要复用，否则 PanSave 每换一个会话
+	// 就分配一份新副本，快速退出再进会连续复制文件。
+	sessionID := h.playbackSessionID(h.requestDeviceID(r), itemID)
 	out := make([]dto.MediaSourceDto, 0, len(sources))
 	for _, s := range sources {
 		if wantSource != "" && s.ID == wantSource {
