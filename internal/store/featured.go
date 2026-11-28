@@ -13,9 +13,10 @@ func (d *DB) FeaturedItems(limit int) ([]*Item, error) {
 SELECT `+itemColumns+`
 FROM items i
 LEFT JOIN (
+  -- 只数 start 事件：pause/unpause/stop 也会入库，全算会把暂停次数当热度。
   SELECT item_id, COUNT(*) AS c
   FROM playback_history
-  WHERE created_at > ?
+  WHERE created_at > ? AND event = 'start'
   GROUP BY item_id
 ) h ON h.item_id = i.id
 WHERE i.type IN (?, ?)
