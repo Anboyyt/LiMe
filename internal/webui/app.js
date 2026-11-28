@@ -1200,6 +1200,26 @@
   }
 
   // ---------- 访问控制 ----------
+  // 手机上这块内容最多，默认整块收起，标题行只显示一行摘要。
+  function accessSummary(cfg) {
+    const parts = [cfg.Enabled ? '已启用' : '未启用'];
+    parts.push(cfg.Mode === 'blacklist' ? '黑名单' : '白名单');
+    const prov = cfg.Provinces || [];
+    if (prov.length === 0) {
+      parts.push('不限省份');
+    } else if (prov.length <= 3) {
+      parts.push(prov.join('、'));
+    } else {
+      parts.push(`${prov.slice(0, 2).join('、')} 等 ${prov.length} 个`);
+    }
+    return parts.join(' · ');
+  }
+
+  function provSummaryText() {
+    const n = document.querySelectorAll('.prov-chip.on').length;
+    return n ? `已选 ${n} 个` : '未选择';
+  }
+
   function renderAccessPanel(ac) {
     if (!ac) return '';
     const cfg = ac.Config || {};
@@ -1209,74 +1229,94 @@
     ).join('');
 
     const geo = ac.GeoReady
-      ? '<span class="badge ok">已加载</span>'
-      : `<span class="badge warn">未加载</span><span class="muted">缺 ${esc((ac.GeoMissing || []).join('、'))}</span>`;
+      ? '<span class="badge ok">已就绪</span>'
+      : `<span class="badge warn">未安装</span><span class="muted">缺 ${esc((ac.GeoMissing || []).join('、'))}</span>`;
     const dl = ac.Download || {};
     const dlText = dl.Running ? '<span class="muted">正在下载…</span>'
       : (dl.Error ? `<span class="err">${esc(dl.Error)}</span>` : '');
+    const provText = selected.size ? `已选 ${selected.size} 个` : '未选择';
 
-    return `<div class="panel">
-      <h3>访问控制</h3>
-      <p class="muted" style="margin-top:0">
-        按省份或 IP 限制谁能访问。只影响接口和播放地址，已经拿到 CDN 直链的会话不受影响。
-      </p>
-      <label class="ctl-row" style="margin-bottom:12px">
-        <input id="acEnabled" type="checkbox" ${cfg.Enabled ? 'checked' : ''}>
-        <span>启用访问限制</span>
-      </label>
+    return `<details class="panel ac-panel">
+      <summary class="ac-summary">
+        <span class="ac-title">访问控制</span>
+        <span class="ac-state">${esc(accessSummary(cfg))}</span>
+        <span class="ac-caret">▾</span>
+      </summary>
 
-      <div class="ctl-grid">
-        <label>模式
-          <select id="acMode">
-            <option value="whitelist"${cfg.Mode !== 'blacklist' ? ' selected' : ''}>白名单：只允许列表内</option>
-            <option value="blacklist"${cfg.Mode === 'blacklist' ? ' selected' : ''}>黑名单：拒绝列表内</option>
-          </select>
+      <div class="ac-inner">
+        <p class="muted ac-hint">按省份或 IP 限制谁能访问。只影响接口和播放地址，已拿到 CDN 直链的会话不受影响。</p>
+
+        <label class="ctl-row ac-enable">
+          <input id="acEnabled" type="checkbox" ${cfg.Enabled ? 'checked' : ''}>
+          <span>启用访问限制</span>
         </label>
-        <label>国家（逗号分隔）
-          <input id="acCountries" value="${esc((cfg.Countries || []).join(','))}" placeholder="中国">
-        </label>
-        <label>查不到归属地时
-          <select id="acUnknown">
-            <option value="allow"${cfg.UnknownPolicy !== 'deny' ? ' selected' : ''}>放行</option>
-            <option value="deny"${cfg.UnknownPolicy === 'deny' ? ' selected' : ''}>拒绝</option>
-          </select>
-        </label>
-      </div>
 
-      <div class="ctl-block">
-        <div class="ctl-label">省份 <span class="muted">留空表示不限省份</span></div>
-        <div class="prov-grid">${chips}</div>
-      </div>
+        <div class="ctl-grid">
+          <div class="ac-field">
+            <label>模式</label>
+            <select id="acMode">
+              <option value="whitelist"${cfg.Mode !== 'blacklist' ? ' selected' : ''}>白名单</option>
+              <option value="blacklist"${cfg.Mode === 'blacklist' ? ' selected' : ''}>黑名单</option>
+            </select>
+          </div>
+          <div class="ac-field">
+            <label>国家</label>
+            <input id="acCountries" value="${esc((cfg.Countries || []).join(','))}" placeholder="中国">
+          </div>
+          <div class="ac-field">
+            <label>查不到归属地</label>
+            <select id="acUnknown">
+              <option value="allow"${cfg.UnknownPolicy !== 'deny' ? ' selected' : ''}>放行</option>
+              <option value="deny"${cfg.UnknownPolicy === 'deny' ? ' selected' : ''}>拒绝</option>
+            </select>
+          </div>
+        </div>
 
-      <div class="ctl-grid">
-        <label>IP / CIDR 白名单<textarea id="acIPAllow" rows="3" placeholder="1.2.3.4&#10;10.0.0.0/8">${esc((cfg.IPAllow || []).join('\n'))}</textarea></label>
-        <label>IP / CIDR 黑名单<textarea id="acIPDeny" rows="3" placeholder="5.6.7.8">${esc((cfg.IPDeny || []).join('\n'))}</textarea></label>
-      </div>
+        <details class="ac-fold">
+          <summary>省份 <span class="muted" id="acProvSummary">${provText}</span></summary>
+          <div class="prov-grid">${chips}</div>
+        </details>
 
-      <div class="row" style="margin:4px 0 12px">
-        <label class="ctl-row"><input id="acLAN" type="checkbox" ${cfg.AllowLAN ? 'checked' : ''}><span>内网放行</span></label>
-        <label class="ctl-row"><input id="acAdmins" type="checkbox" ${cfg.AllowAdmins ? 'checked' : ''}><span>管理员不受限</span></label>
-      </div>
+        <details class="ac-fold">
+          <summary>IP / CIDR 名单</summary>
+          <div class="ac-field">
+            <label>白名单</label>
+            <textarea id="acIPAllow" rows="2" placeholder="1.2.3.4 / 10.0.0.0/8">${esc((cfg.IPAllow || []).join('\n'))}</textarea>
+          </div>
+          <div class="ac-field">
+            <label>黑名单</label>
+            <textarea id="acIPDeny" rows="2" placeholder="5.6.7.8">${esc((cfg.IPDeny || []).join('\n'))}</textarea>
+          </div>
+        </details>
 
-      <div class="ac-status">
-        <div><span class="muted">当前 IP</span> <code id="acClientIP">${esc(ac.ClientIP || '—')}</code>
-          <span class="muted">归属</span> <span>${esc(ac.ClientRegion || '未知')}</span></div>
-        <div id="acVerdict">按当前规则：${ac.ClientAllow
-          ? `<span class="badge ok">放行</span>`
-          : `<span class="badge warn">拒绝</span>`} <span class="muted">${esc(ac.ClientReason || '')}</span></div>
-      </div>
+        <div class="ac-checks">
+          <label class="ctl-row"><input id="acLAN" type="checkbox" ${cfg.AllowLAN ? 'checked' : ''}><span>内网放行</span></label>
+          <label class="ctl-row"><input id="acAdmins" type="checkbox" ${cfg.AllowAdmins ? 'checked' : ''}><span>管理员不受限</span></label>
+        </div>
 
-      <div class="row" style="margin-bottom:10px">
-        <button data-action="save-ac" class="primary">保存规则</button>
-        <button data-action="allow-my-ip">把当前 IP 加入白名单</button>
-      </div>
+        <div class="ac-status">
+          <div class="ac-line">
+            <span class="muted">当前</span>
+            <code id="acClientIP">${esc(ac.ClientIP || '—')}</code>
+            <span class="muted">${esc(ac.ClientRegion || '未知归属地')}</span>
+          </div>
+          <div class="ac-line" id="acVerdict">
+            ${ac.ClientAllow ? '<span class="badge ok">放行</span>' : '<span class="badge warn">拒绝</span>'}
+            <span class="muted">${esc(ac.ClientReason || '')}</span>
+          </div>
+        </div>
 
-      <div class="ac-geo">
-        <span class="muted">地理库</span> ${geo} ${dlText}
-        <span class="muted">· ${esc(ac.GeoDir || '')}</span>
-        <button data-action="download-geoip" style="margin-left:8px">下载 / 更新</button>
+        <div class="ac-actions">
+          <button data-action="save-ac" class="primary">保存</button>
+          <button data-action="allow-my-ip">当前 IP 加白</button>
+          <button data-action="download-geoip">更新地理库</button>
+        </div>
+
+        <div class="ac-geo">
+          <span class="muted">地理库</span> ${geo} ${dlText}
+        </div>
       </div>
-    </div>`;
+    </details>`;
   }
 
   function readAccessForm() {
@@ -2430,6 +2470,8 @@
         const saved = await api('/web/api/access-control',
           { method: 'PUT', body: JSON.stringify(cfg) });
         renderVerdict(saved);
+        const stateEl = document.querySelector('.ac-state');
+        if (stateEl) stateEl.textContent = accessSummary(saved.Config || {});
         toast('访问规则已保存');
         break;
       }
@@ -2678,6 +2720,8 @@
     if (chip) {
       e.preventDefault();
       chip.classList.toggle('on');
+      const hint = $('#acProvSummary');
+      if (hint) hint.textContent = provSummaryText();
       return;
     }
     const el = e.target.closest('[data-action]');
