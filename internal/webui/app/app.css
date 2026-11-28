@@ -1,6 +1,6 @@
 :root {
   /* 页面左右留白：所有区块共用，保证标题和卡片严格对齐 */
-  --gutter: 28px;
+  --gutter: 40px;
   /* 海报卡宽度；高度按 2:3 计算，供滚动箭头对齐海报中心 */
   --card-w: 168px;
   /* 暗色主题：取色自 LiMe logo（青柠绿 + 墨绿底） */
@@ -398,8 +398,8 @@ input:focus {
   top: calc(var(--card-w) * 1.5 / 2);
   transform: translateY(-50%);
   z-index: 3;
-  width: 34px;
-  height: 34px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 88%, transparent);
@@ -409,15 +409,15 @@ input:focus {
   display: grid;
   place-items: center;
   cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
+  opacity: .55;          /* 常驻半透明，鼠标移入这一行再变亮 */
+  pointer-events: auto;
   backdrop-filter: blur(8px);
   transition: opacity .18s ease, scale .18s ease, background .18s ease;
   box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
 }
 /* 圆心落在左右留白线上，整个圆都在卡片区域之外，不遮挡海报 */
-.rail-arrow.prev { left: calc(var(--gutter) / 2 - 17px); }
-.rail-arrow.next { right: calc(var(--gutter) / 2 - 17px); }
+.rail-arrow.prev { left: calc(var(--gutter) / 2 - 18px); }
+.rail-arrow.next { right: calc(var(--gutter) / 2 - 18px); }
 .rail:hover .rail-arrow,
 .rail:focus-within .rail-arrow {
   opacity: 1;
@@ -821,7 +821,7 @@ input:focus {
 
 /* ---------- 手机适配（媒体界面） ---------- */
 @media (max-width: 720px) {
-  :root { --gutter: 16px; --card-w: 136px; }
+  :root { --gutter: 20px; --card-w: 136px; }
   html { scroll-padding-top: 16px; }
 
   /* 顶栏拆成「品牌 + 操作」和「搜索」两行，避免窄屏挤成三行。
