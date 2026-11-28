@@ -329,13 +329,18 @@
   // ---------- 首页 ----------
   async function renderHome(seq) {
     const uid = state.user.Id;
-    const [hero, resume, latest] = await Promise.all([
-      api('/Items?Recursive=true&IncludeItemTypes=Movie,Series&SortBy=DateCreated&SortOrder=Descending&Limit=8'),
-      api(`/Users/${uid}/Items/Resume?Limit=12`),
-      api('/Items?Recursive=true&IncludeItemTypes=Movie,Series&SortBy=DateCreated&SortOrder=Descending&Limit=12'),
-    ]);
-    if (seq !== undefined && seq !== routeSeq) return;
     if (!state.views.length) await loadViews();
+    if (seq !== undefined && seq !== routeSeq) return;
+
+    // 每个媒体库各拉一屏最新入库；某个库失败不影响整页。
+    const libRequests = state.views.map((v) =>
+      api(`/Items/Latest?ParentId=${encodeURIComponent(v.Id)}&Limit=12`).catch(() => ({ Items: [] })));
+    const [hero, resume, latest, ...libLatest] = await Promise.all([
+      api('/web/api/featured?limit=8').catch(() => ({ Items: [] })),
+      api(`/Users/${uid}/Items/Resume?Limit=12`).catch(() => ({ Items: [] })),
+      api('/Items?Recursive=true&IncludeItemTypes=Movie,Series&SortBy=DateCreated&SortOrder=Descending&Limit=12').catch(() => ({ Items: [] })),
+      ...libRequests,
+    ]);
     if (seq !== undefined && seq !== routeSeq) return;
 
     const heroItems = (hero.Items || []).filter((i) => i.BackdropImageTags?.length || i.ImageTags?.Primary);
@@ -373,20 +378,55 @@
     const latestItems = latest.Items || [];
     if (latestItems.length) html += rail('最近添加', latestItems);
 
+    // 每个媒体库单独一行「最新入库」，数据已经按库拉好。
+    state.views.forEach((v, i) => {
+      const items = (libLatest[i] && libLatest[i].Items) || [];
+      if (!items.length) return;
+      html += rail(`${v.Name} · 最新`, items, card, {
+        href: `#/library/${encodeURIComponent(v.Id)}`,
+      });
+    });
+
     if (!html) html = '<div class="empty">媒体库还是空的</div>';
     if (seq !== undefined && seq !== routeSeq) return;
     view.innerHTML = html;
     view.querySelectorAll('[data-hero-play]').forEach((b) => {
       b.onclick = () => playById(b.dataset.heroPlay);
     });
+    view.querySelectorAll('.rail-wrap').forEach(wireRail);
     window.scrollTo({ top: 0 });
   }
 
-  function rail(title, items, cardFn = card) {
+  function rail(title, items, cardFn = card, opts = {}) {
+    const more = opts.href
+      ? `<a class="rail-more" href="${esc(opts.href)}">查看全部 <span aria-hidden="true">→</span></a>`
+      : '';
     return `<section class="rail">
-      <div class="rail-head"><h2>${esc(title)}</h2><span class="rail-count">${items.length}</span></div>
-      <div class="rail-scroll">${items.map(cardFn).join('')}</div>
+      <div class="rail-head"><h2>${esc(title)}</h2>${more}<span class="rail-count">${items.length}</span></div>
+      <div class="rail-wrap">
+        <button class="rail-arrow prev" type="button" aria-label="向左滚动">‹</button>
+        <div class="rail-scroll">${items.map(cardFn).join('')}</div>
+        <button class="rail-arrow next" type="button" aria-label="向右滚动">›</button>
+      </div>
     </section>`;
+  }
+
+  // 横向列表的左右按钮：滚到边界时禁用对应方向。
+  function wireRail(wrap) {
+    const scroller = wrap.querySelector('.rail-scroll');
+    const prev = wrap.querySelector('.rail-arrow.prev');
+    const next = wrap.querySelector('.rail-arrow.next');
+    if (!scroller || !prev || !next) return;
+    const update = () => {
+      const max = scroller.scrollWidth - scroller.clientWidth - 2;
+      prev.disabled = scroller.scrollLeft <= 2;
+      next.disabled = scroller.scrollLeft >= max;
+    };
+    prev.onclick = () => scroller.scrollBy({ left: -scroller.clientWidth * 0.8, behavior: 'smooth' });
+    next.onclick = () => scroller.scrollBy({ left: scroller.clientWidth * 0.8, behavior: 'smooth' });
+    scroller.addEventListener('scroll', update, { passive: true });
+    window.addEventListener('resize', update, { passive: true });
+    update();
   }
 
   // 首页媒体库封面区：16:9 网格，名称在封面下方。

@@ -1,4 +1,6 @@
 :root {
+  /* 页面左右留白：所有区块共用，保证标题和卡片严格对齐 */
+  --gutter: 28px;
   /* 暗色主题：取色自 LiMe logo（青柠绿 + 墨绿底） */
   --bg: #070c09;
   --bg-soft: #0c1310;
@@ -225,7 +227,7 @@ input:focus {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 14px 28px;
+  padding: 14px var(--gutter);
   background: var(--glass-bg-strong);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
@@ -342,8 +344,23 @@ input:focus {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 0 28px;
+  padding: 0 var(--gutter);
   margin-bottom: 14px;
+}
+.rail-more {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.rail-more:hover {
+  color: var(--accent);
+  border-color: var(--line);
+  background: var(--panel);
 }
 .rail-head h2 {
   font-size: 20px;
@@ -360,16 +377,57 @@ input:focus {
   background: var(--accent);
 }
 .rail-count { color: var(--muted); font-size: 12px; }
+.rail-wrap { position: relative; }
 .rail-scroll {
   display: flex;
   gap: 16px;
   overflow-x: auto;
-  padding: 6px 28px 18px;
+  padding: 6px var(--gutter) 18px;
   scroll-snap-type: x proximity;
+  scroll-padding-inline: var(--gutter);
+  scrollbar-width: none;            /* Firefox：隐藏原生滚动条，靠左右按钮 */
 }
-.rail-scroll::-webkit-scrollbar { height: 8px; }
-.rail-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
-.rail-scroll::-webkit-scrollbar-track { background: transparent; }
+.rail-scroll::-webkit-scrollbar { display: none; }
+
+/* 左右滚动按钮：默认隐形，鼠标移到这一行才出现 */
+.rail-arrow {
+  position: absolute;
+  top: calc(50% - 22px);
+  z-index: 3;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  transition: opacity .18s ease, transform .18s ease, background .18s ease;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+}
+.rail-arrow.prev { left: calc(var(--gutter) - 44px); }
+.rail-arrow.next { right: calc(var(--gutter) - 44px); }
+.rail:hover .rail-arrow,
+.rail:focus-within .rail-arrow {
+  opacity: 1;
+  pointer-events: auto;
+}
+.rail-arrow:hover:not(:disabled) {
+  background: var(--accent);
+  color: #06110a;
+  border-color: transparent;
+  transform: scale(1.06);
+}
+.rail-arrow:disabled { opacity: 0 !important; pointer-events: none; }
+@media (hover: none) {
+  .rail-arrow { display: none; }
+}
 
 /* ---------- 首页媒体库（Emby 风格封面卡片） ---------- */
 .library-shelf { margin: 22px 0 8px; }
@@ -377,7 +435,7 @@ input:focus {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 18px;
-  padding: 0 28px;
+  padding: 0 var(--gutter);
 }
 .library-tile { display: block; min-width: 0; }
 .library-cover {
@@ -437,9 +495,13 @@ input:focus {
   min-width: 0;
   scroll-snap-align: start;
   display: block;
-  transition: transform .18s ease;
+  transition: transform .2s ease;
 }
-.card:hover { transform: translateY(-4px); }
+.card:hover { transform: translateY(-4px) scale(1.02); }
+.card:hover .poster {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--poster-border));
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .45), 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+}
 .poster {
   position: relative;
   width: 100%;
@@ -523,7 +585,7 @@ input:focus {
 .progress.no-progress { visibility: hidden; }
 
 /* ---------- 网格页 ---------- */
-.page { padding: 30px 28px 70px; }
+.page { padding: 30px var(--gutter) 70px; }
 .page-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
 .page-head h1 { font-size: 26px; margin: 0; }
 .grid {
@@ -615,7 +677,7 @@ input:focus {
 .badge.ok { color: var(--ok); border-color: rgba(52, 211, 153, .35); }
 .badge.warn { color: var(--warn); border-color: rgba(251, 191, 36, .35); }
 
-.section { padding: 30px 28px; }
+.section { padding: 30px var(--gutter); }
 .section h2 {
   font-size: 20px;
   margin: 0 0 16px;
@@ -754,6 +816,7 @@ input:focus {
 
 /* ---------- 手机适配（媒体界面） ---------- */
 @media (max-width: 720px) {
+  :root { --gutter: 16px; }
   html { scroll-padding-top: 16px; }
 
   /* 顶栏拆成「品牌 + 操作」和「搜索」两行，避免窄屏挤成三行。
@@ -977,7 +1040,7 @@ input:focus {
 .skeleton-rail {
   display: flex;
   gap: 16px;
-  padding: 12px 28px 26px;
+  padding: 12px var(--gutter) 26px;
   overflow: hidden;
 }
 .skeleton-card { flex: 0 0 168px; }

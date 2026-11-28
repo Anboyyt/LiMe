@@ -45,6 +45,7 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 		http.Redirect(w, r, "/web/", http.StatusFound)
 	})
 	mux.HandleFunc("GET /web/api/stats", h.webStatsHandler)
+	mux.HandleFunc("GET /web/api/featured", h.webFeatured)
 	mux.HandleFunc("GET /web/api/logs", h.webLogs)
 	mux.HandleFunc("GET /web/api/logs/export", h.webLogsExport)
 	mux.HandleFunc("POST /web/api/segments/scan", h.webSegmentsScan)
