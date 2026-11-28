@@ -75,6 +75,7 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /web/api/access-control", h.webAccessControl)
 	mux.HandleFunc("PUT /web/api/access-control", h.webAccessControl)
 	mux.HandleFunc("POST /web/api/access-control/geoip", h.webGeoIPDownload)
+	mux.HandleFunc("POST /web/api/same-stream/probe", h.webSameStreamProbe)
 	mux.HandleFunc("GET /web/api/settings", h.webSettings)
 	mux.HandleFunc("PUT /web/api/settings", h.webSettings)
 	mux.HandleFunc("POST /web/api/backup", h.webBackup)

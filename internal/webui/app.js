@@ -1621,8 +1621,8 @@
       <div class="panel" data-sys="playback"><h3>多人同播（115 复制）</h3>
         <div class="kv">
           <div><b>模式</b><span>${esc(sameStreamLabel(settings.SameStreamMode))}</span></div>
-          <div><b>反代入口</b><span>${esc(settings.SameStreamEntry || '未配置')}</span></div>
-          <div><b>反代域名</b><span>${esc(settings.SameStreamHosts || '未配置')}</span></div>
+          <div><b>PanSave 反代</b><span>${esc(settings.SameStreamEntry || '未配置（复制不生效）')}</span></div>
+          <div><b>对外域名</b><span>${esc(settings.SameStreamHosts || '未配置（仅内网可用）')}</span></div>
         </div>
         <div class="row" style="margin-top:12px">
           <select id="sameStreamMode">
@@ -1630,13 +1630,23 @@
             <option value="on" ${settings.SameStreamMode === 'on' ? 'selected' : ''}>强制开启</option>
             <option value="off" ${settings.SameStreamMode === 'off' ? 'selected' : ''}>关闭</option>
           </select>
-          <input id="sameStreamEntries" placeholder="反代入口，如 http://192.168.1.10:1886" style="min-width:250px"
+          <input id="sameStreamEntries" placeholder="PanSave 反代地址，如 http://192.168.1.10:1886" style="min-width:250px"
             value="${esc(settings.SameStreamEntries || '')}">
-          <input id="sameStreamHosts" placeholder="反代域名，如 ps.example.com" style="min-width:210px"
+          <button data-action="test-same-entry">测试</button>
+          <input id="sameStreamHosts" placeholder="对外域名（外网才需要），如 ps.example.com" style="min-width:210px"
             value="${esc(settings.SameStreamHosts || '')}">
           <button class="primary" data-action="save-settings">保存同播</button>
         </div>
-        <p class="muted" style="margin:8px 0 0">同一视频第二个设备播放时，由 PanSave 分配网盘副本，避开 115 同一直链并发 403。自动模式会在请求来自反代（内网端口或下面勾选的域名）时启用；第二台首次起播要等副本创建 1~2 秒。</p>
+        <p class="muted" style="margin:10px 0 0;line-height:1.6">
+          <b>复制不是在 LiMe 里做的。</b>LiMe 只负责把 <code>DirectStreamUrl</code> 指向 PanSave 的
+          Emby 反代（如 1886/1888），由 PanSave 按设备分配网盘副本。所以这里要填
+          <b>PanSave 的反代地址</b>，填成 LiMe 自己的 886/888 不会生效。
+        </p>
+        <p class="muted" style="margin:6px 0 0;line-height:1.6">
+          · 留空 = 关闭复制：第二台设备播同一文件会因 115 并发限制返回 403<br>
+          · 只有外网客户端才需要填「对外域名」，内网直接走反代地址<br>
+          · 第二台首次起播要等副本创建，约 1~2 秒
+        </p>
         <p class="muted" style="margin:6px 0 0">最近检测到 —— 内网：${esc((settings.SameStreamSeenPrivate || []).join('、') || '无')}；公网：${esc((settings.SameStreamSeenPublic || []).join('、') || '无')}</p>
         <p class="muted" style="margin:6px 0 0">环境变量 ${esc(settings.SameStreamEnvEntry || 'LIME_INTERNAL_URL')} / ${esc((settings.SameStreamEnvHosts || []).join(',') || 'LIME_PROXY_HOSTS')} 已设置时优先于这里。</p>
       </div>
@@ -2055,6 +2065,18 @@
         await retryAttention(ids);
         break;
       }
+      case 'test-same-entry': {
+        const url = ($('#sameStreamEntries').value || '').trim();
+        if (!url) throw new Error('先填 PanSave 反代地址');
+        const r = await api('/web/api/same-stream/probe',
+          { method: 'POST', body: JSON.stringify({ Url: url }) });
+        if (r.Ok) {
+          toast(`反代可达（HTTP ${r.Status}）`);
+        } else {
+          toast(`反代不可达：${r.Error || ('HTTP ' + r.Status)}`, true);
+        }
+        break;
+      }
       case 'save-settings': {
         // 同一套保存逻辑被多个页面复用，读不到的字段就跳过。
         const val = (sel) => {
@@ -2095,9 +2117,24 @@
         }
         const sameModeEl = $('#sameStreamMode');
         if (sameModeEl) {
-          body.SameStreamMode = sameModeEl.value;
-          body.SameStreamEntries = ($('#sameStreamEntries').value || '').trim();
+          const mode = sameModeEl.value;
+          const entry = ($('#sameStreamEntries').value || '').trim();
+          body.SameStreamMode = mode;
+          body.SameStreamEntries = entry;
           body.SameStreamHosts = ($('#sameStreamHosts').value || '').trim();
+
+          // 填错不会报错、只会静默不复制，所以保存前拦一下。
+          if (mode !== 'off') {
+            if (!entry) {
+              if (!confirm('没有填 PanSave 反代地址，保存后复制同播不会生效。\n\n第二台设备播放同一文件会因 115 并发限制返回 403。仍然保存？')) break;
+            } else {
+              const m = entry.match(/^https?:\/\/[^/]*:(\d+)/);
+              const myPort = String(location.port || (location.protocol === 'https:' ? '443' : '80'));
+              if (m && m[1] === myPort) {
+                if (!confirm(`反代地址的端口是 ${m[1]}，和当前面板端口一样——这是 LiMe 自己的端口，不是 PanSave 的反代。\n\n继续保存会让复制同播静默失效。仍然保存？`)) break;
+              }
+            }
+          }
         }
         const probeWarmupEl = $('#probeWarmup');
         if (probeWarmupEl) {
