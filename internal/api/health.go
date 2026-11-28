@@ -1,10 +1,15 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"html"
+	"net/http"
 	"runtime"
+	"sync"
 	"time"
+
+	"lime/internal/version"
 )
 
 type healthMetrics struct {
@@ -25,6 +30,58 @@ func (h *Handler) healthMetrics() healthMetrics {
 		m.DBLatencyMs = time.Since(start).Milliseconds()
 	}
 	return m
+}
+
+// memCache 缓存 5 秒内的内存快照。ReadMemStats 会短暂 STW，
+// healthcheck 每 30 秒一次没必要每次都读。
+var memCache struct {
+	sync.Mutex
+	at         time.Time
+	alloc, sys uint64
+}
+
+func cachedMem() (alloc, sys uint64) {
+	memCache.Lock()
+	defer memCache.Unlock()
+	if time.Since(memCache.at) < 5*time.Second {
+		return memCache.alloc, memCache.sys
+	}
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	memCache.alloc, memCache.sys, memCache.at = m.Alloc, m.Sys, time.Now()
+	return memCache.alloc, memCache.sys
+}
+
+// deepHealth 给容器 healthcheck 和排查用：确认数据库能应答，同时带一份
+// 运行时快照。整体 2 秒上限，数据库卡死时直接判 degraded，不会把容器挂着。
+func (h *Handler) deepHealth(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	dbOK := true
+	var one int
+	if err := h.db.QueryRowContext(ctx, `SELECT 1`).Scan(&one); err != nil {
+		dbOK = false
+	}
+	latency := time.Since(start).Milliseconds()
+
+	alloc, sys := cachedMem()
+	status := "ok"
+	code := http.StatusOK
+	if !dbOK || latency > 2000 {
+		status = "degraded"
+		code = http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, map[string]any{
+		"status":         status,
+		"name":           "LiMe",
+		"version":        version.Version,
+		"uptime_seconds": int(time.Since(h.startedAt).Seconds()),
+		"db":             map[string]any{"ok": dbOK, "latency_ms": latency},
+		"goroutines":     runtime.NumGoroutine(),
+		"memory":         map[string]any{"alloc_mb": alloc >> 20, "sys_mb": sys >> 20},
+	})
 }
 
 // runHealthMonitor 每 5 分钟检查磁盘和数据库延迟，异常时推 Telegram。

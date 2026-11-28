@@ -140,6 +140,11 @@ docker run -d --name lime \
 
 完整列表见 GitHub 仓库 README。
 
+## 健康检查
+
+- `GET /health`：进程级，返回版本
+- `GET /health/deep`：查一次数据库，带 uptime、goroutine、内存和数据库延迟；数据库卡住时返回 503
+
 ## 镜像
 
 - 平台：`linux/amd64`、`linux/arm64`

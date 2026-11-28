@@ -198,7 +198,7 @@ func withLogging(log *slog.Logger, verbose bool, next http.Handler) http.Handler
 		next.ServeHTTP(sw, r)
 
 		path := r.URL.Path
-		quiet := path == "/health" || strings.HasPrefix(path, "/app/") ||
+		quiet := strings.HasPrefix(path, "/health") || strings.HasPrefix(path, "/app/") ||
 			strings.HasPrefix(path, "/web/style.css") || strings.HasPrefix(path, "/web/app.js")
 		// 串流请求量大，只在出错时记录，避免正常播放把日志刷满。
 		streamErr := isStreamPath(path) && sw.status >= http.StatusBadRequest

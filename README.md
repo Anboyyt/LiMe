@@ -320,6 +320,24 @@ LIME_VERSION=$(git describe --tags --always --dirty) \
   需要把该目录加进媒体库路径，或把库路径改成上一级
 - 扫描进度分母改用库内已有片源数，不再为了显示百分比先遍历一遍整个库
 
+## 健康检查
+
+- `GET /health`：进程级，返回版本，只要 HTTP 端口活着就 200
+- `GET /health/deep`：查一次数据库（`SELECT 1`，2 秒上限），数据库卡住时返回 503；
+  同时带 uptime、goroutine 数、内存（alloc/sys，5 秒内复用缓存，不重复触发 STW）
+  和数据库延迟，排查时直接看这一条
+
+容器 healthcheck 建议用 `/health/deep`：
+
+```yaml
+healthcheck:
+  test: ["CMD", "wget", "-qO-", "http://127.0.0.1:886/health/deep"]
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 120s   # 大库首次启动留足时间
+```
+
 ## 运维面板
 
 `/web/` 是一个内嵌的轻量运维页（纯静态，无前端框架），**仅管理员可进**：

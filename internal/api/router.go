@@ -36,6 +36,7 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 
 	// 健康检查
 	mux.HandleFunc("GET /health", h.health)
+	mux.HandleFunc("GET /health/deep", h.deepHealth)
 
 	// 运维面板：内嵌静态页 + 几个只读接口。
 	// 入口 HTML 仍然 no-cache；带 ?v= 的 JS/CSS 可以长缓存，靠版本号换新。
