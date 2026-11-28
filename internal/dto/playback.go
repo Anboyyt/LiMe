@@ -3,8 +3,12 @@ package dto
 // PlaybackInfoResponse 对应 Jellyfin 的 PlaybackInfoDto。
 // 我们不转码，因此永远只返回可直连的 MediaSource。
 type PlaybackInfoResponse struct {
-	MediaSources  []MediaSourceDto `json:"MediaSources"`
-	PlaySessionId string           `json:"PlaySessionId"`
+	MediaSources []MediaSourceDto `json:"MediaSources"`
+	// StartPositionTicks 是该用户在这一集/电影上的续播位置。部分客户端
+	// （VidHub）切换剧集时不重置播放器位置，会导致进度条停在上集的时间；
+	// 明确给出 0 或续播点，客户端才有机会正确初始化。
+	StartPositionTicks int64  `json:"StartPositionTicks"`
+	PlaySessionId      string `json:"PlaySessionId"`
 }
 
 // PlaybackProgressInfo 是客户端上报播放状态时的请求体（字段可缺省）。

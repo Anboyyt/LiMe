@@ -128,9 +128,20 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 		h.warmStreamCache(r, preferred, h.streamLocation(r, preferred.URL))
 	}
 
+	// 续播位置：已看完的集返回 0，未看完返回上次的记录。
+	// VidHub 切集时会沿用播放器当前位置，给出明确的起点能避免它
+	// 把上一集的进度带到下一集（表现为进度条从几分钟处开始）。
+	var startTicks int64
+	if states, err := h.db.Playstates(user.ID, []string{itemID}); err == nil {
+		if ps, ok := states[itemID]; ok && !ps.Played && ps.PositionTicks > 0 {
+			startTicks = ps.PositionTicks
+		}
+	}
+
 	resp := dto.PlaybackInfoResponse{
-		MediaSources:  out,
-		PlaySessionId: sessionID,
+		MediaSources:       out,
+		StartPositionTicks: startTicks,
+		PlaySessionId:      sessionID,
 	}
 	// 先序列化再写：客户端起播前通常连发几次 PlaybackInfo，外网每次
 	// 都要过 Cloudflare（1~2 秒），缓存 30 秒能省掉重复往返。
