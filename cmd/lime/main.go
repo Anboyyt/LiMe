@@ -288,19 +288,25 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 启动后异步扫描，不阻塞 HTTP 服务
+	// 启动后异步扫描，不阻塞 HTTP 服务。
+	// 扫描结束之后再启动实时监控：monitor 的启动对账会大批量写片源表，
+	// 和扫描并发时会互相抢 SQLite 写锁，扫描的每个批次都会 database is locked
+	// 然后整轮变成 0 条（Art-Lime 上实测 2272 条全失败）。
 	if len(libs) > 0 && cfg.ScanOnStart {
 		go func() {
 			start := time.Now()
 			count, err := scanner.ScanAll()
 			if err != nil {
 				logger.Error("initial scan failed", "err", err)
-				return
+			} else {
+				logger.Info("initial scan done", "strm", count, "dur", time.Since(start).String())
 			}
-			logger.Info("initial scan done", "strm", count, "dur", time.Since(start).String())
+			// 扫描失败也要开监控，否则整个实时功能都没了。
+			go monitor.Run(ctx)
 		}()
 	} else if len(libs) > 0 {
 		logger.Info("startup scan disabled; POST /Library/Refresh to scan manually")
+		go monitor.Run(ctx)
 	}
 
 	// 周期性重扫
@@ -331,9 +337,7 @@ func main() {
 	// 实时监控媒体库（Emby 的实时监控行为）：PanSave 写入新 .strm 后
 	// 不用等定时扫描，立刻增量解析；解析完顺手补刮削。
 	// 开关在面板「系统 → 实时监控」，运行中也能即时启停。
-	if len(libs) > 0 {
-		go monitor.Run(ctx)
-	}
+	// 启动时机在上面和首扫绑在一起，这里不再重复启动。
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
