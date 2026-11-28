@@ -28,6 +28,8 @@ type webStats struct {
 	DiskTotalBytes uint64         `json:"DiskTotalBytes"`
 	DBLatencyMs    int64          `json:"DBLatencyMs"`
 	Goroutines     int            `json:"Goroutines"`
+	MemAllocBytes  uint64         `json:"MemAllocBytes"`
+	MemSysBytes    uint64         `json:"MemSysBytes"`
 	Stats          *store.Stats   `json:"Stats"`
 }
 
@@ -112,6 +114,7 @@ func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	health := h.healthMetrics()
+	alloc, sys := cachedMem()
 	writeJSON(w, http.StatusOK, webStats{
 		ServerName:     h.cfg.ServerName,
 		Version:        h.cfg.Version,
@@ -127,6 +130,8 @@ func (h *Handler) webStatsHandler(w http.ResponseWriter, r *http.Request) {
 		DiskTotalBytes: health.DiskTotalBytes,
 		DBLatencyMs:    health.DBLatencyMs,
 		Goroutines:     health.Goroutines,
+		MemAllocBytes:  alloc,
+		MemSysBytes:    sys,
 		Stats:          stats,
 	})
 }

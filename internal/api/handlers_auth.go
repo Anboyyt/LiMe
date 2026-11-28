@@ -80,9 +80,20 @@ func (h *Handler) authenticateByName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user, err := h.db.GetUserByName(username)
-	if err != nil || !store.VerifyPassword(user.PasswordHash, password) {
+	if err != nil {
+		// 用户不存在：没有 userID 可记，只留用户名。
 		h.loginLimiter.fail(limitKeys)
-		h.log.Warn("login failed", "user", username, "ip", clientIP(r))
+		h.log.Warn("login failed: unknown user", "user", username, "ip", clientIP(r))
+		h.recordLogin(r, username, "", false, "user not found")
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": "Invalid username or password",
+		})
+		return
+	}
+	if !store.VerifyPassword(user.PasswordHash, password) {
+		h.loginLimiter.fail(limitKeys)
+		h.log.Warn("login failed: bad password", "user", username, "ip", clientIP(r))
+		h.recordLogin(r, username, user.ID, false, "wrong password")
 		writeJSON(w, http.StatusUnauthorized, map[string]any{
 			"error": "Invalid username or password",
 		})
@@ -91,6 +102,7 @@ func (h *Handler) authenticateByName(w http.ResponseWriter, r *http.Request) {
 	if user.IsDisabled {
 		h.loginLimiter.fail(limitKeys)
 		h.log.Warn("login disabled user", "user", username, "ip", clientIP(r))
+		h.recordLogin(r, username, user.ID, false, "disabled")
 		writeJSON(w, http.StatusUnauthorized, map[string]any{
 			"error": "User is disabled",
 		})
@@ -120,6 +132,7 @@ func (h *Handler) authenticateByName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.db.TouchLogin(user.ID)
+	h.recordLogin(r, user.Name, user.ID, true, "")
 
 	sessionID := store.MustRandomHex(16)
 	item := &dto.AuthenticationResult{

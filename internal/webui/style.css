@@ -1181,3 +1181,118 @@ tbody tr:hover td { background: color-mix(in srgb, var(--accent) 6%, var(--panel
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- 概览 ---------- */
+.card-sub { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.card-link { display: block; color: inherit; text-decoration: none; }
+.card-link:hover { border-color: var(--accent); }
+.card .v.warn { color: var(--warn, #e0a020); }
+
+.play-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.play-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.play-title {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.play-sub { font-size: 11px; margin-top: 2px; }
+.play-progress { min-width: 0; }
+.play-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--panel2);
+  overflow: hidden;
+}
+.play-bar i { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+.play-time { font-size: 11px; margin-top: 4px; }
+
+.health-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: -4px 0 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 可折叠面板（媒体库明细） */
+.fold-panel { padding: 0; }
+.fold-panel > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 14px;
+  font-weight: 600;
+}
+.fold-panel > summary::-webkit-details-marker { display: none; }
+.fold-panel > summary::before { content: "▸"; font-size: 10px; color: var(--muted); }
+.fold-panel[open] > summary::before { content: "▾"; }
+.fold-panel[open] > summary { border-bottom: 1px solid var(--line); }
+.fold-panel > table { margin: 0 12px 12px; width: calc(100% - 24px); }
+
+@media (max-width: 520px) {
+  .play-row { grid-template-columns: 1fr auto; }
+  .play-progress { grid-column: 1 / -1; order: 3; }
+  .health-line { font-size: 11px; gap: 4px 12px; }
+}
+
+/* ---------- 用户权限预设 / 播放时段 / 登录记录 ---------- */
+.tpl-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+.tpl-row button { padding: 5px 12px; font-size: 12px; }
+
+.ctl-sep {
+  margin: 16px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.week-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+.wk-chip {
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.wk-chip:hover { border-color: var(--accent); color: var(--fg); }
+.wk-chip.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.login-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 55vh;
+  overflow: auto;
+  margin: 10px 0;
+}
+.login-list .device-row { align-items: flex-start; }

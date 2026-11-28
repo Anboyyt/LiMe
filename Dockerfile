@@ -19,6 +19,18 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+
+# 静态资源带 immutable 一年缓存，`?v=` 不换浏览器就一直用旧文件。
+# 构建时把版本号注进去，每次发版 URL 自动变化，避免改了 CSS/JS 不生效。
+RUN sed -i \
+      -e "s/app\.js?v=[0-9A-Za-z._-]*/app.js?v=${LIME_VERSION}/g" \
+      -e "s/style\.css?v=[0-9A-Za-z._-]*/style.css?v=${LIME_VERSION}/g" \
+      internal/webui/index.html \
+ && sed -i \
+      -e "s/app\.js?v=[0-9A-Za-z._-]*/app.js?v=${LIME_VERSION}/g" \
+      -e "s/app\.css?v=[0-9A-Za-z._-]*/app.css?v=${LIME_VERSION}/g" \
+      internal/webui/app/index.html
+
 RUN go build -trimpath -ldflags="-s -w -X lime/internal/version.Version=${LIME_VERSION}" -o /out/lime ./cmd/lime
 
 # ---- runtime ----

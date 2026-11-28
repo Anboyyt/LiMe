@@ -26,13 +26,18 @@ type User struct {
 	MaxActiveSessions int // 0 = 不限制
 	AllowDownload     bool
 	AllowPlayback     bool
-	CreatedAt         time.Time
-	LastLoginAt       *time.Time
+	// PlayWindowRaw 是允许播放时段的 JSON，空表示不限制。
+	PlayWindowRaw string
+	CreatedAt     time.Time
+	LastLoginAt   *time.Time
 }
+
+// PlayWindow 返回解析后的时段。
+func (u *User) PlayWindow() PlayWindow { return ParsePlayWindow(u.PlayWindowRaw) }
 
 // userColumns 保持所有查询列顺序一致，scanUser 依赖它。
 const userColumns = `id, name, password_hash, is_admin, is_disabled, max_parental_rating,
-	max_active_sessions, allow_download, allow_playback, created_at, last_login_at`
+	max_active_sessions, allow_download, allow_playback, play_window, created_at, last_login_at`
 
 // ---------- 口令哈希（argon2id） ----------
 
@@ -147,7 +152,7 @@ func (d *DB) scanUser(row interface {
 		allowPlay   int
 	)
 	if err := row.Scan(&u.ID, &u.Name, &u.PasswordHash, &isAdmin, &isDisabled, &maxRating,
-		&u.MaxActiveSessions, &allowDL, &allowPlay, &createdAt, &lastLoginAt); err != nil {
+		&u.MaxActiveSessions, &allowDL, &allowPlay, &u.PlayWindowRaw, &createdAt, &lastLoginAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -228,6 +233,12 @@ func (d *DB) SetUserAllowPlayback(userID string, allow bool) error {
 	return err
 }
 
+// SetUserPlayWindow 保存允许播放时段，空字符串表示不限制。
+func (d *DB) SetUserPlayWindow(userID, raw string) error {
+	_, err := d.Exec(`UPDATE users SET play_window = ? WHERE id = ?`, raw, userID)
+	return err
+}
+
 // SetUserDisabled 禁用用户时顺手吊销其所有 token。
 func (d *DB) SetUserDisabled(userID string, disabled bool) error {
 	if _, err := d.Exec(`UPDATE users SET is_disabled = ? WHERE id = ?`, boolToInt(disabled), userID); err != nil {
@@ -260,6 +271,7 @@ type UserSummary struct {
 	MaxActiveSessions int
 	AllowDownload     bool
 	AllowPlayback     bool
+	PlayWindowRaw     string
 	LastLoginAt       *time.Time
 	DeviceCount       int
 }
@@ -267,7 +279,8 @@ type UserSummary struct {
 func (d *DB) UserSummaries() ([]*UserSummary, error) {
 	rows, err := d.Query(
 		`SELECT u.id, u.name, u.is_admin, u.is_disabled, u.max_parental_rating,
-		        u.max_active_sessions, u.allow_download, u.allow_playback, u.last_login_at,
+		        u.max_active_sessions, u.allow_download, u.allow_playback, u.play_window,
+		        u.last_login_at,
 		        (SELECT COUNT(*) FROM devices d WHERE d.user_id = u.id)
 		   FROM users u
 		  ORDER BY u.name`,
@@ -288,7 +301,7 @@ func (d *DB) UserSummaries() ([]*UserSummary, error) {
 			last      sql.NullInt64
 		)
 		if err := rows.Scan(&v.ID, &v.Name, &admin, &disabled, &v.MaxParentalRating,
-			&v.MaxActiveSessions, &allowDL, &allowPlay, &last, &v.DeviceCount); err != nil {
+			&v.MaxActiveSessions, &allowDL, &allowPlay, &v.PlayWindowRaw, &last, &v.DeviceCount); err != nil {
 			return nil, err
 		}
 		v.IsAdmin = admin != 0

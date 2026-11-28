@@ -67,6 +67,8 @@ func (h *Handler) routes(appFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /web/api/users/{userId}/libraries", h.userLibraries)
 	mux.HandleFunc("PUT /web/api/users/{userId}/libraries", h.userLibraries)
 	mux.HandleFunc("GET /web/api/users", h.webUsers)
+	mux.HandleFunc("DELETE /web/api/sessions/{id}", h.webSessionDelete)
+	mux.HandleFunc("GET /web/api/login-log", h.webLoginLog)
 	mux.HandleFunc("GET /web/api/users/{userId}/devices", h.webUserDevices)
 	mux.HandleFunc("DELETE /web/api/users/{userId}/devices/{deviceId}", h.webUserDeviceDelete)
 	// 必须带方法：无方法的整段路径会和静态文件兜底 "GET /" 冲突。

@@ -396,9 +396,10 @@
 
   // ---------- 概览 ----------
   async function renderOverview() {
-    const [s, sessions] = await Promise.all([
+    const [s, sessions, attention] = await Promise.all([
       ensureStats(),
       api('/Sessions').catch(() => []),
+      api('/web/api/attention').catch(() => null),
     ]);
     renderSideFoot();
     $('#crumb').textContent = '概览';
@@ -406,6 +407,13 @@
     const st = s.Stats || {};
     const scan = s.Scan || {};
     const byType = st.ItemsByType || {};
+
+    // 待处理合计：没 TMDB ID、未刮削、缺图、失败、重复。
+    const ac = (attention && attention.Counts) || {};
+    const attentionTotal = (ac.NoTmdb || 0) + (ac.Unscraped || 0) +
+      (ac.MissingArtwork || 0) + (ac.Failures || 0) + (ac.Duplicates || 0);
+
+    const playing = (sessions || []).filter((x) => x.NowPlayingItem);
     let scanLine;
     if (scan.Running) {
       const pct = scan.Total ? Math.min(100, Math.round(((scan.Current || 0) * 100) / scan.Total)) : 0;
@@ -441,33 +449,44 @@
         <td>${l.Items}</td>
       </tr>`).join('') || `<tr><td colspan="4" class="muted">没有媒体库</td></tr>`;
 
-    const sessionRows = (sessions || []).map((x) => {
+    const playingRows = playing.map((x) => {
       const it = x.NowPlayingItem;
-      const pos = x.PlayState?.PositionTicks;
-      return `<tr>
-        <td>${esc(x.UserName || '—')}</td>
-        <td>${esc(x.DeviceName || '—')}<div class="muted" style="font-size:11px">${esc(x.Client || '')}</div></td>
-        <td>${it ? esc(it.Name) : '<span class="muted">空闲</span>'}</td>
-        <td>${pos ? fmtTicks(pos) : '—'}</td>
-        <td class="muted">${x.LastActivityDate ? new Date(x.LastActivityDate).toLocaleString('zh-CN', { hour12: false }) : '—'}</td>
-      </tr>`;
-    }).join('') || '<tr><td colspan="5" class="muted">当前没有正在播放的会话</td></tr>';
+      const pos = (x.PlayState && x.PlayState.PositionTicks) || 0;
+      const total = it.RunTimeTicks || 0;
+      const pct = total > 0 ? Math.min(100, Math.round((pos * 100) / total)) : 0;
+      return `<div class="play-row">
+        <div class="play-main">
+          <div class="play-title">${esc(it.Name)}</div>
+          <div class="muted play-sub">${esc(x.UserName || '—')} · ${esc(x.DeviceName || x.Client || '—')}</div>
+        </div>
+        <div class="play-progress">
+          <div class="play-bar"><i style="width:${pct}%"></i></div>
+          <div class="play-time muted">${fmtTicks(pos)}${total ? ' / ' + fmtTicks(total) : ''}</div>
+        </div>
+        <button data-action="stop-session" data-id="${esc(x.Id)}" data-name="${esc(it.Name)}">停止</button>
+      </div>`;
+    }).join('') || '<p class="muted" style="margin:0">当前没有正在播放的会话</p>';
+
+    const memMB = Math.round((s.MemAllocBytes || 0) / 1048576);
+    const diskPct = s.DiskTotalBytes > 0
+      ? Math.round(((s.DiskTotalBytes - s.DiskFreeBytes) * 100) / s.DiskTotalBytes) : 0;
 
     $('#view').innerHTML = `
       <div class="cards">
         <div class="card"><div class="k">媒体库</div><div class="v">${(st.Libraries || []).length}</div></div>
-        <div class="card"><div class="k">条目总数</div><div class="v">${st.TotalItems || 0}</div></div>
-        <div class="card"><div class="k">片源</div><div class="v">${st.MediaSources || 0}</div></div>
-        <div class="card"><div class="k">播放记录</div><div class="v">${st.Playstates || 0}</div></div>
-        <div class="card"><div class="k">用户</div><div class="v">${st.Users || 0}</div></div>
+        <div class="card"><div class="k">条目</div><div class="v">${st.TotalItems || 0}</div>
+          <div class="card-sub">电影 ${byType.Movie || 0} · 剧集 ${byType.Series || 0}</div></div>
+        <div class="card"><div class="k">正在播放</div><div class="v">${playing.length}</div></div>
+        <a class="card card-link" href="#/attention"><div class="k">待处理</div>
+          <div class="v${attentionTotal ? ' warn' : ''}">${attentionTotal}</div>
+          <div class="card-sub">点开查看明细</div></a>
+        <div class="card"><div class="k">磁盘剩余</div><div class="v">${fmtBytes(s.DiskFreeBytes || 0)}</div>
+          <div class="card-sub">已用 ${diskPct}%</div></div>
       </div>
 
       <div class="panel">
-        <h3>正在播放（30 分钟内）</h3>
-        <table>
-          <thead><tr><th>用户</th><th>设备</th><th>条目</th><th>进度</th><th>最后活动</th></tr></thead>
-          <tbody>${sessionRows}</tbody>
-        </table>
+        <h3>正在播放</h3>
+        ${playingRows}
       </div>
 
       <div class="panel">
@@ -475,7 +494,7 @@
         <div class="row" style="margin-bottom:10px">${scanLine}</div>
         <div class="row">
           <button data-action="scan" ${scan.Running ? 'disabled' : ''}>立即全量扫描</button>
-          <span class="muted">电影 ${byType.Movie || 0} · 剧集 ${byType.Series || 0} · 季 ${byType.Season || 0} · 单集 ${byType.Episode || 0}</span>
+          <span class="muted">季 ${byType.Season || 0} · 单集 ${byType.Episode || 0} · 片源 ${st.MediaSources || 0}</span>
         </div>
       </div>
 
@@ -489,13 +508,21 @@
         </div>
       </div>
 
-      <div class="panel">
-        <h3>媒体库</h3>
+      <div class="health-line">
+        <span>DB ${s.DBLatencyMs || 0}ms</span>
+        <span>goroutine ${s.Goroutines || 0}</span>
+        <span>内存 ${memMB}MB</span>
+        <span>已运行 ${fmtUptime(s.UptimeSec || 0)}</span>
+        <span>v${esc(s.ProductVersion || '')}</span>
+      </div>
+
+      <details class="panel fold-panel">
+        <summary><span>媒体库</span><span class="muted">${(st.Libraries || []).length} 个</span></summary>
         <table>
           <thead><tr><th>名称</th><th>类型</th><th>路径</th><th>条目</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
-      </div>`;
+      </details>`;
 
     // 扫描/刮削进行中时自动刷新进度
     if (scan.Running || sc.Running) {
@@ -1166,6 +1193,7 @@
             <button data-action="user-libs" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">库</button>` : ''}
           <button data-action="reset-pw" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">
             ${self ? '改密' : '密码'}</button>
+          <button data-action="user-logins" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">记录</button>
           <button data-action="rename-user" data-id="${esc(u.Id)}" data-name="${esc(u.Name)}">改名</button>
           ${admin && !self ? `
             <button data-action="toggle-disabled" data-id="${esc(u.Id)}" data-disabled="${u.IsDisabled ? '1' : '0'}">
@@ -2445,11 +2473,21 @@
       case 'user-libs':
         await openUserLibs(el.dataset.id, el.dataset.name);
         break;
+      case 'stop-session': {
+        if (!confirm(`停止播放「${el.dataset.name}」？`)) break;
+        await api(`/web/api/sessions/${encodeURIComponent(el.dataset.id)}`, { method: 'DELETE' });
+        toast('已停止该会话');
+        await route();
+        break;
+      }
       case 'user-devices':
         await openUserDevices(el.dataset.id, el.dataset.name);
         break;
       case 'user-ctl':
         openUserCtl(el.dataset.id, el.dataset.name);
+        break;
+      case 'user-logins':
+        await openUserLogins(el.dataset.id, el.dataset.name);
         break;
       case 'kick-device': {
         if (!confirm('确定让这台设备下线？该设备需要重新登录。')) break;
@@ -2570,6 +2608,27 @@
   // ---------- 用户权限弹窗 ----------
   let userCtlTarget = null;
 
+  // 权限预设，点一下把常用组合填进表单，仍可手动改。
+  const USER_TEMPLATES = {
+    kid: { sessions: 1, download: false, playback: true, win: { start: '18:00', end: '22:00', days: [] } },
+    family: { sessions: 2, download: true, playback: true, win: null },
+    guest: { sessions: 1, download: false, playback: true, win: null },
+  };
+
+  function applyTemplate(key) {
+    const t = USER_TEMPLATES[key];
+    if (!t) return;
+    $('#ctlSessions').value = t.sessions;
+    $('#ctlDownload').checked = t.download;
+    $('#ctlPlayback').checked = t.playback;
+    $('#ctlWinStart').value = t.win ? t.win.start : '';
+    $('#ctlWinEnd').value = t.win ? t.win.end : '';
+    document.querySelectorAll('.wk-chip').forEach((b) => {
+      b.classList.toggle('on', !!(t.win && t.win.days.includes(Number(b.dataset.day))));
+    });
+    toast('已套用预设，保存后生效');
+  }
+
   function openUserCtl(id, name) {
     const u = (state.userCache || []).find((x) => x.Id === id);
     if (!u) throw new Error('用户信息已过期，请刷新页面');
@@ -2578,6 +2637,20 @@
     $('#ctlSessions').value = u.MaxActiveSessions || 0;
     $('#ctlDownload').checked = !!u.AllowDownload;
     $('#ctlPlayback').checked = !!u.AllowPlayback;
+
+    let win = {};
+    try {
+      win = u.PlayWindow ? JSON.parse(u.PlayWindow) : {};
+    } catch {
+      win = {};
+    }
+    $('#ctlWinStart').value = win.Start || '';
+    $('#ctlWinEnd').value = win.End || '';
+    const days = Array.isArray(win.Days) ? win.Days : [];
+    document.querySelectorAll('.wk-chip').forEach((b) => {
+      b.classList.toggle('on', days.includes(Number(b.dataset.day)));
+    });
+
     $('#userCtlModal').classList.remove('hidden');
   }
 
@@ -2591,17 +2664,45 @@
     if (!userCtlTarget) return;
     const n = Number($('#ctlSessions').value);
     if (!Number.isFinite(n) || n < 0 || n > 100) throw new Error('同时播放数需要是 0-100');
+
+    const start = $('#ctlWinStart').value;
+    const end = $('#ctlWinEnd').value;
+    if ((start && !end) || (!start && end)) throw new Error('播放时段需要同时填写开始和结束');
+
+    const days = Array.from(document.querySelectorAll('.wk-chip.on')).map((b) => Number(b.dataset.day));
+
     await api(`/Users/${encodeURIComponent(userCtlTarget.id)}/Policy`, {
       method: 'POST',
       body: JSON.stringify({
         MaxActiveSessions: Math.floor(n),
         EnableContentDownloading: $('#ctlDownload').checked,
         EnableMediaPlayback: $('#ctlPlayback').checked,
+        PlayWindow: { Start: start, End: end, Days: days },
       }),
     });
     closeUserCtl();
     toast('权限已保存');
     await route();
+  }
+
+  // ---------- 登录记录 ----------
+  async function openUserLogins(id, name) {
+    const list = await api(`/web/api/login-log?userId=${encodeURIComponent(id)}&limit=100`);
+    $('#loginLogTitle').textContent = `登录记录：${name}`;
+    $('#loginLogList').innerHTML = (list || []).map((e) => `
+      <div class="device-row">
+        <div class="device-info">
+          <div>${e.Success ? '<span class="badge ok">成功</span>' : '<span class="badge warn">失败</span>'}
+            <span class="muted" style="font-size:12px">${esc(e.Reason || '')}</span></div>
+          <div class="muted" style="font-size:12px">
+            ${esc(e.IP || '—')} · ${esc(e.Client || '未知客户端')}${e.Device ? ' · ' + esc(e.Device) : ''}
+          </div>
+        </div>
+        <div class="muted" style="font-size:12px;white-space:nowrap">
+          ${e.CreatedAt ? new Date(e.CreatedAt).toLocaleString('zh-CN', { hour12: false }) : '—'}
+        </div>
+      </div>`).join('') || '<p class="muted">还没有登录记录。</p>';
+    $('#loginLogModal').classList.remove('hidden');
   }
 
   // ---------- 地理库下载轮询 ----------
@@ -2724,6 +2825,18 @@
       if (hint) hint.textContent = provSummaryText();
       return;
     }
+    const wk = e.target.closest('.wk-chip');
+    if (wk) {
+      e.preventDefault();
+      wk.classList.toggle('on');
+      return;
+    }
+    const tpl = e.target.closest('[data-template]');
+    if (tpl) {
+      e.preventDefault();
+      applyTemplate(tpl.dataset.template);
+      return;
+    }
     const el = e.target.closest('[data-action]');
     if (!el) return;
     if (el.tagName === 'SELECT') return; // select 交给 change 处理
@@ -2774,6 +2887,10 @@
     submitUserCtl(e).catch((err) => toast(err.message, true));
   });
   $('#userCtlCancel').addEventListener('click', closeUserCtl);
+  $('#loginLogClose').addEventListener('click', () => $('#loginLogModal').classList.add('hidden'));
+  $('#loginLogModal').addEventListener('click', (e) => {
+    if (e.target.id === 'loginLogModal') e.target.classList.add('hidden');
+  });
   $('#userCtlModal').addEventListener('click', (e) => {
     if (e.target.id === 'userCtlModal') closeUserCtl();
   });

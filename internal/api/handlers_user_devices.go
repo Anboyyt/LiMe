@@ -32,6 +32,7 @@ func (h *Handler) webUsers(w http.ResponseWriter, r *http.Request) {
 		MaxActiveSessions int     `json:"MaxActiveSessions"`
 		AllowDownload     bool    `json:"AllowDownload"`
 		AllowPlayback     bool    `json:"AllowPlayback"`
+		PlayWindow        string  `json:"PlayWindow"`
 		LastLoginAt       *string `json:"LastLoginAt"`
 		DeviceCount       int     `json:"DeviceCount"`
 	}
@@ -46,6 +47,7 @@ func (h *Handler) webUsers(w http.ResponseWriter, r *http.Request) {
 			MaxActiveSessions: u.MaxActiveSessions,
 			AllowDownload:     u.AllowDownload,
 			AllowPlayback:     u.AllowPlayback,
+			PlayWindow:        u.PlayWindowRaw,
 			DeviceCount:       u.DeviceCount,
 		}
 		if u.LastLoginAt != nil {

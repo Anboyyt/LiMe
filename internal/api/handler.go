@@ -243,6 +243,7 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 		}
 	}()
 	go h.refreshProbeCounts() // 内部先等 20 秒
+	go h.runLoginLogPrune()
 	go func() {
 		time.Sleep(10 * time.Second)
 		h.segmentPendingCached()

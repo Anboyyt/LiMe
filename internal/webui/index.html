@@ -94,10 +94,27 @@
     </div>
   </div>
 
+  <!-- 登录记录弹窗 -->
+  <div id="loginLogModal" class="modal hidden">
+    <div class="modal-card device-modal">
+      <h3 id="loginLogTitle">登录记录</h3>
+      <div id="loginLogList" class="login-list"></div>
+      <div class="modal-actions">
+        <button type="button" id="loginLogClose">关闭</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 用户权限弹窗 -->
   <div id="userCtlModal" class="modal hidden">
     <form class="modal-card" id="userCtlForm">
       <h3 id="userCtlTitle">用户权限</h3>
+      <div class="tpl-row">
+        <span class="muted">套用</span>
+        <button type="button" data-template="kid">小孩</button>
+        <button type="button" data-template="family">家人</button>
+        <button type="button" data-template="guest">访客</button>
+      </div>
       <label class="ctl-row">
         <span>同时播放数</span>
         <input id="ctlSessions" type="number" min="0" max="100" step="1" style="max-width:100px">
@@ -106,6 +123,23 @@
       <label class="ctl-row"><input id="ctlDownload" type="checkbox"><span>允许下载</span></label>
       <label class="ctl-row"><input id="ctlPlayback" type="checkbox"><span>允许播放</span></label>
       <p class="muted" style="margin:8px 0 0">关闭播放后仍然可以浏览媒体库，但拿不到播放地址。</p>
+
+      <div class="ctl-sep">允许播放时段</div>
+      <div class="ctl-grid">
+        <div class="ac-field"><label>开始</label><input id="ctlWinStart" type="time"></div>
+        <div class="ac-field"><label>结束</label><input id="ctlWinEnd" type="time"></div>
+      </div>
+      <div class="week-grid" id="ctlWinDays">
+        <button type="button" class="wk-chip" data-day="1">一</button>
+        <button type="button" class="wk-chip" data-day="2">二</button>
+        <button type="button" class="wk-chip" data-day="3">三</button>
+        <button type="button" class="wk-chip" data-day="4">四</button>
+        <button type="button" class="wk-chip" data-day="5">五</button>
+        <button type="button" class="wk-chip" data-day="6">六</button>
+        <button type="button" class="wk-chip" data-day="7">日</button>
+      </div>
+      <p class="muted" style="margin:6px 0 0">时间留空表示不限制；星期不选表示每天。结束时间早于开始时按跨夜处理。</p>
+
       <div class="modal-actions">
         <button type="button" id="userCtlCancel">取消</button>
         <button type="submit" class="primary">保存</button>

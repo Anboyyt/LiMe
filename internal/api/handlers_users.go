@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"lime/internal/dto"
 	"lime/internal/store"
@@ -102,6 +103,10 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	password := req.Password
 	if password == "" {
 		password = req.Pw
+	}
+	if msg := validatePassword(name, password); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
 	}
 	hash, err := store.HashPassword(password)
 	if err != nil {
@@ -246,6 +251,10 @@ func (h *Handler) updatePassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if msg := validatePassword(target.Name, req.NewPw); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
+	}
 	hash, err := store.HashPassword(req.NewPw)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -263,6 +272,21 @@ func (h *Handler) updatePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// validatePassword 只做最基本的强度检查：允许空密码（沿用旧习惯），
+// 非空时至少 4 位且不能等于用户名。
+func validatePassword(name, pw string) string {
+	if pw == "" {
+		return ""
+	}
+	if utf8.RuneCountInString(pw) < 4 {
+		return "密码至少 4 位"
+	}
+	if strings.EqualFold(strings.TrimSpace(pw), name) {
+		return "密码不能和用户名相同"
+	}
+	return ""
+}
+
 type updatePolicyRequest struct {
 	IsAdministrator   *bool `json:"IsAdministrator"`
 	IsDisabled        *bool `json:"IsDisabled"`
@@ -271,6 +295,8 @@ type updatePolicyRequest struct {
 	// 面板用的字段名，与 Jellyfin Policy 保持一致。
 	EnableContentDownloading *bool `json:"EnableContentDownloading"`
 	EnableMediaPlayback      *bool `json:"EnableMediaPlayback"`
+	// PlayWindow 为 nil 表示不改；传 {Start:"",End:""} 表示清除限制。
+	PlayWindow *store.PlayWindow `json:"PlayWindow"`
 }
 
 // updateUserPolicy 处理管理员、禁用、分级、并发和播放/下载开关。
@@ -348,6 +374,16 @@ func (h *Handler) updateUserPolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.EnableMediaPlayback != nil {
 		if err := h.db.SetUserAllowPlayback(target.ID, *req.EnableMediaPlayback); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+	if req.PlayWindow != nil {
+		if err := req.PlayWindow.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.db.SetUserPlayWindow(target.ID, req.PlayWindow.Marshal()); err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}

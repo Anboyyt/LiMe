@@ -35,6 +35,10 @@ func (h *Handler) playbackInfo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "该账号已被管理员关闭播放权限")
 		return
 	}
+	if !user.PlayWindow().Allows(time.Now()) {
+		writeError(w, http.StatusForbidden, "当前不在允许的播放时段内")
+		return
+	}
 
 	itemID := r.PathValue("itemId")
 	it, err := h.db.GetItem(itemID)
@@ -218,6 +222,10 @@ func (h *Handler) serveStream(w http.ResponseWriter, r *http.Request) {
 	if streamUser != nil {
 		if !streamUser.AllowPlayback {
 			writeError(w, http.StatusForbidden, "该账号已被管理员关闭播放权限")
+			return
+		}
+		if !streamUser.PlayWindow().Allows(time.Now()) {
+			writeError(w, http.StatusForbidden, "当前不在允许的播放时段内")
 			return
 		}
 		if it, err := h.db.GetItem(itemID); err == nil &&

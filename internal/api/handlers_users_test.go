@@ -76,11 +76,11 @@ func (f *userFixture) doUA(method, path string, body any, ua, token string) *htt
 func TestCreateUserPermissions(t *testing.T) {
 	f := newUserFixture(t)
 
-	if rr := f.do(http.MethodPost, "/Users/New", map[string]string{"Name": "alice", "Password": "pw"}, f.bobTok); rr.Code != http.StatusForbidden {
+	if rr := f.do(http.MethodPost, "/Users/New", map[string]string{"Name": "alice", "Password": "alice-pw"}, f.bobTok); rr.Code != http.StatusForbidden {
 		t.Fatalf("non-admin create = %d, want 403", rr.Code)
 	}
 
-	rr := f.do(http.MethodPost, "/Users/New", map[string]string{"Name": "alice", "Password": "pw"}, f.adminTok)
+	rr := f.do(http.MethodPost, "/Users/New", map[string]string{"Name": "alice", "Password": "alice-pw"}, f.adminTok)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("admin create = %d: %s", rr.Code, rr.Body.String())
 	}
