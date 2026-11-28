@@ -2128,10 +2128,17 @@
             if (!entry) {
               if (!confirm('没有填 PanSave 反代地址，保存后复制同播不会生效。\n\n第二台设备播放同一文件会因 115 并发限制返回 403。仍然保存？')) break;
             } else {
-              const m = entry.match(/^https?:\/\/[^/]*:(\d+)/);
+              // 只拦「同一台机器 + 同一端口」：填公网域名时端口撞上 443 是正常的。
+              const m = entry.match(/^https?:\/\/([^/:]+)(?::(\d+))?/);
               const myPort = String(location.port || (location.protocol === 'https:' ? '443' : '80'));
-              if (m && m[1] === myPort) {
-                if (!confirm(`反代地址的端口是 ${m[1]}，和当前面板端口一样——这是 LiMe 自己的端口，不是 PanSave 的反代。\n\n继续保存会让复制同播静默失效。仍然保存？`)) break;
+              if (m) {
+                const host = m[1].toLowerCase();
+                const port = m[2] || (entry.startsWith('https') ? '443' : '80');
+                const sameHost = host === location.hostname.toLowerCase() ||
+                  host === '127.0.0.1' || host === 'localhost';
+                if (sameHost && port === myPort) {
+                  if (!confirm(`反代地址指向 ${host}:${port}，就是当前这台 LiMe 自己，不是 PanSave 的反代。\n\n继续保存会让复制同播静默失效。仍然保存？`)) break;
+                }
               }
             }
           }
