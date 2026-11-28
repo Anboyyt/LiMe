@@ -21,9 +21,11 @@ LEFT JOIN (
 ) h ON h.item_id = i.id
 WHERE i.type IN (?, ?)
   AND (COALESCE(i.image_path, '') <> '' OR COALESCE(i.backdrop_path, '') <> '')
+-- 评分是主排序，热度最多加 0.5 分（播 10 次封顶）：
+-- 只用来在同分段里把常看的往前提，不能跨过 0.5 分以上的评分差。
 ORDER BY (
-    COALESCE(i.community_rating, 0) * 0.75
-  + MIN(COALESCE(h.c, 0), 10) * 0.25
+    COALESCE(i.community_rating, 0)
+  + MIN(COALESCE(h.c, 0), 10) * 0.05
 ) DESC, COALESCE(i.community_rating, 0) DESC, i.sort_name
 LIMIT ?`, since, TypeMovie, TypeSeries, limit)
 	if err != nil {
