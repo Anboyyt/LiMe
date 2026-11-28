@@ -35,7 +35,7 @@ func (h *Handler) webAttention(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	dupCount, err := h.db.DuplicateTmdbCount()
+	dupCount, err := h.cachedDuplicateCount()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

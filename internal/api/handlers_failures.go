@@ -42,6 +42,43 @@ func (h *Handler) invalidateFailureSummary() {
 	h.failureMu.Lock()
 	h.failureCache = nil
 	h.failureAt = time.Time{}
+	h.dupAt = time.Time{}
+	h.failureMu.Unlock()
+}
+
+// cachedDuplicateCount 重复条目组数，和失败计数共用 60 秒缓存。
+func (h *Handler) cachedDuplicateCount() (int, error) {
+	h.failureMu.Lock()
+	if time.Since(h.dupAt) < failureCacheTTL {
+		n := h.dupCount
+		h.failureMu.Unlock()
+		return n, nil
+	}
+	h.failureMu.Unlock()
+
+	n, err := h.db.DuplicateTmdbCount()
+	if err != nil {
+		return 0, err
+	}
+	h.failureMu.Lock()
+	h.dupCount, h.dupAt = n, time.Now()
+	h.failureMu.Unlock()
+	return n, nil
+}
+
+// refreshAttentionCache 定时重算面板计数，保证用户打开「待处理」时永远
+// 命中缓存，不会撞上冷启动的那一次全表聚合。
+func (h *Handler) refreshAttentionCache() {
+	counts, err1 := h.db.ScrapeFailureCounts()
+	health, err2 := h.db.ScrapeHealth()
+	dup, err3 := h.db.DuplicateTmdbCount()
+	if err1 != nil || err2 != nil || err3 != nil {
+		return
+	}
+	now := time.Now()
+	h.failureMu.Lock()
+	h.failureCache, h.failureHealth, h.failureAt = counts, health, now
+	h.dupCount, h.dupAt = dup, now
 	h.failureMu.Unlock()
 }
 

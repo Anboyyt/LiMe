@@ -94,6 +94,8 @@ type Handler struct {
 	failureCache  map[string]int
 	failureHealth store.ScrapeHealth
 	failureAt     time.Time
+	dupCount      int
+	dupAt         time.Time
 
 	// 筛选面板缓存（Genres / Years / Ratings），按可见库集合缓存。
 	filterMu       sync.Mutex
@@ -198,7 +200,15 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	// 全库统计和图片目录统计都不适合等用户点开页面才算；后台先热一次。
 	// 错开执行：多个全表扫描同时跑会把不同连接的 SQLite 页缓存一起填满，
 	// 启动瞬间容器内存会冲到很高，其实随后都会被回收。
-	go func() { _, _ = h.cachedStats() }()
+	go func() {
+		time.Sleep(5 * time.Second)
+		h.refreshStats()
+		ticker := time.NewTicker(45 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			h.refreshStats()
+		}
+	}()
 	if h.scraper != nil {
 		go func() {
 			time.Sleep(5 * time.Second)
@@ -212,11 +222,16 @@ func New(cfg config.Config, db *store.DB, log *slog.Logger, scanner *library.Sca
 	h.prober.StartWarmup(h.warmupConfig())
 	go h.runHealthMonitor()
 	h.prober.SetSegmentsEnabled(h.segmentExtractEnabled())
-	// 待处理页的计数要扫一遍电影/剧集，启动后先在后台算好，避免首次
-	// 打开面板时等这几百毫秒。
+	// 待处理页的计数要扫一遍电影/剧集。启动后先算一次，之后每 50 秒
+	// 后台重算，保证用户打开面板时永远命中缓存，不会撞上冷启动。
 	go func() {
-		time.Sleep(20 * time.Second)
-		_, _, _ = h.cachedFailureSummary()
+		time.Sleep(8 * time.Second)
+		h.refreshAttentionCache()
+		ticker := time.NewTicker(50 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			h.refreshAttentionCache()
+		}
 	}()
 	go h.refreshProbeCounts() // 内部先等 20 秒
 	go func() {

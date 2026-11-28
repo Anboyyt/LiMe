@@ -74,6 +74,19 @@ func (h *Handler) cachedStats() (*store.Stats, error) {
 	return s, nil
 }
 
+// refreshStats 后台重算全库统计。面板概览的缓存 60 秒过期，配合定时
+// 刷新可以保证用户点开时永远命中，不会撞上冷启动的第一次全表统计。
+func (h *Handler) refreshStats() {
+	s, err := h.db.Stats()
+	if err != nil {
+		return
+	}
+	h.statsMu.Lock()
+	h.statsCache = s
+	h.statsCacheAt = time.Now()
+	h.statsMu.Unlock()
+}
+
 func (h *Handler) invalidateStats() {
 	h.statsMu.Lock()
 	h.statsCache = nil
