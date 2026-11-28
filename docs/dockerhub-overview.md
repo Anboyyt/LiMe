@@ -148,7 +148,7 @@ docker run -d --name lime \
 ## 镜像
 
 - 平台：`linux/amd64`、`linux/arm64`
-- 标签：`latest`、`1.0`、`1.0.x`、`edge`（`main` 分支自动构建）
+- 标签：`latest`、`1.3`、`1.3.x`、`edge`（`main` 分支自动构建）
 - 基础镜像：`alpine` + `ffmpeg`（用于 ffprobe 探测和音频指纹）
 
 ## 链接
