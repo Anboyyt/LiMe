@@ -399,6 +399,10 @@ GET /web/api/stalls?days=7&limit=200
 
 ## 配置项
 
+播放相关的开关（起播加速、播放鉴权、多人同播）**都可以在运维面板 `/web/` →
+播放设置里改**，保存即时生效，不用动 compose；环境变量只作为初始值。
+下面列出这些变量是为了说明语义和兼容旧部署。
+
 编辑 `docker-compose.yml` 里的 `environment`，重点：
 
 | 变量 | 说明 | 默认 |
@@ -422,12 +426,12 @@ GET /web/api/stalls?days=7&limit=200
 | `LIME_REWRITE_FROM` | STRM 里的原始 host | — |
 | `LIME_REWRITE_LOCAL` | 局域网客户端使用的地址 | — |
 | `LIME_REWRITE_PUBLIC` | 外网客户端使用的地址 | — |
-| `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token | `false` |
+| `LIME_STREAM_REQUIRE_AUTH` | 播放端点是否强制校验 token。也可在运维面板「播放设置」里改，面板值优先 | `false` |
 | `LIME_INTERNAL_URL` | PanSave 反代探测用的 LiMe 上游地址。只在请求 Host 是内网地址时生效，公网域名访问会自动改用请求地址 | 空 |
 | `LIME_PROXY_HOSTS` | PanSave Emby 反代的公网域名，逗号分隔（如 `ps.example.com`）。命中的请求按反代场景处理，参与 115 复制同播；内网地址不需要列 | 空 |
-| `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端。`auto`：最多等 500ms，失败/超时回退原 302，连续失败 3 次熔断 5 分钟；`true`：强制解析，失败可能返回 502；`false`：关闭 | `auto` |
+| `LIME_RESOLVE_REDIRECT` | 302 前先跟一跳 PanSave，把最终 CDN 地址直接给客户端。`auto`：最多等 500ms，失败/超时回退原 302，连续失败 3 次熔断 5 分钟；`true`：强制解析，失败可能返回 502；`false`：关闭。也可在运维面板「播放设置」里改，面板值优先 | `auto` |
 | `LIME_MEDIA_PATH_STRM` | `MediaSources[].Path` 返回 STRM 里的原始地址（仍按 rewrite 规则改写 host），`DirectStreamUrl` 保持本服务地址。PanSave 的 Emby 反代只对 `/strm` 形状的片源路径启用 **115 复制同播**。`auto`（默认）：请求带 `X-Forwarded-Host` 且是内网地址（即从 PanSave 反代端口进来）时启用，Cloudflare 隧道等公网域名访问保持原行为；`true` / `false` 强制开关。Yamby / 爆米花仍返回相对路径 | `auto` |
-| `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链。`auto`：只对 VidHub / SenPlayer / Yamby / Infuse 等会用该字段的客户端预解析；`true`：对所有客户端；`false`：关闭。需 `LIME_RESOLVE_REDIRECT` 不为 false | `auto` |
+| `LIME_PLAYBACK_DIRECT_URL` | PlaybackInfo / 剧集列表的 `DirectStreamUrl` 直接返回 CDN 直链。`auto`：只对 VidHub / SenPlayer / Yamby / Infuse 等会用该字段的客户端预解析；`true`：对所有客户端；`false`：关闭。需 `LIME_RESOLVE_REDIRECT` 不为 false。也可在运维面板「播放设置」里改 | `auto` |
 | `LIME_YAMBY_PROXY` | Yamby 跟 302 不稳时，把它的视频流改成服务端中转；会占用 NAS 上行 | `false` |
 | `LIME_STREAM_CACHE_MB` | 仅代理模式：每个片源预取的头部长度的 MB 数，`0` 关闭（尾部固定 2MB） | `0` |
 | `LIME_STREAM_CACHE_MAX_MB` | 头/尾缓存总上限 | `4096` |
